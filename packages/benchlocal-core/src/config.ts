@@ -1,0 +1,422 @@
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parse, stringify } from "smol-toml";
+import { z } from "zod";
+
+export type BenchLocalProviderConfig = {
+  enabled: boolean;
+  base_url: string;
+  api_key?: string;
+  secret_ref?: string;
+  api_key_env?: string;
+};
+
+export type BenchLocalModelConfig = {
+  id: string;
+  provider: string;
+  model: string;
+  label: string;
+  group: string;
+  enabled: boolean;
+};
+
+export type BenchLocalSidecarConfig = {
+  kind: "docker-http";
+  port: number;
+  auto_start: boolean;
+};
+
+export type BenchLocalPluginConfig = {
+  enabled: boolean;
+  source: "github" | "local" | "git";
+  repo?: string;
+  path?: string;
+  ref?: string;
+  auto_update?: boolean;
+  sidecars?: Record<string, BenchLocalSidecarConfig>;
+};
+
+export type BenchLocalConfig = {
+  schema_version: 1;
+  default_plugin: string;
+  run_storage_dir: string;
+  plugin_storage_dir: string;
+  log_storage_dir: string;
+  cache_dir: string;
+  ui: {
+    theme: "system" | "light" | "dark";
+    show_secondary_table: boolean;
+  };
+  defaults: {
+    temperature: number;
+    top_p: number;
+    top_k: number;
+    min_p: number;
+    repetition_penalty: number;
+    request_timeout_seconds: number;
+    max_concurrent_models: number;
+    max_concurrent_runs: number;
+  };
+  providers: Record<string, BenchLocalProviderConfig>;
+  models: BenchLocalModelConfig[];
+  plugins: Record<string, BenchLocalPluginConfig>;
+};
+
+export type LoadedBenchLocalConfig = {
+  path: string;
+  created: boolean;
+  config: BenchLocalConfig;
+};
+
+const ProviderSchema = z.object({
+  enabled: z.boolean().default(true),
+  base_url: z.string().trim().min(1),
+  api_key: z.string().trim().min(1).optional(),
+  secret_ref: z.string().trim().min(1).optional(),
+  api_key_env: z.string().trim().min(1).optional()
+});
+
+const ModelSchema = z.object({
+  id: z.string().trim().min(1),
+  provider: z.string().trim().min(1),
+  model: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  group: z.string().trim().min(1).default("primary"),
+  enabled: z.boolean().default(true)
+});
+
+const SidecarSchema = z.object({
+  kind: z.literal("docker-http").default("docker-http"),
+  port: z.number().int().min(1).max(65535),
+  auto_start: z.boolean().default(true)
+});
+
+const PluginSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    source: z.enum(["github", "local", "git"]).default("github"),
+    repo: z.string().trim().min(1).optional(),
+    path: z.string().trim().min(1).optional(),
+    ref: z.string().trim().min(1).optional(),
+    auto_update: z.boolean().optional(),
+    sidecars: z.record(z.string(), SidecarSchema).optional()
+  })
+  .superRefine((value, context) => {
+    if (value.source === "github" && !value.repo) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "GitHub plugins require a repo value."
+      });
+    }
+
+    if (value.source === "local" && !value.path) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Local plugins require a path value."
+      });
+    }
+  });
+
+const ConfigSchema = z.object({
+  schema_version: z.literal(1).default(1),
+  default_plugin: z.string().trim().min(1).default("toolcall-15"),
+  run_storage_dir: z.string().trim().min(1),
+  plugin_storage_dir: z.string().trim().min(1),
+  log_storage_dir: z.string().trim().min(1),
+  cache_dir: z.string().trim().min(1),
+  ui: z
+    .object({
+      theme: z.enum(["system", "light", "dark"]).default("system"),
+      show_secondary_table: z.boolean().default(true)
+    })
+    .default({
+      theme: "system",
+      show_secondary_table: true
+    }),
+  defaults: z
+    .object({
+      temperature: z.number().default(0),
+      top_p: z.number().default(1),
+      top_k: z.number().default(0),
+      min_p: z.number().default(0),
+      repetition_penalty: z.number().default(1),
+      request_timeout_seconds: z.number().int().min(1).default(30),
+      max_concurrent_models: z.number().int().min(1).default(8),
+      max_concurrent_runs: z.number().int().min(1).default(1)
+    })
+    .default({
+      temperature: 0,
+      top_p: 1,
+      top_k: 0,
+      min_p: 0,
+      repetition_penalty: 1,
+      request_timeout_seconds: 30,
+      max_concurrent_models: 8,
+      max_concurrent_runs: 1
+    }),
+  providers: z.record(z.string(), ProviderSchema).default({}),
+  models: z.array(ModelSchema).default([]),
+  plugins: z.record(z.string(), PluginSchema).default({})
+});
+
+export function getBenchLocalHome(): string {
+  return path.join(os.homedir(), ".benchlocal");
+}
+
+export function expandHomePath(input: string): string {
+  if (input === "~") {
+    return os.homedir();
+  }
+
+  if (input.startsWith("~/")) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+
+  return input;
+}
+
+export function getConfigPath(): string {
+  return path.join(getBenchLocalHome(), "config.toml");
+}
+
+function getBenchLocalWorkspaceRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+}
+
+function createDefaultProviders(): Record<string, BenchLocalProviderConfig> {
+  return {
+    openrouter: {
+      enabled: true,
+      base_url: "https://openrouter.ai/api/v1",
+      api_key_env: "OPENROUTER_API_KEY"
+    },
+    ollama: {
+      enabled: true,
+      base_url: "http://127.0.0.1:11434/v1"
+    },
+    llamacpp: {
+      enabled: false,
+      base_url: "http://127.0.0.1:8080/v1"
+    },
+    mlx: {
+      enabled: false,
+      base_url: "http://127.0.0.1:8082/v1"
+    },
+    lmstudio: {
+      enabled: false,
+      base_url: "http://127.0.0.1:1234/v1"
+    }
+  };
+}
+
+export function createDefaultConfig(): BenchLocalConfig {
+  const home = getBenchLocalHome();
+  const workspaceRoot = getBenchLocalWorkspaceRoot();
+
+  return {
+    schema_version: 1,
+    default_plugin: "toolcall-15",
+    run_storage_dir: path.join(home, "runs"),
+    plugin_storage_dir: path.join(home, "plugins"),
+    log_storage_dir: path.join(home, "logs"),
+    cache_dir: path.join(home, "cache"),
+    ui: {
+      theme: "system",
+      show_secondary_table: true
+    },
+    defaults: {
+      temperature: 0,
+      top_p: 1,
+      top_k: 0,
+      min_p: 0,
+      repetition_penalty: 1,
+      request_timeout_seconds: 30,
+      max_concurrent_models: 8,
+      max_concurrent_runs: 1
+    },
+    providers: createDefaultProviders(),
+    models: [
+      {
+        id: "openrouter:openai/gpt-4.1",
+        provider: "openrouter",
+        model: "openai/gpt-4.1",
+        label: "GPT-4.1 via OpenRouter",
+        group: "primary",
+        enabled: true
+      },
+      {
+        id: "ollama:qwen3.5:4b",
+        provider: "ollama",
+        model: "qwen3.5:4b",
+        label: "Qwen3.5 4B via Ollama",
+        group: "primary",
+        enabled: false
+      }
+    ],
+    plugins: {
+      "toolcall-15": {
+        enabled: true,
+        source: "github",
+        repo: "stevibe/ToolCall-15"
+      },
+      "bugfind-15": {
+        enabled: true,
+        source: "github",
+        repo: "stevibe/BugFind-15",
+        sidecars: {
+          verifier: {
+            kind: "docker-http",
+            port: 4010,
+            auto_start: true
+          }
+        }
+      },
+      "dataextract-15": {
+        enabled: true,
+        source: "local",
+        path: path.resolve(workspaceRoot, "../DataExtract-15")
+      },
+      "instructfollow-15": {
+        enabled: true,
+        source: "local",
+        path: path.resolve(workspaceRoot, "../InstructFollow-15")
+      },
+      "reasonmath-15": {
+        enabled: true,
+        source: "local",
+        path: path.resolve(workspaceRoot, "../ReasonMath-15")
+      },
+      "structoutput-15": {
+        enabled: true,
+        source: "local",
+        path: path.resolve(workspaceRoot, "../StructOutput-15"),
+        sidecars: {
+          verifier: {
+            kind: "docker-http",
+            port: 4011,
+            auto_start: true
+          }
+        }
+      }
+    }
+  };
+}
+
+function assertValidHttpUrl(value: string, field: string): void {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${field} must be a valid http:// or https:// URL.`);
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(`${field} must use http:// or https://.`);
+  }
+}
+
+function normalizeConfig(raw: unknown): BenchLocalConfig {
+  const defaults = createDefaultConfig();
+  const parsed = ConfigSchema.parse(raw ?? {});
+
+  const config: BenchLocalConfig = {
+    ...defaults,
+    ...parsed,
+    ui: {
+      ...defaults.ui,
+      ...parsed.ui
+    },
+    defaults: {
+      ...defaults.defaults,
+      ...parsed.defaults
+    },
+    providers: {
+      ...defaults.providers,
+      ...parsed.providers
+    },
+    plugins: parsed.plugins
+  };
+
+  const seenModelIds = new Set<string>();
+
+  for (const [providerId, provider] of Object.entries(config.providers)) {
+    assertValidHttpUrl(provider.base_url, `providers.${providerId}.base_url`);
+  }
+
+  for (const model of config.models) {
+    if (seenModelIds.has(model.id)) {
+      throw new Error(`Duplicate model id "${model.id}" found in models.`);
+    }
+
+    if (!config.providers[model.provider]) {
+      throw new Error(`Model "${model.id}" references unknown provider "${model.provider}".`);
+    }
+
+    seenModelIds.add(model.id);
+  }
+
+  return config;
+}
+
+async function ensureHomeAndStorageDirs(config: BenchLocalConfig): Promise<void> {
+  const dirs = [
+    getBenchLocalHome(),
+    expandHomePath(config.run_storage_dir),
+    expandHomePath(config.plugin_storage_dir),
+    expandHomePath(config.log_storage_dir),
+    expandHomePath(config.cache_dir)
+  ];
+
+  await Promise.all(dirs.map((dir) => fs.mkdir(dir, { recursive: true })));
+}
+
+export async function loadConfigFile(configPath = getConfigPath()): Promise<BenchLocalConfig> {
+  const raw = await fs.readFile(configPath, "utf8");
+  const parsed = parse(raw);
+  const config = normalizeConfig(parsed);
+  await ensureHomeAndStorageDirs(config);
+  return config;
+}
+
+export async function loadOrCreateConfig(configPath = getConfigPath()): Promise<LoadedBenchLocalConfig> {
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+
+  try {
+    const config = await loadConfigFile(configPath);
+    return {
+      path: configPath,
+      created: false,
+      config
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown config bootstrap error.";
+
+    if (!/ENOENT/.test(message)) {
+      throw error;
+    }
+  }
+
+  const config = createDefaultConfig();
+  await saveConfigFile(config, configPath);
+
+  return {
+    path: configPath,
+    created: true,
+    config
+  };
+}
+
+export async function saveConfigFile(config: BenchLocalConfig, configPath = getConfigPath()): Promise<BenchLocalConfig> {
+  const normalized = normalizeConfig(config);
+  await ensureHomeAndStorageDirs(normalized);
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+
+  const tempPath = `${configPath}.tmp`;
+  await fs.writeFile(tempPath, stringify(normalized), "utf8");
+  await fs.rename(tempPath, configPath);
+
+  return normalized;
+}

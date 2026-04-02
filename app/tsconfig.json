@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "types": ["node", "electron-vite/node"],
+    "paths": {
+      "@/*": ["src/*"],
+      "@renderer/*": ["src/renderer/src/*"],
+      "@core": ["../packages/benchlocal-core/src/index.ts"],
+      "@core/*": ["../packages/benchlocal-core/src/*"],
+      "@plugin-host": ["../packages/plugin-host/src/index.ts"]
+    }
+  },
+  "include": ["electron.vite.config.ts", "src/**/*.ts", "src/**/*.tsx"]
+}
