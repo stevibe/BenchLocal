@@ -8,9 +8,11 @@ import type {
   BenchLocalExecutionMode,
   BenchLocalPluginConfig,
   HostContext,
+  PluginRunHistoryEntry,
   PluginRunSummary,
   ProgressEvent,
   RegisteredModel,
+  SidecarEndpoint,
   ScenarioMeta,
   ScenarioResult
 } from "@benchlocal/core";
@@ -22,6 +24,11 @@ export type LoadedPluginHandle = {
   pluginId: string;
   entryPath: string;
 };
+
+async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
+  const raw = await fs.readFile(targetPath, "utf8");
+  return JSON.parse(raw) as TValue;
+}
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
@@ -289,6 +296,10 @@ async function createRunArtifacts(config: BenchLocalConfig, pluginId: string): P
   };
 }
 
+function getPluginRunRoot(config: BenchLocalConfig, pluginId: string): string {
+  return path.join(expandHomePath(config.run_storage_dir), pluginId);
+}
+
 async function appendJsonLine(targetPath: string, value: unknown): Promise<void> {
   await fs.appendFile(targetPath, `${JSON.stringify(value)}\n`, "utf8");
 }
@@ -326,8 +337,11 @@ async function createHostContext(
   manifest: PluginManifest,
   artifacts: RunArtifacts
 ): Promise<HostContext> {
+  const pluginConfig = config.plugins[pluginId];
   const providers = Object.entries(config.providers).map(([id, provider]) => ({
     id,
+    kind: provider.kind,
+    name: provider.name,
     enabled: provider.enabled,
     baseUrl: provider.base_url,
     authMode: (provider.api_key || provider.api_key_env ? "bearer" : "none") as "bearer" | "none"
@@ -357,6 +371,8 @@ async function createHostContext(
     })
   );
 
+  const sidecars = await resolveSidecarEndpoints(pluginId, pluginConfig, manifest);
+
   return {
     protocolVersion: 1,
     plugin: {
@@ -371,7 +387,7 @@ async function createHostContext(
     models,
     defaults: config.defaults,
     secrets,
-    sidecars: [],
+    sidecars,
     logger: {
       debug(message, meta) {
         console.debug(`[plugin:${pluginId}] ${message}`, meta ?? "");
@@ -391,6 +407,48 @@ async function createHostContext(
       }
     }
   };
+}
+
+async function probeSidecar(url: string, healthcheckPath?: string): Promise<SidecarEndpoint["status"]> {
+  if (!healthcheckPath) {
+    return "running";
+  }
+
+  try {
+    const response = await fetch(`${url}${healthcheckPath.startsWith("/") ? healthcheckPath : `/${healthcheckPath}`}`, {
+      method: "GET"
+    });
+
+    return response.ok ? "running" : "stopped";
+  } catch {
+    return "stopped";
+  }
+}
+
+async function resolveSidecarEndpoints(
+  pluginId: string,
+  pluginConfig: BenchLocalPluginConfig | undefined,
+  manifest: PluginManifest
+): Promise<SidecarEndpoint[]> {
+  const sidecarSpecs = manifest.sidecars ?? [];
+
+  return Promise.all(
+    sidecarSpecs.map(async (spec) => {
+      const configured = pluginConfig?.sidecars?.[spec.id];
+      const port = configured?.port ?? spec.defaultPort;
+      const url = port ? `http://127.0.0.1:${port}` : undefined;
+      const status = url ? await probeSidecar(url, spec.healthcheckPath) : "stopped";
+
+      return {
+        id: spec.id,
+        kind: spec.kind,
+        required: spec.required,
+        status,
+        url,
+        port
+      } satisfies SidecarEndpoint;
+    })
+  );
 }
 
 async function executeSerialMode(
@@ -648,7 +706,7 @@ export async function runConfiguredPluginBenchmark(
   const events: ProgressEvent[] = [];
   const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
   const startedAt = new Date().toISOString();
-  const executionMode = options?.executionMode ?? "parallel_models";
+  const executionMode = options?.executionMode ?? "parallel_by_model";
   let runErrorMessage: string | undefined;
   let cancelled = false;
 
@@ -671,13 +729,13 @@ export async function runConfiguredPluginBenchmark(
         case "serial":
           await executeSerialMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
-        case "parallel_scenarios":
+        case "parallel_by_test_case":
           await executeParallelScenariosMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "full_parallel":
           await executeFullParallelMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
-        case "parallel_models":
+        case "parallel_by_model":
         default:
           await executeParallelModelsMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
@@ -736,6 +794,63 @@ export async function runConfiguredPluginBenchmark(
   );
 
   return summary;
+}
+
+export async function listRunHistoryForPlugin(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<PluginRunHistoryEntry[]> {
+  const runRoot = getPluginRunRoot(config, pluginId);
+
+  if (!(await pathExists(runRoot))) {
+    return [];
+  }
+
+  const entries = await fs.readdir(runRoot, { withFileTypes: true });
+  const summaries: Array<PluginRunHistoryEntry | null> = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        const summaryPath = path.join(runRoot, entry.name, "summary.json");
+
+        if (!(await pathExists(summaryPath))) {
+          return null;
+        }
+
+        const summary = await readJsonFile<PluginRunSummary>(summaryPath);
+        return {
+          runId: summary.runId,
+          runDir: summary.runDir,
+          pluginId: summary.pluginId,
+          pluginName: summary.pluginName,
+          executionMode: summary.executionMode,
+          startedAt: summary.startedAt,
+          completedAt: summary.completedAt,
+          modelCount: summary.modelCount,
+          scenarioCount: summary.scenarioCount,
+          cancelled: summary.cancelled,
+          error: summary.error
+        } satisfies PluginRunHistoryEntry;
+      })
+  );
+
+  return summaries
+    .filter((entry): entry is PluginRunHistoryEntry => entry !== null)
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+}
+
+export async function loadRunSummaryForPlugin(
+  config: BenchLocalConfig,
+  pluginId: string,
+  runId: string
+): Promise<PluginRunSummary> {
+  const summaryPath = path.join(getPluginRunRoot(config, pluginId), runId, "summary.json");
+
+  if (!(await pathExists(summaryPath))) {
+    throw new Error(`Run history "${runId}" was not found for plugin "${pluginId}".`);
+  }
+
+  return readJsonFile<PluginRunSummary>(summaryPath);
 }
 
 export function createPluginHost() {

@@ -1,5 +1,7 @@
-import { ipcMain } from "electron";
+import { promises as fs } from "node:fs";
+import { dialog, ipcMain } from "electron";
 import type { BenchLocalConfig, BenchLocalWorkspaceState } from "@core";
+import type { DetachedLogsState } from "@/shared/desktop-api";
 import {
   getConfigPath,
   getWorkspaceStatePath,
@@ -8,17 +10,25 @@ import {
   saveConfigFile,
   saveWorkspaceStateFile
 } from "@core";
-import { inspectConfiguredPlugins, runConfiguredPluginBenchmark } from "@plugin-host";
+import { inspectConfiguredPlugins, listRunHistoryForPlugin, loadRunSummaryForPlugin, runConfiguredPluginBenchmark } from "@plugin-host";
+import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
 const WORKSPACES_LOAD_CHANNEL = "benchlocal:workspaces:load";
 const WORKSPACES_SAVE_CHANNEL = "benchlocal:workspaces:save";
+const WORKSPACES_EXPORT_CHANNEL = "benchlocal:workspaces:export";
+const WORKSPACES_IMPORT_CHANNEL = "benchlocal:workspaces:import";
 const PLUGIN_LIST_CHANNEL = "benchlocal:plugins:list";
 const PLUGIN_ACTIVE_RUNS_CHANNEL = "benchlocal:plugins:active-runs";
 const PLUGIN_RUN_CHANNEL = "benchlocal:plugins:run";
 const PLUGIN_STOP_CHANNEL = "benchlocal:plugins:stop";
+const PLUGIN_HISTORY_CHANNEL = "benchlocal:plugins:history";
+const PLUGIN_HISTORY_LOAD_CHANNEL = "benchlocal:plugins:history-load";
 const PLUGIN_RUN_EVENT_CHANNEL = "benchlocal:plugins:run-event";
+const LOGS_OPEN_DETACHED_CHANNEL = "benchlocal:logs:open-detached";
+const LOGS_CLOSE_DETACHED_CHANNEL = "benchlocal:logs:close-detached";
+const LOGS_PUBLISH_STATE_CHANNEL = "benchlocal:logs:publish-state";
 
 const activePluginRuns = new Map<
   string,
@@ -29,6 +39,8 @@ const activePluginRuns = new Map<
 >();
 
 export function registerIpcHandlers(): void {
+  const preloadPath = new URL("../preload/index.js", import.meta.url).pathname;
+
   ipcMain.handle(CONFIG_LOAD_CHANNEL, async () => {
     return loadOrCreateConfig();
   });
@@ -59,6 +71,79 @@ export function registerIpcHandlers(): void {
     };
   });
 
+  ipcMain.handle(
+    WORKSPACES_EXPORT_CHANNEL,
+    async (_event, input: { workspaceId: string; state: BenchLocalWorkspaceState }) => {
+      const workspace = input.state.workspaces[input.workspaceId];
+
+      if (!workspace) {
+        throw new Error(`Workspace "${input.workspaceId}" was not found.`);
+      }
+
+      const tabs = Object.fromEntries(
+        workspace.tabIds
+          .map((tabId) => input.state.tabs[tabId])
+          .filter((tab): tab is BenchLocalWorkspaceState["tabs"][string] => Boolean(tab))
+          .map((tab) => [tab.id, tab])
+      );
+
+      const result = await dialog.showSaveDialog({
+        title: "Export Workspace",
+        defaultPath: `${workspace.name.replace(/[^\w.-]+/g, "-").toLowerCase() || "workspace"}.benchlocal-workspace.json`,
+        filters: [{ name: "BenchLocal Workspace", extensions: ["json"] }]
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { exported: false };
+      }
+
+      await fs.writeFile(
+        result.filePath,
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            exportedAt: new Date().toISOString(),
+            workspace,
+            tabs
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      return { exported: true, filePath: result.filePath };
+    }
+  );
+
+  ipcMain.handle(WORKSPACES_IMPORT_CHANNEL, async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Import Workspace",
+      properties: ["openFile"],
+      filters: [{ name: "BenchLocal Workspace", extensions: ["json"] }]
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { imported: false };
+    }
+
+    const raw = await fs.readFile(result.filePaths[0], "utf8");
+    const parsed = JSON.parse(raw) as {
+      workspace?: BenchLocalWorkspaceState["workspaces"][string];
+      tabs?: BenchLocalWorkspaceState["tabs"];
+    };
+
+    if (!parsed.workspace || !parsed.tabs) {
+      throw new Error("Imported workspace file is missing workspace or tab data.");
+    }
+
+    return {
+      imported: true,
+      workspace: parsed.workspace,
+      tabs: parsed.tabs
+    };
+  });
+
   ipcMain.handle(PLUGIN_LIST_CHANNEL, async () => {
     const { config } = await loadOrCreateConfig();
     return inspectConfiguredPlugins(config);
@@ -71,6 +156,29 @@ export function registerIpcHandlers(): void {
     }));
   });
 
+  ipcMain.handle(PLUGIN_HISTORY_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return listRunHistoryForPlugin(config, input.pluginId);
+  });
+
+  ipcMain.handle(PLUGIN_HISTORY_LOAD_CHANNEL, async (_event, input: { pluginId: string; runId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return loadRunSummaryForPlugin(config, input.pluginId, input.runId);
+  });
+
+  ipcMain.handle(LOGS_OPEN_DETACHED_CHANNEL, async () => {
+    await openDetachedLogsWindow(preloadPath);
+    return { opened: true };
+  });
+
+  ipcMain.handle(LOGS_CLOSE_DETACHED_CHANNEL, async () => {
+    return { closed: closeDetachedLogsWindow() };
+  });
+
+  ipcMain.handle(LOGS_PUBLISH_STATE_CHANNEL, async (_event, state: DetachedLogsState) => {
+    publishDetachedLogsState(state);
+  });
+
   ipcMain.handle(
     PLUGIN_RUN_CHANNEL,
     async (
@@ -79,7 +187,7 @@ export function registerIpcHandlers(): void {
         tabId: string;
         pluginId: string;
         modelIds?: string[];
-        executionMode?: "serial" | "parallel_models" | "parallel_scenarios" | "full_parallel";
+        executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
       }
     ) => {
       if (activePluginRuns.has(input.tabId)) {

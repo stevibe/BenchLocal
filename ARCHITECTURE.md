@@ -220,15 +220,13 @@ auto_start = true
 
 ## Secrets
 
-BenchLocal should not default to storing raw API keys in `config.toml`.
+BenchLocal currently supports:
 
-Preferred order:
-
-1. OS keychain
+1. direct local API key storage in `config.toml`
 2. environment variable fallback
 3. explicit missing-secret error
 
-The config can reference the secret source, but not necessarily contain the raw value.
+This matches the current local-first desktop workflow while keeping provider credentials centralized in the host.
 
 ## Settings UI
 

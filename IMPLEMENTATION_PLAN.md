@@ -329,7 +329,7 @@ Reason:
 
 Recommendation:
 
-- OS keychain first
+- config-stored API key first
 - env fallback
 
 ## Run Storage Model

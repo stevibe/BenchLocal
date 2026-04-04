@@ -30,6 +30,7 @@ import type {
   BenchLocalModelConfig,
   BenchLocalPluginConfig,
   BenchLocalProviderConfig,
+  BenchLocalProviderKind,
   BenchLocalSidecarConfig,
   BenchLocalWorkspace,
   BenchLocalWorkspaceState,
@@ -38,8 +39,13 @@ import type {
   ProgressEvent,
   ScenarioResult,
   PluginInspection,
+  PluginRunHistoryEntry,
   PluginRunSummary
 } from "@core";
+import type { DetachedLogsState } from "@/shared/desktop-api";
+
+const DETACHED_LOGS_VIEW =
+  typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
 
 type SettingsTab = "providers" | "models" | "generation" | "plugins" | "sidecars" | "advanced";
 
@@ -51,6 +57,8 @@ type LoadState = {
 
 type ProviderFormState = {
   id: string;
+  kind: BenchLocalProviderKind;
+  name: string;
   enabled: boolean;
   base_url: string;
   api_key: string;
@@ -110,6 +118,24 @@ type ModelAliasModalState = {
   alias: string;
 };
 
+type WorkspaceModalState =
+  | {
+      mode: "rename";
+      workspaceId: string;
+      name: string;
+    }
+  | null;
+
+type ConfirmDialogState =
+  | {
+      title: string;
+      subtitle: string;
+      confirmLabel: string;
+      tone?: "danger" | "neutral";
+      onConfirm: () => void;
+    }
+  | null;
+
 type ResolvedTabModel = BenchLocalModelConfig & {
   displayLabel: string;
   alias?: string;
@@ -127,9 +153,18 @@ type ActiveRunEntry = {
 
 const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: string }> = [
   { value: "serial", label: "Serial" },
-  { value: "parallel_models", label: "Parallel per Model" },
-  { value: "parallel_scenarios", label: "Parallel per Test Case" },
+  { value: "parallel_by_model", label: "Parallel per Model" },
+  { value: "parallel_by_test_case", label: "Parallel per Test Case" },
   { value: "full_parallel", label: "Parallel for All" }
+];
+
+const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: string }> = [
+  { value: "openai_compatible", label: "OpenAI Compatible" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "ollama", label: "Ollama" },
+  { value: "llamacpp", label: "llama.cpp" },
+  { value: "mlx", label: "MLX" },
+  { value: "lmstudio", label: "LM Studio" }
 ];
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
@@ -165,11 +200,39 @@ function providerStatus(provider: BenchLocalProviderConfig): string {
   return "Open endpoint";
 }
 
+function providerKindLabel(kind: BenchLocalProviderKind): string {
+  return PROVIDER_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
+}
+
+function defaultProviderName(kind: BenchLocalProviderKind): string {
+  return providerKindLabel(kind);
+}
+
+function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
+  switch (kind) {
+    case "openrouter":
+      return "https://openrouter.ai/api/v1";
+    case "ollama":
+      return "http://127.0.0.1:11434/v1";
+    case "llamacpp":
+      return "http://127.0.0.1:8080/v1";
+    case "mlx":
+      return "http://127.0.0.1:8082/v1";
+    case "lmstudio":
+      return "http://127.0.0.1:1234/v1";
+    case "openai_compatible":
+    default:
+      return "https://api.example.com/v1";
+  }
+}
+
 function createEmptyProvider(): ProviderFormState {
   return {
     id: "",
+    kind: "openai_compatible",
+    name: "",
     enabled: true,
-    base_url: "http://127.0.0.1:11434/v1",
+    base_url: "https://api.example.com/v1",
     api_key: "",
     api_key_env: ""
   };
@@ -204,6 +267,8 @@ function createSidecar(): BenchLocalSidecarConfig {
 function toProviderForm(id: string, provider: BenchLocalProviderConfig): ProviderFormState {
   return {
     id,
+    kind: provider.kind,
+    name: provider.name,
     enabled: provider.enabled,
     base_url: provider.base_url,
     api_key: provider.api_key ?? "",
@@ -221,12 +286,18 @@ function toModelForm(model: BenchLocalModelConfig): ModelFormState {
   };
 }
 
-function buildModelConfig(form: ModelFormState): BenchLocalModelConfig {
+function buildModelConfig(
+  form: ModelFormState,
+  providers: Record<string, BenchLocalProviderConfig>
+): BenchLocalModelConfig {
+  const provider = providers[form.provider.trim()];
+  const providerLabel = provider?.name?.trim() || form.provider.trim();
+
   return {
     id: `${form.provider}:${form.model}`.trim(),
     provider: form.provider.trim(),
     model: form.model.trim(),
-    label: form.label.trim() || `${form.model.trim()} via ${form.provider.trim()}`,
+    label: form.label.trim() || `${form.model.trim()} via ${providerLabel}`,
     group: form.group.trim() || "primary",
     enabled: form.enabled
   };
@@ -264,6 +335,19 @@ function normalizeTabModelSelections(
       modelId: selection.modelId.trim(),
       alias: selection.alias?.trim() || undefined
     }));
+}
+
+function getTableScrollbarThumbWidth(metrics: {
+  clientWidth: number;
+  scrollWidth: number;
+  scrollLeft: number;
+}): number {
+  if (metrics.scrollWidth <= 0 || metrics.clientWidth <= 0) {
+    return 0;
+  }
+
+  const ratio = metrics.clientWidth / metrics.scrollWidth;
+  return Math.max(56, Math.round(metrics.clientWidth * ratio));
 }
 
 function resolveTabModels(tab: BenchLocalWorkspaceTab | null, models: BenchLocalModelConfig[]): ResolvedTabModel[] {
@@ -366,6 +450,10 @@ function updateLiveRunState(
 }
 
 export function App() {
+  if (DETACHED_LOGS_VIEW) {
+    return <DetachedLogsWindow />;
+  }
+
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
@@ -378,12 +466,18 @@ export function App() {
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
   const [tabModelsModal, setTabModelsModal] = useState<TabModelsModalState | null>(null);
   const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
+  const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
   const [stoppingRuns, setStoppingRuns] = useState<Record<string, true>>({});
   const [runSummaries, setRunSummaries] = useState<Record<string, PluginRunSummary>>({});
+  const [runHistories, setRunHistories] = useState<Record<string, PluginRunHistoryEntry[]>>({});
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsAutoScroll, setLogsAutoScroll] = useState(true);
+  const [logsDetached, setLogsDetached] = useState(false);
+  const [logDrawerHeight, setLogDrawerHeight] = useState(240);
   const [detailModal, setDetailModal] = useState<DetailModalState | null>(null);
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -460,6 +554,18 @@ export function App() {
       setPluginInspections(inspections);
     } catch (pluginError) {
       setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured plugins.");
+    }
+  };
+
+  const loadHistoryForPlugin = async (pluginId: string) => {
+    try {
+      const history = await window.benchlocal.plugins.history({ pluginId });
+      setRunHistories((current) => ({
+        ...current,
+        [pluginId]: history
+      }));
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : "Failed to load benchmark history.");
     }
   };
 
@@ -543,6 +649,57 @@ export function App() {
 
     logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
   }, [activeLogEvents, logsOpen, logsAutoScroll]);
+
+  useEffect(() => {
+    if (!activeInspection?.id || activeInspection.status !== "ready") {
+      return;
+    }
+
+    void loadHistoryForPlugin(activeInspection.id);
+  }, [activeInspection?.id, activeInspection?.status]);
+
+  useEffect(() => {
+    const dispose = window.benchlocal.logs.onDetachedWindowClosed(() => {
+      setLogsDetached(false);
+    });
+
+    return dispose;
+  }, []);
+
+  useEffect(() => {
+    void window.benchlocal.logs.publishDetachedState({
+      workspaceName: activeWorkspace?.name ?? "No Workspace",
+      tabTitle: activeTab?.title ?? "No Active Tab",
+      eventCount: activeLogEvents.length,
+      events: activeLogEvents
+    });
+  }, [activeWorkspace?.name, activeTab?.title, activeLogEvents]);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      const shell = document.querySelector<HTMLElement>(".desktop-shell");
+
+      if (!shell || !document.body.dataset.logResizeActive) {
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const nextHeight = Math.min(420, Math.max(160, shellRect.bottom - event.clientY - 30));
+      setLogDrawerHeight(nextHeight);
+    };
+
+    const handleUp = () => {
+      delete document.body.dataset.logResizeActive;
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, []);
 
   useEffect(() => {
     const updateOverflow = () => {
@@ -671,6 +828,7 @@ export function App() {
         setNotice(`Completed ${result.pluginName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`);
       }
       await loadPluginInspections();
+      await loadHistoryForPlugin(pluginId);
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : `Failed to run plugin benchmark for ${pluginId}.`);
     } finally {
@@ -750,13 +908,175 @@ export function App() {
         pluginId: defaultPluginId,
         focusedScenarioId: null,
         modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
-        executionMode: "parallel_models",
+        executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
       };
 
       return current;
     });
+  };
+
+  const renameWorkspace = (workspaceId: string, name: string) => {
+    updateWorkspaceState((current) => {
+      const workspace = current.workspaces[workspaceId];
+
+      if (!workspace) {
+        return current;
+      }
+
+      workspace.name = name.trim();
+      workspace.updatedAt = new Date().toISOString();
+      return current;
+    });
+  };
+
+  const deleteWorkspace = (workspaceId: string) => {
+    const removedTabIds = new Set(workspaceState?.workspaces[workspaceId]?.tabIds ?? []);
+
+    if (Array.from(removedTabIds).some((tabId) => activeRuns[tabId])) {
+      setError("Stop active benchmark runs before deleting this workspace.");
+      return;
+    }
+
+    updateWorkspaceState((current) => {
+      const workspace = current.workspaces[workspaceId];
+
+      if (!workspace) {
+        return current;
+      }
+
+      for (const tabId of workspace.tabIds) {
+        delete current.tabs[tabId];
+      }
+
+      delete current.workspaces[workspaceId];
+      current.workspaceOrder = current.workspaceOrder.filter((id) => id !== workspaceId);
+
+      if (current.workspaceOrder.length === 0) {
+        const now = new Date().toISOString();
+        const nextWorkspaceId = `workspace-${crypto.randomUUID()}`;
+        const nextTabId = `tab-${crypto.randomUUID()}`;
+        const defaultPluginId = readyInspections[0]?.id ?? pluginInspections[0]?.id ?? null;
+
+        current.workspaceOrder = [nextWorkspaceId];
+        current.activeWorkspaceId = nextWorkspaceId;
+        current.workspaces[nextWorkspaceId] = {
+          id: nextWorkspaceId,
+          name: "My Workspace",
+          tabIds: [nextTabId],
+          activeTabId: nextTabId,
+          createdAt: now,
+          updatedAt: now
+        };
+        current.tabs[nextTabId] = {
+          id: nextTabId,
+          title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
+          pluginId: defaultPluginId,
+          focusedScenarioId: null,
+          modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
+          executionMode: "parallel_by_model",
+          createdAt: now,
+          updatedAt: now
+        };
+      } else if (current.activeWorkspaceId === workspaceId) {
+        current.activeWorkspaceId = current.workspaceOrder[0] ?? null;
+      }
+
+      return current;
+    });
+
+    if (removedTabIds.size > 0) {
+      setRunSummaries((current) =>
+        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+      );
+      setLiveRuns((current) =>
+        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+      );
+      setActiveRuns((current) =>
+        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+      );
+      setStoppingRuns((current) =>
+        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId))) as Record<string, true>
+      );
+    }
+  };
+
+  const exportWorkspace = async (workspaceId: string) => {
+    if (!workspaceState) {
+      return;
+    }
+
+    try {
+      const result = await window.benchlocal.workspaces.export({
+        workspaceId,
+        state: workspaceState
+      });
+
+      if (result.exported) {
+        setNotice(`Exported workspace to ${result.filePath}.`);
+      }
+    } catch (workspaceError) {
+      setError(workspaceError instanceof Error ? workspaceError.message : "Failed to export workspace.");
+    }
+  };
+
+  const importWorkspace = async () => {
+    try {
+      const result = await window.benchlocal.workspaces.import();
+
+      if (!result.imported || !result.workspace || !result.tabs) {
+        return;
+      }
+
+      const importedWorkspace = result.workspace;
+      const importedTabs = result.tabs;
+      const workspaceIdMap = new Map<string, string>();
+      const tabIdMap = new Map<string, string>();
+      const newWorkspaceId = `workspace-${crypto.randomUUID()}`;
+      workspaceIdMap.set(importedWorkspace.id, newWorkspaceId);
+
+      updateWorkspaceState((current) => {
+        const now = new Date().toISOString();
+        const nextTabIds = importedWorkspace.tabIds.map((tabId) => {
+          const nextTabId = `tab-${crypto.randomUUID()}`;
+          tabIdMap.set(tabId, nextTabId);
+          const importedTab = importedTabs[tabId];
+
+          if (importedTab) {
+            current.tabs[nextTabId] = {
+              ...importedTab,
+              id: nextTabId,
+              createdAt: importedTab.createdAt ?? now,
+              updatedAt: now
+            };
+          }
+
+          return nextTabId;
+        });
+
+        current.workspaceOrder.push(newWorkspaceId);
+        current.activeWorkspaceId = newWorkspaceId;
+        current.workspaces[newWorkspaceId] = {
+          ...importedWorkspace,
+          id: newWorkspaceId,
+          name:
+            Object.values(current.workspaces).some((workspace) => workspace.name === importedWorkspace.name)
+              ? `${importedWorkspace.name} Imported`
+              : importedWorkspace.name,
+          tabIds: nextTabIds,
+          activeTabId: importedWorkspace.activeTabId ? tabIdMap.get(importedWorkspace.activeTabId) ?? nextTabIds[0] ?? null : nextTabIds[0] ?? null,
+          createdAt: importedWorkspace.createdAt ?? now,
+          updatedAt: now
+        };
+
+        return current;
+      });
+
+      setNotice(`Imported workspace "${importedWorkspace.name}".`);
+    } catch (workspaceError) {
+      setError(workspaceError instanceof Error ? workspaceError.message : "Failed to import workspace.");
+    }
   };
 
   const activateWorkspace = (workspaceId: string) => {
@@ -786,7 +1106,7 @@ export function App() {
         pluginId,
         focusedScenarioId: null,
         modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
-        executionMode: "parallel_models",
+        executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
       };
@@ -816,8 +1136,41 @@ export function App() {
     });
   };
 
+  const reorderTab = (draggedId: string, targetId: string) => {
+    if (!activeWorkspace || draggedId === targetId) {
+      return;
+    }
+
+    updateWorkspaceState((current) => {
+      const workspace = current.workspaces[activeWorkspace.id];
+
+      if (!workspace) {
+        return current;
+      }
+
+      const nextTabIds = [...workspace.tabIds];
+      const fromIndex = nextTabIds.indexOf(draggedId);
+      const toIndex = nextTabIds.indexOf(targetId);
+
+      if (fromIndex < 0 || toIndex < 0) {
+        return current;
+      }
+
+      const [moved] = nextTabIds.splice(fromIndex, 1);
+      nextTabIds.splice(toIndex, 0, moved);
+      workspace.tabIds = nextTabIds;
+      workspace.updatedAt = new Date().toISOString();
+      return current;
+    });
+  };
+
   const closeTab = (tabId: string) => {
     if (!activeWorkspace) {
+      return;
+    }
+
+    if (activeRuns[tabId]) {
+      setError("Stop the benchmark run before closing this tab.");
       return;
     }
 
@@ -844,7 +1197,7 @@ export function App() {
           pluginId: defaultPluginId,
           focusedScenarioId: null,
           modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
-          executionMode: "parallel_models",
+          executionMode: "parallel_by_model",
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
         };
@@ -869,6 +1222,28 @@ export function App() {
       delete next[tabId];
       return next;
     });
+  };
+
+  const restoreHistoryRun = async (pluginId: string, runId: string) => {
+    if (!activeTab) {
+      return;
+    }
+
+    try {
+      const summary = await window.benchlocal.plugins.loadHistory({ pluginId, runId });
+      setRunSummaries((current) => ({
+        ...current,
+        [activeTab.id]: summary
+      }));
+      setLiveRuns((current) => {
+        const next = { ...current };
+        delete next[activeTab.id];
+        return next;
+      });
+      setNotice(`Loaded history run ${runId}.`);
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : "Failed to load benchmark history.");
+    }
   };
 
   const saveProviderModal = () => {
@@ -901,6 +1276,8 @@ export function App() {
       }
 
       current.providers[providerId] = {
+        kind: providerModal.form.kind,
+        name: providerModal.form.name.trim() || defaultProviderName(providerModal.form.kind),
         enabled: providerModal.form.enabled,
         base_url: providerModal.form.base_url.trim(),
         api_key: providerModal.form.api_key.trim() || undefined,
@@ -952,7 +1329,7 @@ export function App() {
       return;
     }
 
-    const modelConfig = buildModelConfig(modelModal.form);
+    const modelConfig = buildModelConfig(modelModal.form, draft?.providers ?? {});
 
     if (!modelConfig.provider || !modelConfig.model) {
       setError("Model provider and model identifier are required.");
@@ -1034,11 +1411,15 @@ export function App() {
 	                <h1>LLM Benchmark Suite</h1>
 	              </div>
 
-	              <div className="toolbar-cluster">
+              <div className="toolbar-cluster">
 	                <button type="button" onClick={createWorkspace} className="ghost-button">
 	                  <Plus size={14} />
 	                  New Workspace
 	                </button>
+                  <button type="button" onClick={() => void importWorkspace()} className="ghost-button">
+                    <FolderOpen size={14} />
+                    Import Workspace
+                  </button>
 	                <NewTabDropdown
 	                  inspections={readyInspections}
 	                  open={tabMenuOpen}
@@ -1075,20 +1456,71 @@ export function App() {
 	                    }
 
 	                    return (
-	                      <button
+	                      <div
 	                        key={workspace.id}
-	                        type="button"
+                          role="button"
+                          tabIndex={0}
 	                        onClick={() => activateWorkspace(workspace.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              activateWorkspace(workspace.id);
+                            }
+                          }}
 	                        className={`sidebar-item${activeWorkspace?.id === workspace.id ? " is-active" : ""}`}
-	                      >
-	                        <div className="sidebar-item-main">
-	                          <div className="sidebar-item-title">{workspace.name}</div>
-	                          <div className="sidebar-item-meta">{workspace.tabIds.length} tab{workspace.tabIds.length === 1 ? "" : "s"}</div>
-	                        </div>
-	                        <span className="status-chip status-idle">
-	                          {workspace.activeTabId ? "Active" : "Empty"}
-	                        </span>
-	                      </button>
+		                      >
+		                        <div className="sidebar-item-main">
+		                          <div className="sidebar-item-title">{workspace.name}</div>
+                              <div className="sidebar-item-footer">
+		                            <div className="sidebar-item-meta">{workspace.tabIds.length} tab{workspace.tabIds.length === 1 ? "" : "s"}</div>
+	                            <div className="sidebar-item-actions">
+	                              <button
+	                                type="button"
+                                className="sidebar-item-action"
+                                title="Rename workspace"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setWorkspaceModal({
+                                    mode: "rename",
+                                    workspaceId: workspace.id,
+                                    name: workspace.name
+                                  });
+                                }}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="sidebar-item-action"
+                                title="Export workspace"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void exportWorkspace(workspace.id);
+                                }}
+                              >
+                                <Save size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                className="sidebar-item-action is-danger"
+                                title="Delete workspace"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setConfirmDialog({
+                                    title: "Delete Workspace",
+                                    subtitle: `Delete "${workspace.name}" and all of its tabs? This cannot be undone.`,
+                                    confirmLabel: "Delete Workspace",
+                                    tone: "danger",
+                                    onConfirm: () => deleteWorkspace(workspace.id)
+                                  });
+                                }}
+                              >
+	                                <Trash2 size={13} />
+	                              </button>
+	                            </div>
+                              </div>
+		                        </div>
+		                      </div>
 	                    );
 	                  })
 	                ) : (
@@ -1114,13 +1546,30 @@ export function App() {
                               const isTabRunning = Boolean(activeRuns[tab.id]);
                               const showWarning = !isTabRunning && inspection && inspection.status !== "ready";
 
-	                            return (
-	                              <button
-	                                key={tab.id}
-	                                type="button"
-	                                onClick={() => activateTab(tab.id)}
-	                                className={`tab-chip${activeTab?.id === tab.id ? " is-active" : ""}`}
-	                              >
+		                            return (
+		                              <button
+		                                key={tab.id}
+		                                type="button"
+                                      draggable
+                                      onDragStart={(event) => {
+                                        event.dataTransfer.setData("text/plain", tab.id);
+                                        event.dataTransfer.effectAllowed = "move";
+                                        setDraggedTabId(tab.id);
+                                      }}
+                                      onDragEnd={() => setDraggedTabId(null)}
+                                      onDragOver={(event) => {
+                                        event.preventDefault();
+                                        event.dataTransfer.dropEffect = "move";
+                                      }}
+                                      onDrop={(event) => {
+                                        event.preventDefault();
+                                        const sourceTabId = event.dataTransfer.getData("text/plain");
+                                        reorderTab(sourceTabId, tab.id);
+                                        setDraggedTabId(null);
+                                      }}
+		                                onClick={() => activateTab(tab.id)}
+		                                className={`tab-chip${activeTab?.id === tab.id ? " is-active" : ""}${draggedTabId === tab.id ? " is-dragging" : ""}`}
+		                              >
 	                                <span className="tab-chip-title">{tab.title}</span>
                                     {isTabRunning ? (
                                       <span className="tab-chip-spinner" title="Benchmark running">
@@ -1138,13 +1587,23 @@ export function App() {
 	                                  className="tab-chip-close"
 	                                  onClick={(event) => {
 	                                    event.stopPropagation();
-	                                    closeTab(tab.id);
+                                      setConfirmDialog({
+                                        title: "Close Tab",
+                                        subtitle: `Close "${tab.title}"? The benchmark tab will be removed from this workspace.`,
+                                        confirmLabel: "Close Tab",
+                                        onConfirm: () => closeTab(tab.id)
+                                      });
 	                                  }}
 	                                  onKeyDown={(event) => {
 	                                    if (event.key === "Enter" || event.key === " ") {
 	                                      event.preventDefault();
 	                                      event.stopPropagation();
-	                                      closeTab(tab.id);
+                                        setConfirmDialog({
+                                          title: "Close Tab",
+                                          subtitle: `Close "${tab.title}"? The benchmark tab will be removed from this workspace.`,
+                                          confirmLabel: "Close Tab",
+                                          onConfirm: () => closeTab(tab.id)
+                                        });
 	                                    }
 	                                  }}
 	                                >
@@ -1190,6 +1649,7 @@ export function App() {
 	                            inspection={activeInspection}
 	                            selectedModels={activeTabModels}
 	                            runSummary={activeRunSummary}
+                              historyEntries={runHistories[activeInspection.id] ?? []}
 	                            liveRun={activeLiveRun}
 	                            focusedScenarioId={activeTab.focusedScenarioId}
 	                            onFocusScenario={(scenarioId) =>
@@ -1213,6 +1673,7 @@ export function App() {
 	                              })
 	                            }
 	                            executionMode={activeTab.executionMode}
+                              onLoadHistory={(runId) => void restoreHistoryRun(activeInspection.id, runId)}
                               onEditModelAlias={(model) =>
                                 setModelAliasModal({
                                   tabId: activeTab.id,
@@ -1248,8 +1709,14 @@ export function App() {
 	                  )
 	                ) : null}
 	              </div>
-                {logsOpen ? (
-                  <section className="bottom-drawer">
+                {logsOpen && !logsDetached ? (
+                  <section className="bottom-drawer" style={{ flexBasis: `${logDrawerHeight}px` }}>
+                    <div
+                      className="bottom-drawer-resizer"
+                      onMouseDown={() => {
+                        document.body.dataset.logResizeActive = "true";
+                      }}
+                    />
                     <div className="bottom-drawer-header">
                       <div>
                         <p className="eyebrow">Run Logs</p>
@@ -1312,6 +1779,24 @@ export function App() {
                 <Logs size={13} />
                 {logsOpen ? "Hide Logs" : "Show Logs"}
               </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (logsDetached) {
+                    await window.benchlocal.logs.closeDetachedWindow();
+                    setLogsDetached(false);
+                    return;
+                  }
+
+                  await window.benchlocal.logs.openDetachedWindow();
+                  setLogsDetached(true);
+                  setLogsOpen(false);
+                }}
+                className={`status-footer-button${logsDetached ? " is-active" : ""}`}
+              >
+                <Sidebar size={13} />
+                {logsDetached ? "Close Log Window" : "Detach Logs"}
+              </button>
               <span className="status-footer-item">{activeLogEvents.length} events</span>
             </div>
           </footer>
@@ -1369,6 +1854,41 @@ export function App() {
           submitLabel={providerModal.mode === "create" ? "Create Provider" : "Save Provider"}
         >
           <Field label="Provider ID" value={providerModal.form.id} readOnly={providerModal.mode === "edit"} onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, id: value } } : current)} />
+          <InlineSelectField
+            label="Provider Kind"
+            value={providerModal.form.kind}
+            options={PROVIDER_KIND_OPTIONS.map((option) => option.value)}
+            getOptionLabel={(value) => providerKindLabel(value as BenchLocalProviderKind)}
+            onChange={(value) =>
+              setProviderModal((current) =>
+                current
+                  ? {
+                      ...current,
+                      form: {
+                        ...current.form,
+                        kind: value as BenchLocalProviderKind,
+                        name:
+                          current.form.name.trim() === "" || current.form.name === defaultProviderName(current.form.kind)
+                            ? defaultProviderName(value as BenchLocalProviderKind)
+                            : current.form.name,
+                        base_url:
+                          current.form.base_url === defaultProviderBaseUrl(current.form.kind)
+                            ? defaultProviderBaseUrl(value as BenchLocalProviderKind)
+                            : current.form.base_url
+                      }
+                    }
+                  : current
+              )
+            }
+          />
+          <Field
+            label="Display Name"
+            value={providerModal.form.name}
+            placeholder={defaultProviderName(providerModal.form.kind)}
+            onChange={(value) =>
+              setProviderModal((current) => current ? { ...current, form: { ...current.form, name: value } } : current)
+            }
+          />
           <Field label="Base URL" value={providerModal.form.base_url} onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, base_url: value } } : current)} />
           <Field
             label="API Key"
@@ -1395,7 +1915,16 @@ export function App() {
           onSubmit={saveModelModal}
           submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
         >
-          <InlineSelectField label="Provider" value={modelModal.form.provider} options={providerIds.length > 0 ? providerIds : ["openrouter"]} onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)} />
+          <InlineSelectField
+            label="Provider"
+            value={modelModal.form.provider}
+            options={providerIds.length > 0 ? providerIds : ["openrouter"]}
+            getOptionLabel={(value) => {
+              const provider = draft?.providers[value];
+              return provider ? `${provider.name} (${value})` : value;
+            }}
+            onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
+          />
           <Field label="Model Identifier" value={modelModal.form.model} placeholder="openai/gpt-4.1" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, model: value } } : current)} />
           <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
           <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
@@ -1466,6 +1995,44 @@ export function App() {
             }
           />
         </Modal>
+      ) : null}
+
+      {workspaceModal ? (
+        <Modal
+          title="Rename Workspace"
+          subtitle="Change the display name for this workspace."
+          onClose={() => setWorkspaceModal(null)}
+          onSubmit={() => {
+            if (!workspaceModal.name.trim()) {
+              setError("Workspace name is required.");
+              return;
+            }
+
+            renameWorkspace(workspaceModal.workspaceId, workspaceModal.name);
+            setWorkspaceModal(null);
+          }}
+          submitLabel="Save Workspace"
+        >
+          <Field
+            label="Workspace Name"
+            value={workspaceModal.name}
+            onChange={(value) => setWorkspaceModal((current) => (current ? { ...current, name: value } : current))}
+          />
+        </Modal>
+      ) : null}
+
+      {confirmDialog ? (
+        <Modal
+          title={confirmDialog.title}
+          subtitle={confirmDialog.subtitle}
+          onClose={() => setConfirmDialog(null)}
+          onSubmit={() => {
+            confirmDialog.onConfirm();
+            setConfirmDialog(null);
+          }}
+          submitLabel={confirmDialog.confirmLabel}
+          submitTone={confirmDialog.tone === "danger" ? "danger" : "primary"}
+        />
       ) : null}
 
       {detailModal ? (
@@ -1548,6 +2115,7 @@ function BenchmarkSection({
   inspection,
   selectedModels,
   runSummary,
+  historyEntries,
   liveRun,
   focusedScenarioId,
   onFocusScenario,
@@ -1555,6 +2123,7 @@ function BenchmarkSection({
   onEditModelAlias,
   executionMode,
   onChangeExecutionMode,
+  onLoadHistory,
   isRunning,
   isStopping,
   onRun,
@@ -1564,6 +2133,7 @@ function BenchmarkSection({
   inspection: PluginInspection;
   selectedModels: ResolvedTabModel[];
   runSummary: PluginRunSummary | null;
+  historyEntries: PluginRunHistoryEntry[];
   liveRun: LiveRunState | null;
   focusedScenarioId: string | null;
   onFocusScenario: (scenarioId: string) => void;
@@ -1571,6 +2141,7 @@ function BenchmarkSection({
   onEditModelAlias: (model: ResolvedTabModel) => void;
   executionMode: BenchLocalExecutionMode;
   onChangeExecutionMode: (executionMode: BenchLocalExecutionMode) => void;
+  onLoadHistory: (runId: string) => void;
   isRunning: boolean;
   isStopping: boolean;
   onRun: () => void;
@@ -1578,26 +2149,56 @@ function BenchmarkSection({
   onOpenDetail: (detail: DetailModalState) => void;
 }) {
   const [runModeOpen, setRunModeOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const runModeRef = useRef<HTMLDivElement | null>(null);
+  const historyMenuRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollbarDragRef = useRef<{
+    startX: number;
+    startScrollLeft: number;
+  } | null>(null);
+  const [tableScrollMetrics, setTableScrollMetrics] = useState({
+    clientWidth: 0,
+    scrollWidth: 0,
+    scrollLeft: 0
+  });
   const scenarios = inspection.scenarios ?? [];
   const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
+  const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
+  const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
+  const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
+  const scrollbarThumbOffset =
+    hasHorizontalOverflow && tableScrollbarTrackRef.current
+      ? ((tableScrollMetrics.scrollLeft / Math.max(1, tableScrollMetrics.scrollWidth - tableScrollMetrics.clientWidth)) *
+          Math.max(0, tableScrollbarTrackRef.current.clientWidth - scrollbarThumbWidth))
+      : 0;
 
   useEffect(() => {
-    if (!runModeOpen) {
+    if (!runModeOpen && !historyOpen) {
       return;
     }
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!runModeRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insideRunMode = runModeRef.current?.contains(target);
+      const insideHistory = historyMenuRef.current?.contains(target);
+
+      if (!insideRunMode) {
         setRunModeOpen(false);
+      }
+
+      if (!insideHistory) {
+        setHistoryOpen(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setRunModeOpen(false);
+        setHistoryOpen(false);
       }
     };
 
@@ -1608,7 +2209,69 @@ function BenchmarkSection({
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [runModeOpen]);
+  }, [runModeOpen, historyOpen]);
+
+  useEffect(() => {
+    const viewport = tableScrollViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const updateMetrics = () => {
+      setTableScrollMetrics({
+        clientWidth: viewport.clientWidth,
+        scrollWidth: viewport.scrollWidth,
+        scrollLeft: viewport.scrollLeft
+      });
+    };
+
+    const syncFromViewport = () => {
+      updateMetrics();
+    };
+
+    updateMetrics();
+    viewport.addEventListener("scroll", syncFromViewport);
+    window.addEventListener("resize", updateMetrics);
+
+    return () => {
+      viewport.removeEventListener("scroll", syncFromViewport);
+      window.removeEventListener("resize", updateMetrics);
+    };
+  }, [selectedModels.length, scenarios.length, runSummary, liveRun]);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      const viewport = tableScrollViewportRef.current;
+      const track = tableScrollbarTrackRef.current;
+      const drag = tableScrollbarDragRef.current;
+
+      if (!viewport || !track || !drag) {
+        return;
+      }
+
+      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const maxThumbOffset = Math.max(1, track.clientWidth - getTableScrollbarThumbWidth(tableScrollMetrics));
+      const deltaX = event.clientX - drag.startX;
+      const nextScrollLeft = Math.min(
+        maxScrollLeft,
+        Math.max(0, drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft)
+      );
+      viewport.scrollLeft = nextScrollLeft;
+    };
+
+    const handleUp = () => {
+      tableScrollbarDragRef.current = null;
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [tableScrollMetrics]);
 
   if (inspection.status !== "ready") {
     return (
@@ -1754,6 +2417,38 @@ function BenchmarkSection({
             <Bot size={14} />
             Edit Models
           </button>
+          <div ref={historyMenuRef} className="run-mode-dropdown">
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => setHistoryOpen((current) => !current)}
+              disabled={historyEntries.length === 0}
+            >
+              <RotateCcw size={14} />
+              Test Histories
+              <ChevronDown size={15} />
+            </button>
+            {historyOpen ? (
+              <div className="run-mode-menu history-menu" role="menu">
+                {historyEntries.map((entry) => (
+                  <button
+                    key={entry.runId}
+                    type="button"
+                    className="run-mode-menu-item history-menu-item"
+                    onClick={() => {
+                      onLoadHistory(entry.runId);
+                      setHistoryOpen(false);
+                    }}
+                  >
+                    <span>{new Date(entry.startedAt).toLocaleString()}</span>
+                    <span className="history-menu-meta">
+                      {entry.modelCount} model{entry.modelCount === 1 ? "" : "s"} · {entry.scenarioCount} cases
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <span className={`status-chip ${statusClasses(inspection.status)}`}>
             {inspection.status.replaceAll("_", " ")}
           </span>
@@ -1815,11 +2510,14 @@ function BenchmarkSection({
             {selectedModels.length === 0 ? (
               <p className="muted-copy" style={{ padding: "0 16px 16px" }}>No models are selected for this tab. Click Edit Models and choose at least one enabled model.</p>
             ) : (
-              <div className="table-scroll">
-                <table className="result-table">
+              <>
+                <div ref={tableScrollViewportRef} className="table-scroll">
+                  <table className="result-table">
                   <thead>
                     <tr>
-                      <th className="scenario-row-label">Model</th>
+                      <th className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
+                        <span>Model</span>
+                      </th>
                       {scenarios.map((scenario) => (
                         <th
                           key={scenario.id}
@@ -1842,7 +2540,7 @@ function BenchmarkSection({
                   <tbody>
                     {selectedModels.map((model) => (
                       <tr key={model.id}>
-                        <td className="scenario-row-label">
+                        <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
                           <button
                             type="button"
                             className="model-badge-button"
@@ -1863,8 +2561,62 @@ function BenchmarkSection({
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                  </table>
+                </div>
+                {hasHorizontalOverflow ? (
+                  <div
+                    ref={tableScrollbarTrackRef}
+                    className="table-scrollbar"
+                    aria-hidden="true"
+                    onMouseDown={(event) => {
+                      const viewport = tableScrollViewportRef.current;
+                      const track = tableScrollbarTrackRef.current;
+
+                      if (!viewport || !track) {
+                        return;
+                      }
+
+                      const rect = track.getBoundingClientRect();
+                      const clickX = event.clientX - rect.left;
+
+                      if (clickX >= scrollbarThumbOffset && clickX <= scrollbarThumbOffset + scrollbarThumbWidth) {
+                        return;
+                      }
+
+                      const nextOffset = Math.max(
+                        0,
+                        Math.min(track.clientWidth - scrollbarThumbWidth, clickX - scrollbarThumbWidth / 2)
+                      );
+                      const nextScrollLeft =
+                        (nextOffset / Math.max(1, track.clientWidth - scrollbarThumbWidth)) *
+                        Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+                      viewport.scrollLeft = nextScrollLeft;
+                    }}
+                  >
+                    <div
+                      className="table-scrollbar-thumb"
+                      style={{
+                        width: `${scrollbarThumbWidth}px`,
+                        transform: `translateX(${scrollbarThumbOffset}px)`
+                      }}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        const viewport = tableScrollViewportRef.current;
+
+                        if (!viewport) {
+                          return;
+                        }
+
+                        tableScrollbarDragRef.current = {
+                          startX: event.clientX,
+                          startScrollLeft: viewport.scrollLeft
+                        };
+                        document.body.style.userSelect = "none";
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </>
             )}
           </section>
 
@@ -2035,6 +2787,71 @@ function EmptyWorkspace() {
         </p>
       </div>
     </section>
+  );
+}
+
+function DetachedLogsWindow() {
+  const [state, setState] = useState<DetachedLogsState>({
+    workspaceName: "No Workspace",
+    tabTitle: "No Active Tab",
+    eventCount: 0,
+    events: []
+  });
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return window.benchlocal.logs.onDetachedState((nextState) => {
+      setState(nextState);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!autoScroll || !logContainerRef.current) {
+      return;
+    }
+
+    logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+  }, [state, autoScroll]);
+
+  return (
+    <div className="detached-logs-shell">
+      <header className="detached-logs-header">
+        <div>
+          <p className="eyebrow">Run Logs</p>
+          <h2 className="detached-logs-title">{state.tabTitle}</h2>
+          <p className="muted-copy" style={{ marginTop: "6px" }}>{state.workspaceName}</p>
+        </div>
+        <div className="section-actions">
+          <label className="drawer-toggle">
+            <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
+            <span>Auto Scroll</span>
+          </label>
+          <span className="status-chip status-idle">{state.eventCount} events</span>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void window.benchlocal.logs.closeDetachedWindow()}
+          >
+            <X size={14} />
+            Close Window
+          </button>
+        </div>
+      </header>
+
+      {state.events.length > 0 ? (
+        <div ref={logContainerRef} className="event-trail detached-logs-trail">
+          {state.events.map((event, index) => (
+            <div key={`${event.type}-${index}`} className="event-row">
+              <span className="event-type">{event.type}</span>
+              <span className="event-payload"> {JSON.stringify(event)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="bottom-drawer-empty">No run logs are being streamed yet.</div>
+      )}
+    </div>
   );
 }
 
@@ -2339,6 +3156,7 @@ function ProvidersView({
           <thead>
             <tr>
               <th>Provider</th>
+              <th>Type</th>
               <th>Status</th>
               <th>Base URL</th>
               <th>Models</th>
@@ -2354,7 +3172,11 @@ function ProvidersView({
               return (
                 <tr key={providerId}>
                   <td>
-                    <div className="settings-row-primary">{providerId}</div>
+                    <div className="settings-row-primary">{provider.name}</div>
+                    <div className="settings-row-secondary settings-mono-cell">{providerId}</div>
+                  </td>
+                  <td>
+                    <div className="settings-row-secondary">{providerKindLabel(provider.kind)}</div>
                     <div className="settings-row-secondary">{providerStatus(provider)}</div>
                   </td>
                   <td>
@@ -2614,6 +3436,7 @@ function Modal({
   onClose,
   onSubmit,
   submitLabel,
+  submitTone = "primary",
   children
 }: {
   title: string;
@@ -2621,24 +3444,26 @@ function Modal({
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
-  children: ReactNode;
+  submitTone?: "primary" | "danger";
+  children?: ReactNode;
 }) {
   return (
     <div className="dialog-backdrop">
       <div className="dialog-shell">
-        <div className="dialog-header" style={{ paddingBottom: "20px", borderBottom: "1px solid var(--line)" }}>
+        <div className="dialog-header">
           <div>
             <h3 className="dialog-title">{title}</h3>
             <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p>
           </div>
-          <button type="button" onClick={onClose} className="ghost-button"><X size={14} />Close</button>
+          <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
+            <X size={16} />
+          </button>
         </div>
 
         <div style={{ marginTop: "20px", display: "grid", gap: "16px" }}>{children}</div>
 
-        <div className="modal-actions" style={{ justifyContent: "flex-end", paddingTop: "20px", borderTop: "1px solid var(--line)", marginTop: "24px" }}>
-          <button type="button" onClick={onClose} className="ghost-button"><X size={14} />Cancel</button>
-          <button type="button" onClick={onSubmit} className="primary-button">{submitLabel}</button>
+        <div className="modal-actions">
+          <button type="button" onClick={onSubmit} className={submitTone === "danger" ? "button-danger" : "primary-button"}>{submitLabel}</button>
         </div>
       </div>
     </div>
@@ -2696,11 +3521,13 @@ function InlineSelectField({
   label,
   value,
   options,
+  getOptionLabel,
   onChange
 }: {
   label: string;
   value: string;
   options: string[];
+  getOptionLabel?: (value: string) => string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -2713,7 +3540,7 @@ function InlineSelectField({
       >
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {getOptionLabel ? getOptionLabel(option) : option}
           </option>
         ))}
       </select>

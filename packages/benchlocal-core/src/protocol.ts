@@ -72,6 +72,20 @@ export interface PluginRunSummary {
   scores: Record<string, BenchmarkScore>;
 }
 
+export interface PluginRunHistoryEntry {
+  runId: string;
+  runDir: string;
+  pluginId: string;
+  pluginName: string;
+  executionMode?: BenchLocalExecutionMode;
+  startedAt: string;
+  completedAt: string;
+  modelCount: number;
+  scenarioCount: number;
+  cancelled?: boolean;
+  error?: string;
+}
+
 export interface ScenarioMeta {
   id: ScenarioId;
   title: string;
@@ -82,6 +96,8 @@ export interface ScenarioMeta {
 
 export interface ProviderConfig {
   id: string;
+  kind: "openrouter" | "ollama" | "llamacpp" | "mlx" | "lmstudio" | "openai_compatible";
+  name: string;
   enabled: boolean;
   baseUrl: string;
   authMode: "none" | "bearer";

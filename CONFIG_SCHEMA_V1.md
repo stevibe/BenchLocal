@@ -31,7 +31,7 @@ It should remain stable, readable, and migration-friendly.
 
 - `config.toml` stores durable user config.
 - `state.json` stores ephemeral UI state.
-- secrets should not be stored in plain text by default.
+- provider API keys may be stored directly in `config.toml` in the current BenchLocal implementation.
 - all paths should support `~` expansion.
 
 ## Top-Level Schema
@@ -59,14 +59,25 @@ max_concurrent_models = 8
 max_concurrent_runs = 1
 
 [providers.openrouter]
+kind = "openrouter"
+name = "OpenRouter"
 enabled = true
 base_url = "https://openrouter.ai/api/v1"
-secret_ref = "keychain:benchlocal/openrouter"
+api_key = "sk-or-v1-..."
 api_key_env = "OPENROUTER_API_KEY"
 
 [providers.ollama]
+kind = "ollama"
+name = "Ollama"
 enabled = true
 base_url = "http://127.0.0.1:11434/v1"
+
+[providers.my_vendor]
+kind = "openai_compatible"
+name = "My Vendor"
+enabled = true
+base_url = "https://llm.example.com/v1"
+api_key = "sk-live-..."
 
 [[models]]
 id = "openrouter:openai/gpt-4.1"
@@ -168,21 +179,30 @@ Known built-in provider IDs:
 
 Supported fields:
 
+- `kind`
+- `name`
 - `enabled`
 - `base_url`
-- `secret_ref`
+- `api_key`
 - `api_key_env`
-
-`secret_ref` is an indirection, not the raw secret.
 
 Examples:
 
 ```toml
 [providers.openrouter]
+kind = "openrouter"
+name = "OpenRouter"
 enabled = true
 base_url = "https://openrouter.ai/api/v1"
-secret_ref = "keychain:benchlocal/openrouter"
+api_key = "sk-or-v1-..."
 api_key_env = "OPENROUTER_API_KEY"
+
+[providers.my_vendor]
+kind = "openai_compatible"
+name = "My Vendor"
+enabled = true
+base_url = "https://llm.example.com/v1"
+api_key = "sk-live-..."
 ```
 
 ```toml
@@ -273,17 +293,17 @@ BenchLocal should validate this against the plugin manifest.
 
 ## Secrets Policy
 
-Default policy:
+Current policy:
 
-- store secret references in `config.toml`
-- store raw secret values in OS keychain
-- allow environment variable fallback
+- allow direct local API key storage in `config.toml`
+- allow environment variable fallback via `api_key_env`
+- do not duplicate provider secrets inside plugin repos
 
 BenchLocal should expose this in the settings UI clearly:
 
 - key present
-- key missing
 - env fallback configured
+- key missing
 
 ## UI Editing Rules
 

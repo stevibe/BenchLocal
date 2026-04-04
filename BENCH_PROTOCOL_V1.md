@@ -56,6 +56,8 @@ lib/
 scripts/
 ```
 
+Plugin authors should build against `@benchlocal/sdk` rather than hand-rolling the host context and plugin object shape.
+
 ## Manifest
 
 File name:
@@ -205,7 +207,9 @@ export interface HostContext {
 
 ```ts
 export interface ProviderConfig {
-  id: "openrouter" | "ollama" | "llamacpp" | "mlx" | "lmstudio" | string;
+  id: string;
+  kind: "openrouter" | "ollama" | "llamacpp" | "mlx" | "lmstudio" | "openai_compatible";
+  name: string;
   enabled: boolean;
   baseUrl: string;
   authMode: "none" | "bearer";
@@ -248,7 +252,7 @@ export interface SecretResolution {
   providerId: string;
   keyName: string;
   value?: string;
-  source: "keychain" | "env" | "none";
+  source: "config" | "env" | "none";
 }
 ```
 

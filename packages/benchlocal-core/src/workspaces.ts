@@ -6,8 +6,8 @@ import { getBenchLocalHome } from "./config.js";
 
 export type BenchLocalExecutionMode =
   | "serial"
-  | "parallel_models"
-  | "parallel_scenarios"
+  | "parallel_by_model"
+  | "parallel_by_test_case"
   | "full_parallel";
 
 export type BenchLocalWorkspaceTabModelSelection = {
@@ -62,7 +62,20 @@ const WorkspaceTabSchema = z.object({
       })
     )
     .default([]),
-  executionMode: z.enum(["serial", "parallel_models", "parallel_scenarios", "full_parallel"]).default("parallel_models"),
+  executionMode: z
+    .enum(["serial", "parallel_by_model", "parallel_by_test_case", "parallel_models", "parallel_scenarios", "full_parallel"])
+    .default("parallel_by_model")
+    .transform((value) => {
+      if (value === "parallel_models") {
+        return "parallel_by_model";
+      }
+
+      if (value === "parallel_scenarios") {
+        return "parallel_by_test_case";
+      }
+
+      return value;
+    }),
   createdAt: z.string().trim().min(1),
   updatedAt: z.string().trim().min(1)
 });
@@ -114,7 +127,7 @@ export function createDefaultWorkspaceState(defaultPlugin = "toolcall-15"): Benc
         pluginId: defaultPlugin,
         focusedScenarioId: null,
         modelSelections: [],
-        executionMode: "parallel_models",
+        executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
       }
@@ -144,7 +157,7 @@ function normalizeWorkspaceState(raw: unknown, defaultPlugin = "toolcall-15"): B
     tabs[tabId] = {
       ...tab,
       modelSelections: (tab.modelSelections ?? []).filter((selection) => Boolean(selection.modelId)),
-      executionMode: tab.executionMode ?? "parallel_models"
+      executionMode: tab.executionMode ?? "parallel_by_model"
     };
   }
 

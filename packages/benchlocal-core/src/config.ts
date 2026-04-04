@@ -5,11 +5,20 @@ import { fileURLToPath } from "node:url";
 import { parse, stringify } from "smol-toml";
 import { z } from "zod";
 
+export type BenchLocalProviderKind =
+  | "openrouter"
+  | "ollama"
+  | "llamacpp"
+  | "mlx"
+  | "lmstudio"
+  | "openai_compatible";
+
 export type BenchLocalProviderConfig = {
+  kind: BenchLocalProviderKind;
+  name: string;
   enabled: boolean;
   base_url: string;
   api_key?: string;
-  secret_ref?: string;
   api_key_env?: string;
 };
 
@@ -71,10 +80,13 @@ export type LoadedBenchLocalConfig = {
 };
 
 const ProviderSchema = z.object({
+  kind: z
+    .enum(["openrouter", "ollama", "llamacpp", "mlx", "lmstudio", "openai_compatible"])
+    .optional(),
+  name: z.string().trim().min(1).optional(),
   enabled: z.boolean().default(true),
   base_url: z.string().trim().min(1),
   api_key: z.string().trim().min(1).optional(),
-  secret_ref: z.string().trim().min(1).optional(),
   api_key_env: z.string().trim().min(1).optional()
 });
 
@@ -188,27 +200,78 @@ function getBenchLocalWorkspaceRoot(): string {
 function createDefaultProviders(): Record<string, BenchLocalProviderConfig> {
   return {
     openrouter: {
+      kind: "openrouter",
+      name: "OpenRouter",
       enabled: true,
       base_url: "https://openrouter.ai/api/v1",
       api_key_env: "OPENROUTER_API_KEY"
     },
     ollama: {
+      kind: "ollama",
+      name: "Ollama",
       enabled: true,
       base_url: "http://127.0.0.1:11434/v1"
     },
     llamacpp: {
+      kind: "llamacpp",
+      name: "llama.cpp",
       enabled: false,
       base_url: "http://127.0.0.1:8080/v1"
     },
     mlx: {
+      kind: "mlx",
+      name: "MLX",
       enabled: false,
       base_url: "http://127.0.0.1:8082/v1"
     },
     lmstudio: {
+      kind: "lmstudio",
+      name: "LM Studio",
       enabled: false,
       base_url: "http://127.0.0.1:1234/v1"
     }
   };
+}
+
+function inferProviderKind(providerId: string): BenchLocalProviderKind {
+  switch (providerId) {
+    case "openrouter":
+      return "openrouter";
+    case "ollama":
+      return "ollama";
+    case "llamacpp":
+      return "llamacpp";
+    case "mlx":
+      return "mlx";
+    case "lmstudio":
+      return "lmstudio";
+    default:
+      return "openai_compatible";
+  }
+}
+
+function inferProviderName(providerId: string, kind: BenchLocalProviderKind): string {
+  switch (kind) {
+    case "openrouter":
+      return "OpenRouter";
+    case "ollama":
+      return "Ollama";
+    case "llamacpp":
+      return "llama.cpp";
+    case "mlx":
+      return "MLX";
+    case "lmstudio":
+      return "LM Studio";
+    case "openai_compatible":
+    default: {
+      const cleaned = providerId.replace(/[_-]+/g, " ").trim();
+      if (!cleaned) {
+        return "OpenAI Compatible";
+      }
+
+      return cleaned.replace(/\b\w/g, (segment) => segment.toUpperCase());
+    }
+  }
 }
 
 export function createDefaultConfig(): BenchLocalConfig {
@@ -321,6 +384,24 @@ function assertValidHttpUrl(value: string, field: string): void {
 function normalizeConfig(raw: unknown): BenchLocalConfig {
   const defaults = createDefaultConfig();
   const parsed = ConfigSchema.parse(raw ?? {});
+  const mergedProviders = {
+    ...defaults.providers,
+    ...parsed.providers
+  };
+  const normalizedProviders = Object.fromEntries(
+    Object.entries(mergedProviders).map(([providerId, provider]) => {
+      const kind = provider.kind ?? inferProviderKind(providerId);
+
+      return [
+        providerId,
+        {
+          ...provider,
+          kind,
+          name: provider.name ?? inferProviderName(providerId, kind)
+        } satisfies BenchLocalProviderConfig
+      ];
+    })
+  ) as Record<string, BenchLocalProviderConfig>;
 
   const config: BenchLocalConfig = {
     ...defaults,
@@ -333,10 +414,7 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
       ...defaults.defaults,
       ...parsed.defaults
     },
-    providers: {
-      ...defaults.providers,
-      ...parsed.providers
-    },
+    providers: normalizedProviders,
     plugins: parsed.plugins
   };
 
