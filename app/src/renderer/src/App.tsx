@@ -5,9 +5,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Cog,
   FolderCog,
   FolderOpen,
   GripVertical,
+  LayoutList,
   Logs,
   Pencil,
   Play,
@@ -118,6 +120,12 @@ type ModelAliasModalState = {
   alias: string;
 };
 
+type HistoryModalState = {
+  pluginId: string;
+  pluginName: string;
+  entries: PluginRunHistoryEntry[];
+};
+
 type WorkspaceModalState =
   | {
       mode: "rename";
@@ -125,6 +133,13 @@ type WorkspaceModalState =
       name: string;
     }
   | null;
+
+type WorkspaceContextMenuState = {
+  workspaceId: string;
+  workspaceName: string;
+  x: number;
+  y: number;
+} | null;
 
 type ConfirmDialogState =
   | {
@@ -151,6 +166,11 @@ type ActiveRunEntry = {
   pluginId: string;
 };
 
+type LoadedHistoryEntry = {
+  runId: string;
+  startedAt: string;
+};
+
 const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: string }> = [
   { value: "serial", label: "Serial" },
   { value: "parallel_by_model", label: "Parallel per Model" },
@@ -169,9 +189,9 @@ const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: strin
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
   { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
-  { id: "models", label: "Models", blurb: "Shared model registry across benchmarks.", icon: <Bot size={16} /> },
+  { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
   { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
-  { id: "plugins", label: "Plugins", blurb: "Plugin sources, paths, and status.", icon: <PlugZap size={16} /> },
+  { id: "plugins", label: "Scenario Packs", blurb: "Scenario pack sources, paths, and status.", icon: <PlugZap size={16} /> },
   { id: "sidecars", label: "Sidecars", blurb: "Verifier services and ports.", icon: <Wrench size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and profile options.", icon: <FolderCog size={16} /> }
 ];
@@ -467,6 +487,8 @@ export function App() {
   const [tabModelsModal, setTabModelsModal] = useState<TabModelsModalState | null>(null);
   const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
+  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState>(null);
+  const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
@@ -474,6 +496,7 @@ export function App() {
   const [runSummaries, setRunSummaries] = useState<Record<string, PluginRunSummary>>({});
   const [runHistories, setRunHistories] = useState<Record<string, PluginRunHistoryEntry[]>>({});
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
+  const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<Record<string, LoadedHistoryEntry>>({});
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsAutoScroll, setLogsAutoScroll] = useState(true);
   const [logsDetached, setLogsDetached] = useState(false);
@@ -507,6 +530,10 @@ export function App() {
   const activeTabModels = useMemo(() => (draft ? resolveTabModels(activeTab, draft.models) : []), [draft, activeTab]);
   const activeRunSummary = useMemo(() => (activeTab ? runSummaries[activeTab.id] ?? null : null), [runSummaries, activeTab]);
   const activeLiveRun = useMemo(() => (activeTab ? liveRuns[activeTab.id] ?? null : null), [liveRuns, activeTab]);
+  const activeLoadedHistory = useMemo(
+    () => (activeTab ? loadedHistoryRuns[activeTab.id] ?? null : null),
+    [loadedHistoryRuns, activeTab]
+  );
   const activeLogEvents = activeLiveRun?.events ?? activeRunSummary?.events ?? [];
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
@@ -553,7 +580,7 @@ export function App() {
       const inspections = await window.benchlocal.plugins.list();
       setPluginInspections(inspections);
     } catch (pluginError) {
-      setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured plugins.");
+      setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured scenario packs.");
     }
   };
 
@@ -565,7 +592,7 @@ export function App() {
         [pluginId]: history
       }));
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load benchmark history.");
+      setError(historyError instanceof Error ? historyError.message : "Failed to load scenario pack history.");
     }
   };
 
@@ -702,6 +729,34 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!workspaceContextMenu) {
+      return;
+    }
+
+    const closeMenu = () => {
+      setWorkspaceContextMenu(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [workspaceContextMenu]);
+
+  useEffect(() => {
     const updateOverflow = () => {
       const element = tabStripRef.current;
 
@@ -768,7 +823,7 @@ export function App() {
     setNotice(null);
 
     if (!tab.pluginId) {
-      setError("Select a benchmark plugin for this tab first.");
+      setError("Select a scenario pack for this tab first.");
       return;
     }
 
@@ -777,7 +832,7 @@ export function App() {
     const selectedModels = draft ? resolveTabModels(tab, draft.models) : [];
 
     if (selectedModels.length === 0) {
-      setError("Select at least one enabled model for this tab before running the benchmark.");
+      setError("Select at least one enabled model for this tab before running the scenario pack.");
       return;
     }
 
@@ -810,6 +865,15 @@ export function App() {
         activeCellKeys: []
       }
     }));
+    setLoadedHistoryRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
 
     try {
       const result = await window.benchlocal.plugins.run({
@@ -830,7 +894,7 @@ export function App() {
       await loadPluginInspections();
       await loadHistoryForPlugin(pluginId);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : `Failed to run plugin benchmark for ${pluginId}.`);
+      setError(runError instanceof Error ? runError.message : `Failed to run scenario pack for ${pluginId}.`);
     } finally {
       setActiveRuns((current) => {
         const next = { ...current };
@@ -843,6 +907,11 @@ export function App() {
         return next;
       });
       setLiveRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+      setLoadedHistoryRuns((current) => {
         const next = { ...current };
         delete next[tab.id];
         return next;
@@ -860,7 +929,7 @@ export function App() {
       const result = await window.benchlocal.plugins.stop({ tabId });
 
       if (!result.stopped) {
-        setNotice("That benchmark run was no longer active.");
+        setNotice("That scenario pack run was no longer active.");
         setActiveRuns((current) => {
           const next = { ...current };
           delete next[tabId];
@@ -874,14 +943,14 @@ export function App() {
         return;
       }
 
-      setNotice("Stopping benchmark run...");
+      setNotice("Stopping scenario pack run...");
     } catch (stopError) {
       setStoppingRuns((current) => {
         const next = { ...current };
         delete next[tabId];
         return next;
       });
-      setError(stopError instanceof Error ? stopError.message : "Failed to stop benchmark run.");
+      setError(stopError instanceof Error ? stopError.message : "Failed to stop scenario pack run.");
     }
   };
 
@@ -935,7 +1004,7 @@ export function App() {
     const removedTabIds = new Set(workspaceState?.workspaces[workspaceId]?.tabIds ?? []);
 
     if (Array.from(removedTabIds).some((tabId) => activeRuns[tabId])) {
-      setError("Stop active benchmark runs before deleting this workspace.");
+      setError("Stop active scenario pack runs before deleting this workspace.");
       return;
     }
 
@@ -1080,6 +1149,7 @@ export function App() {
   };
 
   const activateWorkspace = (workspaceId: string) => {
+    setWorkspaceContextMenu(null);
     updateWorkspaceState((current) => {
       current.activeWorkspaceId = workspaceId;
       return current;
@@ -1170,7 +1240,7 @@ export function App() {
     }
 
     if (activeRuns[tabId]) {
-      setError("Stop the benchmark run before closing this tab.");
+      setError("Stop the scenario pack run before closing this tab.");
       return;
     }
 
@@ -1240,10 +1310,46 @@ export function App() {
         delete next[activeTab.id];
         return next;
       });
-      setNotice(`Loaded history run ${runId}.`);
+      setLoadedHistoryRuns((current) => ({
+        ...current,
+        [activeTab.id]: {
+          runId,
+          startedAt: summary.startedAt
+        }
+      }));
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load benchmark history.");
+      setError(historyError instanceof Error ? historyError.message : "Failed to load scenario pack history.");
     }
+  };
+
+  const clearLoadedHistoryRun = (tabId: string) => {
+    setLoadedHistoryRuns((current) => {
+      if (!current[tabId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tabId];
+      return next;
+    });
+    setRunSummaries((current) => {
+      if (!current[tabId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tabId];
+      return next;
+    });
+    setLiveRuns((current) => {
+      if (!current[tabId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tabId];
+      return next;
+    });
   };
 
   const saveProviderModal = () => {
@@ -1408,19 +1514,11 @@ export function App() {
             <div className="topbar-main">
 	              <div className="app-brand">
 	                <p className="eyebrow">BenchLocal</p>
-	                <h1>LLM Benchmark Suite</h1>
+	                <h1>LLM Scenario Pack Suite</h1>
 	              </div>
 
               <div className="toolbar-cluster">
-	                <button type="button" onClick={createWorkspace} className="ghost-button">
-	                  <Plus size={14} />
-	                  New Workspace
-	                </button>
-                  <button type="button" onClick={() => void importWorkspace()} className="ghost-button">
-                    <FolderOpen size={14} />
-                    Import Workspace
-                  </button>
-	                <NewTabDropdown
+	                <ScenarioPackPickerTrigger
 	                  inspections={readyInspections}
 	                  open={tabMenuOpen}
 	                  setOpen={setTabMenuOpen}
@@ -1430,11 +1528,12 @@ export function App() {
 	                <button
 	                  type="button"
 	                  onClick={() => setSettingsOpen(true)}
-                  className="toolbar-icon-button"
+                  className="ghost-button"
                   aria-label="Open settings"
                   title="Settings"
                 >
-                  <Settings2 size={16} />
+                  <Cog size={16} />
+                  Settings
                 </button>
               </div>
             </div>
@@ -1443,7 +1542,18 @@ export function App() {
 	          <div className={`desktop-layout${sidebarOpen ? "" : " sidebar-collapsed"}`}>
 	            <aside className={`desktop-sidebar${sidebarOpen ? "" : " is-hidden"}`}>
 	              <div className="sidebar-section">
+                  <div className="sidebar-section-header">
 	                <p className="sidebar-label">Workspaces</p>
+                    <button
+                      type="button"
+                      onClick={createWorkspace}
+                      className="sidebar-section-action"
+                      aria-label="Create workspace"
+                      title="Create workspace"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
 	              </div>
 
 	              <div className="sidebar-section">
@@ -1461,6 +1571,16 @@ export function App() {
                           role="button"
                           tabIndex={0}
 	                        onClick={() => activateWorkspace(workspace.id)}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            activateWorkspace(workspace.id);
+                            setWorkspaceContextMenu({
+                              workspaceId: workspace.id,
+                              workspaceName: workspace.name,
+                              x: event.clientX,
+                              y: event.clientY
+                            });
+                          }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -1489,34 +1609,6 @@ export function App() {
                               >
                                 <Pencil size={13} />
                               </button>
-                              <button
-                                type="button"
-                                className="sidebar-item-action"
-                                title="Export workspace"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void exportWorkspace(workspace.id);
-                                }}
-                              >
-                                <Save size={13} />
-                              </button>
-                              <button
-                                type="button"
-                                className="sidebar-item-action is-danger"
-                                title="Delete workspace"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setConfirmDialog({
-                                    title: "Delete Workspace",
-                                    subtitle: `Delete "${workspace.name}" and all of its tabs? This cannot be undone.`,
-                                    confirmLabel: "Delete Workspace",
-                                    tone: "danger",
-                                    onConfirm: () => deleteWorkspace(workspace.id)
-                                  });
-                                }}
-                              >
-	                                <Trash2 size={13} />
-	                              </button>
 	                            </div>
                               </div>
 		                        </div>
@@ -1528,10 +1620,32 @@ export function App() {
 	                )}
 	              </div>
 
+                <div className="sidebar-footer">
+                  <button type="button" onClick={() => void importWorkspace()} className="ghost-button sidebar-footer-button">
+                    <FolderOpen size={14} />
+                    Import Workspace
+                  </button>
+                </div>
+
 	            </aside>
 
 	            <section className="desktop-main">
-	              {notice ? <Banner tone="success">{notice}</Banner> : null}
+	              {notice ? (
+                  <Banner tone="success">
+                    <div className="banner-row">
+                      <span>{notice}</span>
+                      <button
+                        type="button"
+                        className="banner-dismiss"
+                        onClick={() => setNotice(null)}
+                        aria-label="Dismiss notice"
+                        title="Dismiss"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </Banner>
+                ) : null}
 	              {error ? <Banner tone="danger">{error}</Banner> : null}
 	              {isBusy && !draft ? <Banner tone="neutral">Loading BenchLocal config...</Banner> : null}
 
@@ -1572,7 +1686,7 @@ export function App() {
 		                              >
 	                                <span className="tab-chip-title">{tab.title}</span>
                                     {isTabRunning ? (
-                                      <span className="tab-chip-spinner" title="Benchmark running">
+                                      <span className="tab-chip-spinner" title="Scenario pack running">
                                         <span className="spinner" />
                                       </span>
                                     ) : null}
@@ -1589,7 +1703,7 @@ export function App() {
 	                                    event.stopPropagation();
                                       setConfirmDialog({
                                         title: "Close Tab",
-                                        subtitle: `Close "${tab.title}"? The benchmark tab will be removed from this workspace.`,
+                                        subtitle: `Close "${tab.title}"? The scenario pack tab will be removed from this workspace.`,
                                         confirmLabel: "Close Tab",
                                         onConfirm: () => closeTab(tab.id)
                                       });
@@ -1600,7 +1714,7 @@ export function App() {
 	                                      event.stopPropagation();
                                         setConfirmDialog({
                                           title: "Close Tab",
-                                          subtitle: `Close "${tab.title}"? The benchmark tab will be removed from this workspace.`,
+                                          subtitle: `Close "${tab.title}"? The scenario pack tab will be removed from this workspace.`,
                                           confirmLabel: "Close Tab",
                                           onConfirm: () => closeTab(tab.id)
                                         });
@@ -1614,7 +1728,7 @@ export function App() {
 	                          })}
                               <button
                                 type="button"
-                                onClick={() => setTabMenuOpen((current) => !current)}
+                                onClick={() => setTabMenuOpen(true)}
                                 className={`tab-chip-add-button${tabStripOverflow ? " is-sticky" : ""}`}
                                 aria-label="New tab"
                                 title="New tab"
@@ -1651,6 +1765,7 @@ export function App() {
 	                            runSummary={activeRunSummary}
                               historyEntries={runHistories[activeInspection.id] ?? []}
 	                            liveRun={activeLiveRun}
+                              loadedHistory={activeLoadedHistory}
 	                            focusedScenarioId={activeTab.focusedScenarioId}
 	                            onFocusScenario={(scenarioId) =>
 	                              updateWorkspaceState((current) => {
@@ -1673,7 +1788,14 @@ export function App() {
 	                              })
 	                            }
 	                            executionMode={activeTab.executionMode}
-                              onLoadHistory={(runId) => void restoreHistoryRun(activeInspection.id, runId)}
+                              isViewingHistory={Boolean(activeLoadedHistory)}
+                              onOpenHistory={() =>
+                                setHistoryModal({
+                                  pluginId: activeInspection.id,
+                                  pluginName: activeInspection.manifest?.name ?? activeInspection.id,
+                                  entries: runHistories[activeInspection.id] ?? []
+                                })
+                              }
                               onEditModelAlias={(model) =>
                                 setModelAliasModal({
                                   tabId: activeTab.id,
@@ -1693,9 +1815,10 @@ export function App() {
 	                                return current;
 	                              })
                             }
-                            isRunning={Boolean(activeRuns[activeTab.id])}
-                            isStopping={Boolean(stoppingRuns[activeTab.id])}
-                            onRun={() => void runTab(activeTab)}
+	                            isRunning={Boolean(activeRuns[activeTab.id])}
+	                            isStopping={Boolean(stoppingRuns[activeTab.id])}
+                              onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
+	                            onRun={() => void runTab(activeTab)}
 	                            onStop={() => void stopTabRun(activeTab.id)}
 	                            onOpenDetail={setDetailModal}
 	                          />
@@ -1737,10 +1860,11 @@ export function App() {
                         <button
                           type="button"
                           onClick={() => setLogsOpen(false)}
-                          className="ghost-button button-compact"
+                          className="toolbar-icon-button"
+                          aria-label="Hide logs"
+                          title="Hide logs"
                         >
                           <X size={14} />
-                          Hide Logs
                         </button>
                       </div>
                     </div>
@@ -1848,7 +1972,7 @@ export function App() {
       {providerModal ? (
         <Modal
           title={providerModal.mode === "create" ? "Add Provider" : "Edit Provider"}
-          subtitle="Create or update a shared provider entry. BenchLocal stores provider API keys in ~/.benchlocal/config.toml so every benchmark plugin can reuse them."
+          subtitle="Create or update a shared provider entry. BenchLocal stores provider API keys in ~/.benchlocal/config.toml so every scenario pack can reuse them."
           onClose={() => setProviderModal(null)}
           onSubmit={saveProviderModal}
           submitLabel={providerModal.mode === "create" ? "Create Provider" : "Save Provider"}
@@ -1910,7 +2034,7 @@ export function App() {
       {modelModal ? (
         <Modal
           title={modelModal.mode === "create" ? "Add Model" : "Edit Model"}
-          subtitle="Models are shared across every installed benchmark plugin. BenchLocal computes the stable provider:model ID automatically."
+          subtitle="Models are shared across every installed scenario pack. BenchLocal computes the stable provider:model ID automatically."
           onClose={() => setModelModal(null)}
           onSubmit={saveModelModal}
           submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
@@ -2021,6 +2145,18 @@ export function App() {
         </Modal>
       ) : null}
 
+      {historyModal ? (
+        <HistoryModal
+          pluginName={historyModal.pluginName}
+          entries={historyModal.entries}
+          onClose={() => setHistoryModal(null)}
+          onOpenRun={(runId) => {
+            void restoreHistoryRun(historyModal.pluginId, runId);
+            setHistoryModal(null);
+          }}
+        />
+      ) : null}
+
       {confirmDialog ? (
         <Modal
           title={confirmDialog.title}
@@ -2033,6 +2169,46 @@ export function App() {
           submitLabel={confirmDialog.confirmLabel}
           submitTone={confirmDialog.tone === "danger" ? "danger" : "primary"}
         />
+      ) : null}
+
+      {workspaceContextMenu ? (
+        <div
+          className="workspace-context-menu"
+          style={{
+            left: Math.min(workspaceContextMenu.x, window.innerWidth - 196),
+            top: Math.min(workspaceContextMenu.y, window.innerHeight - 116)
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="workspace-context-menu-item"
+            onClick={() => {
+              setWorkspaceContextMenu(null);
+              void exportWorkspace(workspaceContextMenu.workspaceId);
+            }}
+          >
+            <Save size={14} />
+            <span>Export Workspace</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-context-menu-item is-danger"
+            onClick={() => {
+              setWorkspaceContextMenu(null);
+              setConfirmDialog({
+                title: "Delete Workspace",
+                subtitle: `Delete "${workspaceContextMenu.workspaceName}" and all of its tabs? This cannot be undone.`,
+                confirmLabel: "Delete Workspace",
+                tone: "danger",
+                onConfirm: () => deleteWorkspace(workspaceContextMenu.workspaceId)
+              });
+            }}
+          >
+            <Trash2 size={14} />
+            <span>Delete Workspace</span>
+          </button>
+        </div>
       ) : null}
 
       {detailModal ? (
@@ -2053,7 +2229,7 @@ export function App() {
   );
 }
 
-function NewTabDropdown({
+function ScenarioPackPickerTrigger({
   inspections,
   open,
   setOpen,
@@ -2066,48 +2242,164 @@ function NewTabDropdown({
   onCreateTab: (pluginId: string) => void;
   disabled?: boolean;
 }) {
+  const [query, setQuery] = useState("");
+  const filteredInspections = inspections.filter((inspection) => {
+    const haystack = [
+      inspection.manifest?.name,
+      inspection.id,
+      inspection.manifest?.description,
+      inspection.manifest?.author
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(query.trim().toLowerCase());
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedInspection =
+    filteredInspections.find((inspection) => inspection.id === selectedId) ??
+    filteredInspections[0] ??
+    null;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setSelectedId((current) => {
+      if (current && filteredInspections.some((inspection) => inspection.id === current)) {
+        return current;
+      }
+
+      return filteredInspections[0]?.id ?? null;
+    });
+  }, [open, filteredInspections]);
+
   return (
-    <div className="dropdown-shell">
+    <>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen(true)}
         className="ghost-button dropdown-trigger"
         disabled={disabled}
       >
         <Plus size={14} />
         <span>New Tab</span>
-        <ChevronDown size={16} />
       </button>
 
       {open ? (
-        <div className="dropdown-card">
-          <div className="mb-3">
-            <p className="eyebrow" style={{ marginBottom: "6px" }}>Create Tab</p>
-            <p className="muted-copy" style={{ margin: 0, fontSize: "0.95rem" }}>Open a new benchmark session tab in the current workspace.</p>
-          </div>
-          <div>
-            {inspections.map((inspection) => {
-              return (
-                <div
-                  key={inspection.id}
-                  className="dropdown-option"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold">{inspection.manifest?.name ?? inspection.id}</div>
-                    <div className="eyebrow" style={{ marginTop: "6px", marginBottom: 0 }}>{inspection.status.replaceAll("_", " ")}</div>
-                    <div className="muted-copy" style={{ marginTop: "8px", fontSize: "0.8rem" }}>{inspection.scenarioCount ?? 0} scenarios</div>
-                  </div>
-                  <button type="button" className="primary-button" onClick={() => onCreateTab(inspection.id)}>
-                    <Plus size={14} />
-                    Open
-                  </button>
+        <div className="dialog-backdrop">
+          <div className="dialog-shell scenario-pack-picker-shell">
+            <div className="dialog-header">
+              <div>
+                <h3 className="dialog-title">New Tab</h3>
+                <p className="section-copy" style={{ marginTop: "12px" }}>Pick a scenario pack to open in this workspace.</p>
+              </div>
+              <button type="button" onClick={() => setOpen(false)} className="dialog-close-button" aria-label="Close dialog">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="scenario-pack-picker-body">
+              <div className="scenario-pack-picker-list">
+                <label className="field-block">
+                  <span className="field-label">Search</span>
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search scenario packs"
+                    className="config-input"
+                  />
+                </label>
+
+                <div className="scenario-pack-picker-options">
+                  {filteredInspections.map((inspection) => (
+                    <button
+                      key={inspection.id}
+                      type="button"
+                      className={`scenario-pack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
+                      onClick={() => setSelectedId(inspection.id)}
+                    >
+                      <div className="scenario-pack-option-main">
+                        <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
+                        <div className="settings-row-secondary settings-mono-cell">{inspection.id}</div>
+                      </div>
+                      <span className={`status-chip ${statusClasses(inspection.status)}`}>
+                        {inspection.status.replaceAll("_", " ")}
+                      </span>
+                    </button>
+                  ))}
+                  {filteredInspections.length === 0 ? (
+                    <div className="sidebar-empty">No scenario packs match your search.</div>
+                  ) : null}
                 </div>
-              );
-            })}
+              </div>
+
+              <div className="scenario-pack-picker-detail">
+                {selectedInspection ? (
+                  <>
+                    <div>
+                      <p className="eyebrow">Scenario Pack</p>
+                      <h3 className="panel-title" style={{ marginTop: "8px" }}>
+                        {selectedInspection.manifest?.name ?? selectedInspection.id}
+                      </h3>
+                      <p className="section-copy" style={{ marginTop: "10px" }}>
+                        {selectedInspection.manifest?.description ?? "No description provided."}
+                      </p>
+                      <p className="scenario-pack-author-line">
+                        By {selectedInspection.manifest?.author ?? "Unknown"}
+                      </p>
+                    </div>
+
+                    <div className="scenario-pack-picker-meta">
+                      <div className="scenario-pack-stat-card">
+                        <span className="scenario-pack-stat-label">Tests</span>
+                        <span className="scenario-pack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
+                      </div>
+                      <div className="scenario-pack-stat-card">
+                        <span className="scenario-pack-stat-label">Version</span>
+                        <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                          {selectedInspection.manifest?.version ?? "n/a"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="scenario-pack-picker-badges">
+                      <span className={`status-chip ${statusClasses(selectedInspection.status)}`}>
+                        {selectedInspection.status.replaceAll("_", " ")}
+                      </span>
+                      <span className="status-chip status-idle">
+                        {selectedInspection.manifest?.capabilities.tools ? "Supports tools" : "No tools"}
+                      </span>
+                      <span className="status-chip status-idle">
+                        {selectedInspection.manifest?.capabilities.sidecars ? "Uses sidecars" : "No sidecars"}
+                      </span>
+                    </div>
+
+                    <div className="scenario-pack-picker-footer">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => {
+                          onCreateTab(selectedInspection.id);
+                          setOpen(false);
+                        }}
+                        disabled={selectedInspection.status !== "ready"}
+                      >
+                        <Plus size={14} />
+                        Open Scenario Pack
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -2117,15 +2409,18 @@ function BenchmarkSection({
   runSummary,
   historyEntries,
   liveRun,
+  loadedHistory,
   focusedScenarioId,
   onFocusScenario,
   onEditModels,
   onEditModelAlias,
   executionMode,
+  isViewingHistory,
   onChangeExecutionMode,
-  onLoadHistory,
+  onOpenHistory,
   isRunning,
   isStopping,
+  onClearHistory,
   onRun,
   onStop,
   onOpenDetail
@@ -2135,23 +2430,24 @@ function BenchmarkSection({
   runSummary: PluginRunSummary | null;
   historyEntries: PluginRunHistoryEntry[];
   liveRun: LiveRunState | null;
+  loadedHistory: LoadedHistoryEntry | null;
   focusedScenarioId: string | null;
   onFocusScenario: (scenarioId: string) => void;
   onEditModels: () => void;
   onEditModelAlias: (model: ResolvedTabModel) => void;
   executionMode: BenchLocalExecutionMode;
+  isViewingHistory: boolean;
   onChangeExecutionMode: (executionMode: BenchLocalExecutionMode) => void;
-  onLoadHistory: (runId: string) => void;
+  onOpenHistory: () => void;
   isRunning: boolean;
   isStopping: boolean;
+  onClearHistory: () => void;
   onRun: () => void;
   onStop: () => void;
   onOpenDetail: (detail: DetailModalState) => void;
 }) {
   const [runModeOpen, setRunModeOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const runModeRef = useRef<HTMLDivElement | null>(null);
-  const historyMenuRef = useRef<HTMLDivElement | null>(null);
   const tableScrollViewportRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarDragRef = useRef<{
@@ -2177,28 +2473,22 @@ function BenchmarkSection({
       : 0;
 
   useEffect(() => {
-    if (!runModeOpen && !historyOpen) {
+    if (!runModeOpen) {
       return;
     }
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       const insideRunMode = runModeRef.current?.contains(target);
-      const insideHistory = historyMenuRef.current?.contains(target);
 
       if (!insideRunMode) {
         setRunModeOpen(false);
-      }
-
-      if (!insideHistory) {
-        setHistoryOpen(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setRunModeOpen(false);
-        setHistoryOpen(false);
       }
     };
 
@@ -2209,7 +2499,7 @@ function BenchmarkSection({
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [runModeOpen, historyOpen]);
+  }, [runModeOpen]);
 
   useEffect(() => {
     const viewport = tableScrollViewportRef.current;
@@ -2278,7 +2568,7 @@ function BenchmarkSection({
       <section className="workspace-panel">
         <div className="workspace-toolbar">
           <div className="workspace-toolbar-copy">
-            <p className="eyebrow">Benchmark Session</p>
+            <p className="eyebrow">Scenario Pack Session</p>
             <div className="workspace-toolbar-heading">
               <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
               <div className="workspace-stat-chips">
@@ -2304,12 +2594,12 @@ function BenchmarkSection({
             <div className="benchmark-empty-icon">
               <CircleAlert size={22} />
             </div>
-            <p className="eyebrow">Plugin Unavailable</p>
+            <p className="eyebrow">Scenario Pack Unavailable</p>
             <h3 className="panel-title" style={{ marginTop: "8px" }}>
               {inspection.manifest?.name ?? inspection.id} cannot run yet
             </h3>
             <p className="muted-copy" style={{ marginTop: "10px", maxWidth: "56ch" }}>
-              {inspection.error ?? "This benchmark plugin is not installed or is missing its BenchLocal runtime entry."}
+              {inspection.error ?? "This scenario pack is not installed or is missing its BenchLocal runtime entry."}
             </p>
             <div className="category-chip-row" style={{ marginTop: "14px" }}>
               <span className={`status-chip ${statusClasses(inspection.status)}`}>
@@ -2362,9 +2652,25 @@ function BenchmarkSection({
 
   return (
     <section className="workspace-panel">
+      {loadedHistory ? (
+        <div className="history-banner">
+          <div className="banner-row">
+            <span>
+              Loaded test history from {new Date(loadedHistory.startedAt).toLocaleString()}.
+            </span>
+            <button
+              type="button"
+              className="history-banner-close"
+              onClick={onClearHistory}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="workspace-toolbar">
         <div className="workspace-toolbar-copy">
-          <p className="eyebrow">Benchmark Session</p>
+          <p className="eyebrow">Scenario Pack Session</p>
           <div className="workspace-toolbar-heading">
             <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
             <div className="workspace-stat-chips">
@@ -2377,122 +2683,47 @@ function BenchmarkSection({
           </div>
         </div>
         <div className="section-actions">
-          <div ref={runModeRef} className="run-mode-dropdown">
-            <button
-              type="button"
-              className="ghost-button run-mode-button"
-              onClick={() => setRunModeOpen((current) => !current)}
-              disabled={isRunning}
-              aria-haspopup="menu"
-              aria-expanded={runModeOpen}
-              title="Run mode"
-            >
-              <span className="run-mode-button-copy">
-                <span className="field-label">Run Mode</span>
-                <span className="run-mode-button-value">{currentExecutionModeLabel}</span>
-              </span>
-              <ChevronDown size={15} />
-            </button>
-            {runModeOpen ? (
-              <div className="run-mode-menu" role="menu">
-                {EXECUTION_MODE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={executionMode === option.value}
-                    className={`run-mode-menu-item${executionMode === option.value ? " is-active" : ""}`}
-                    onClick={() => {
-                      onChangeExecutionMode(option.value);
-                      setRunModeOpen(false);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <button type="button" onClick={onEditModels} className="ghost-button">
-            <Bot size={14} />
-            Edit Models
+          <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
+            <RotateCcw size={14} />
+            Test Histories
           </button>
-          <div ref={historyMenuRef} className="run-mode-dropdown">
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => setHistoryOpen((current) => !current)}
-              disabled={historyEntries.length === 0}
-            >
-              <RotateCcw size={14} />
-              Test Histories
-              <ChevronDown size={15} />
-            </button>
-            {historyOpen ? (
-              <div className="run-mode-menu history-menu" role="menu">
-                {historyEntries.map((entry) => (
-                  <button
-                    key={entry.runId}
-                    type="button"
-                    className="run-mode-menu-item history-menu-item"
-                    onClick={() => {
-                      onLoadHistory(entry.runId);
-                      setHistoryOpen(false);
-                    }}
-                  >
-                    <span>{new Date(entry.startedAt).toLocaleString()}</span>
-                    <span className="history-menu-meta">
-                      {entry.modelCount} model{entry.modelCount === 1 ? "" : "s"} · {entry.scenarioCount} cases
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <span className={`status-chip ${statusClasses(inspection.status)}`}>
-            {inspection.status.replaceAll("_", " ")}
-          </span>
           <button
             type="button"
             onClick={isRunning ? onStop : onRun}
-            disabled={(inspection.status !== "ready" || selectedModels.length === 0) && !isRunning || isStopping}
+            disabled={(((inspection.status !== "ready" || selectedModels.length === 0 || isViewingHistory) && !isRunning) || isStopping)}
             className={isRunning ? "button-warn" : "primary-button"}
           >
             {isRunning ? <Square size={15} /> : <Play size={15} />}
-            {isStopping ? "Stopping..." : isRunning ? "Stop" : "Run Benchmark"}
+            {isStopping ? "Stopping..." : isRunning ? "Stop" : "Run"}
           </button>
         </div>
       </div>
 
       <div className="workspace-grid">
         <div className="workspace-document">
-          <section className="scenario-focus">
-            <div className="scenario-focus-header">
+          <details className="scenario-focus" open>
+            <summary className="scenario-focus-header">
               <div>
-                <p className="eyebrow">Scenario Preview</p>
+                <p className="eyebrow">Scenario Detail</p>
                 <h3>
                   {currentScenario ? `${currentScenario.id} · ${currentScenario.title}` : "No scenario selected"}
                 </h3>
               </div>
-              <span className={`status-chip ${isRunning ? "status-live" : runSummary ? "status-done" : "status-preview"}`}>
-                {isRunning ? "Live" : runSummary ? "Completed" : "Preview"}
-              </span>
-            </div>
-
-            <p className="scenario-prompt">
-              {currentScenario?.title ?? "Click a scenario column in the benchmark table below to inspect that scenario."}
-            </p>
+              <div className="scenario-focus-summary-actions">
+                <ChevronDown size={16} className="scenario-focus-chevron" />
+              </div>
+            </summary>
 
             <div className="scenario-detail-grid scenario-detail-grid-main">
               <DetailCard
                 title="What this tests"
-                content={currentScenario?.description ?? "Click a scenario column in the benchmark table below to inspect that scenario."}
+                content={currentScenario?.description ?? "Click a scenario column in the scenario pack table below to inspect that scenario."}
               />
               <DetailCard
                 title="Prompt Contract"
                 content={
                   currentScenario?.description ??
-                  "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as plugin metadata expands."
+                  "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as scenario pack metadata expands."
                 }
               />
               <DetailCard
@@ -2500,11 +2731,59 @@ function BenchmarkSection({
                 content={
                   runSummary
                     ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
-                    : "Run this benchmark, then use the scenario columns in the table below to switch the preview context."
+                    : "Run this scenario pack, then use the scenario columns in the table below to switch the preview context."
                 }
               />
             </div>
-          </section>
+          </details>
+
+          <div className="table-controls">
+            <div className="table-controls-heading">
+              <LayoutList size={16} />
+              <div className="workspace-toolbar-title">Test Results</div>
+            </div>
+            <div className="table-controls-actions">
+              <div ref={runModeRef} className="run-mode-dropdown">
+                <button
+                  type="button"
+                  className="ghost-button run-mode-button"
+                  onClick={() => setRunModeOpen((current) => !current)}
+                  disabled={isRunning}
+                  aria-haspopup="menu"
+                  aria-expanded={runModeOpen}
+                  title="Run mode"
+                >
+                  <SlidersHorizontal size={14} />
+                  <span className="run-mode-button-label">Run Mode:</span>
+                  <span className="run-mode-button-value">{currentExecutionModeLabel}</span>
+                  <ChevronDown size={15} />
+                </button>
+                {runModeOpen ? (
+                  <div className="run-mode-menu" role="menu">
+                    {EXECUTION_MODE_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={executionMode === option.value}
+                        className={`run-mode-menu-item${executionMode === option.value ? " is-active" : ""}`}
+                        onClick={() => {
+                          onChangeExecutionMode(option.value);
+                          setRunModeOpen(false);
+                        }}
+                      >
+                        <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <button type="button" onClick={onEditModels} className="ghost-button">
+                <Bot size={14} />
+                Edit Models
+              </button>
+            </div>
+          </div>
 
           <section className="table-card table-card-document">
             {selectedModels.length === 0 ? (
@@ -2711,7 +2990,7 @@ function TabModelsModal({
   return (
     <Modal
       title="Edit Tab Models"
-      subtitle="Choose the models for this benchmark tab, rename them for display, and drag selected rows to change the execution order."
+      subtitle="Choose the models for this scenario pack tab, rename them for display, and drag selected rows to change the execution order."
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Models"
@@ -2780,10 +3059,10 @@ function EmptyWorkspace() {
   return (
     <section className="empty-workspace">
       <div className="empty-workspace-card">
-        <p className="eyebrow">No Active Benchmark</p>
-        <h3 className="panel-title">Select a benchmark to open its workspace</h3>
+        <p className="eyebrow">No Active Scenario Pack</p>
+        <h3 className="panel-title">Select a scenario pack to open its workspace</h3>
         <p className="section-copy" style={{ marginTop: "12px", maxWidth: "52ch" }}>
-          Use the test picker in the toolbar to choose benchmark pillars, then click one from the sidebar. BenchLocal will keep providers, models, and shared parameters in one place while each plugin owns its scenarios and scoring.
+          Use the pack picker in the toolbar to choose scenario packs, then click one from the sidebar. BenchLocal will keep providers, models, and shared parameters in one place while each scenario pack owns its scenarios and scoring.
         </p>
       </div>
     </section>
@@ -2814,11 +3093,14 @@ function DetachedLogsWindow() {
     logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
   }, [state, autoScroll]);
 
+  useEffect(() => {
+    document.title = `Run Logs - ${state.workspaceName} - ${state.tabTitle}`;
+  }, [state.workspaceName, state.tabTitle]);
+
   return (
     <div className="detached-logs-shell">
       <header className="detached-logs-header">
         <div>
-          <p className="eyebrow">Run Logs</p>
           <h2 className="detached-logs-title">{state.tabTitle}</h2>
           <p className="muted-copy" style={{ marginTop: "6px" }}>{state.workspaceName}</p>
         </div>
@@ -2830,11 +3112,12 @@ function DetachedLogsWindow() {
           <span className="status-chip status-idle">{state.eventCount} events</span>
           <button
             type="button"
-            className="ghost-button"
+            className="toolbar-icon-button"
+            aria-label="Close window"
+            title="Close window"
             onClick={() => void window.benchlocal.logs.closeDetachedWindow()}
           >
             <X size={14} />
-            Close Window
           </button>
         </div>
       </header>
@@ -3091,7 +3374,7 @@ function SettingsModal({
                     current.run_storage_dir = value;
                     return current;
                   })} />
-                  <Field label="Plugin Storage" value={draft.plugin_storage_dir} onChange={(value) => updateDraft((current) => {
+                  <Field label="Scenario Pack Storage" value={draft.plugin_storage_dir} onChange={(value) => updateDraft((current) => {
                     current.plugin_storage_dir = value;
                     return current;
                   })} />
@@ -3109,7 +3392,7 @@ function SettingsModal({
                     current.ui.theme = value as BenchLocalConfig["ui"]["theme"];
                     return current;
                   })} />
-                  <Field label="Default Plugin" value={draft.default_plugin} onChange={(value) => updateDraft((current) => {
+                  <Field label="Default Scenario Pack" value={draft.default_plugin} onChange={(value) => updateDraft((current) => {
                     current.default_plugin = value;
                     return current;
                   })} />
@@ -3145,9 +3428,9 @@ function ProvidersView({
   const providerIds = Object.keys(providers);
 
   return (
-    <Panel title="Provider Registry" subtitle="Provider endpoints, credentials, and activation state shared across all benchmarks." tone="sky" icon={<Server size={16} />}>
+    <Panel title="Provider Registry" subtitle="Provider endpoints, credentials, and activation state shared across all scenario packs." tone="sky" icon={<Server size={16} />}>
       <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">Providers are shared across every benchmark, so users should only need to configure them once.</p>
+        <p className="muted-copy">Providers are shared across every scenario pack, so users should only need to configure them once.</p>
         <button type="button" onClick={onCreate} className="primary-button"><Plus size={14} />Add Provider</button>
       </div>
 
@@ -3230,9 +3513,9 @@ function ModelsView({
   onDelete: (index: number) => void;
 }) {
   return (
-    <Panel title="Shared Model Registry" subtitle="Model labels, provider mapping, and activation state available across all plugins." tone="orange" icon={<Bot size={16} />}>
+    <Panel title="Shared Model Registry" subtitle="Model labels, provider mapping, and activation state available across all scenario packs." tone="orange" icon={<Bot size={16} />}>
       <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">Each model entry references one provider and becomes available across all benchmark plugins.</p>
+        <p className="muted-copy">Each model entry references one provider and becomes available across all scenario packs.</p>
         <button
           type="button"
           onClick={onCreate}
@@ -3304,10 +3587,10 @@ function PluginsSettingsView({
   const inspectionsById = Object.fromEntries(inspections.map((inspection) => [inspection.id, inspection]));
 
   return (
-    <Panel title="Plugin Registry" subtitle="Installed plugin entries, local paths, and runtime readiness." tone="sky" icon={<PlugZap size={16} />}>
+    <Panel title="Scenario Pack Registry" subtitle="Installed scenario pack entries, local paths, and runtime readiness." tone="sky" icon={<PlugZap size={16} />}>
       <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">A plugin must expose `benchlocal.plugin.json` plus a compiled entrypoint before it is runnable from the desktop app.</p>
-        <button type="button" onClick={onAdd} className="primary-button"><Plus size={14} />Add Plugin</button>
+        <p className="muted-copy">A scenario pack must expose `benchlocal.plugin.json` plus a compiled entrypoint before it is runnable from the desktop app.</p>
+        <button type="button" onClick={onAdd} className="primary-button"><Plus size={14} />Add Scenario Pack</button>
       </div>
 
       <div className="entry-grid" style={{ marginTop: "20px" }}>
@@ -3417,16 +3700,111 @@ function Panel({
 }
 
 function DetailCard({ title, content }: { title: string; content: string }) {
+  const toneClass =
+    title === "What this tests"
+      ? "is-blue"
+      : title === "Prompt Contract"
+        ? "is-amber"
+        : "is-slate";
+
   return (
-    <article className="detail-card">
-      <h4>{title}</h4>
+    <article className={`detail-card ${toneClass}`}>
+      <div className="detail-card-summary">
+        <h4>{title}</h4>
+      </div>
       <p className="detail-copy">{content}</p>
     </article>
   );
 }
 
-function Banner({ tone, children }: { tone: "success" | "danger" | "neutral"; children: ReactNode }) {
-  const toneClass = tone === "success" ? "banner-success" : tone === "danger" ? "banner-danger" : "banner-neutral";
+function HistoryModal({
+  pluginName,
+  entries,
+  onClose,
+  onOpenRun
+}: {
+  pluginName: string;
+  entries: PluginRunHistoryEntry[];
+  onClose: () => void;
+  onOpenRun: (runId: string) => void;
+}) {
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-shell history-dialog-shell">
+        <div className="dialog-header">
+          <div>
+            <h3 className="dialog-title">Test Histories</h3>
+            <p className="section-copy" style={{ marginTop: "12px" }}>{pluginName}</p>
+          </div>
+          <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="history-modal-body">
+          <div className="settings-list-table-wrap history-table-wrap">
+            <table className="settings-list-table">
+              <thead>
+                <tr>
+                  <th>Date Time</th>
+                  <th>Mode</th>
+                  <th>Models</th>
+                  <th>Cases</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((entry) => {
+                  const executionModeLabel =
+                    EXECUTION_MODE_OPTIONS.find((option) => option.value === entry.executionMode)?.label ?? "Unknown";
+
+                  return (
+                    <tr key={entry.runId}>
+                      <td>
+                        <div className="settings-row-primary">{new Date(entry.startedAt).toLocaleString()}</div>
+                      </td>
+                      <td>
+                        <span className="status-chip status-idle">{executionModeLabel}</span>
+                      </td>
+                      <td>{entry.modelCount}</td>
+                      <td>{entry.scenarioCount}</td>
+                      <td>
+                        <span
+                          className={`status-chip ${
+                            entry.error ? "status-danger" : entry.cancelled ? "status-not-installed" : "status-done"
+                          }`}
+                        >
+                          {entry.error ? "error" : entry.cancelled ? "stopped" : "completed"}
+                        </span>
+                      </td>
+                      <td>
+                        <button type="button" className="ghost-button ghost-button-compact" onClick={() => onOpenRun(entry.runId)}>
+                          <RotateCcw size={14} />
+                          Open
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Banner({ tone, children }: { tone: "success" | "danger" | "neutral" | "warning"; children: ReactNode }) {
+  const toneClass =
+    tone === "success"
+      ? "banner-success"
+      : tone === "danger"
+        ? "banner-danger"
+        : tone === "warning"
+          ? "banner-warning"
+          : "banner-neutral";
   return <div className={`banner ${toneClass}`}>{children}</div>;
 }
 
@@ -3440,29 +3818,32 @@ function Modal({
   children
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
   submitTone?: "primary" | "danger";
   children?: ReactNode;
 }) {
+  const hasBody = Boolean(children);
+  const hasSubtitle = Boolean(subtitle?.trim());
+
   return (
     <div className="dialog-backdrop">
       <div className="dialog-shell">
-        <div className="dialog-header">
+        <div className={`dialog-header${hasBody ? "" : " dialog-header-compact"}`}>
           <div>
             <h3 className="dialog-title">{title}</h3>
-            <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p>
+            {hasSubtitle ? <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p> : null}
           </div>
           <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
             <X size={16} />
           </button>
         </div>
 
-        <div style={{ marginTop: "20px", display: "grid", gap: "16px" }}>{children}</div>
+        {hasBody ? <div style={{ marginTop: "20px", display: "grid", gap: "16px" }}>{children}</div> : null}
 
-        <div className="modal-actions">
+        <div className={`modal-actions${hasBody ? "" : " modal-actions-compact"}`}>
           <button type="button" onClick={onSubmit} className={submitTone === "danger" ? "button-danger" : "primary-button"}>{submitLabel}</button>
         </div>
       </div>

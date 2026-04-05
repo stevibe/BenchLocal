@@ -8,6 +8,14 @@ export const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
 let detachedLogsWindow: BrowserWindow | null = null;
 let latestDetachedLogsState: DetachedLogsState | null = null;
 
+function buildDetachedLogsWindowTitle(state: DetachedLogsState | null): string {
+  if (!state) {
+    return "Run Logs";
+  }
+
+  return `Run Logs - ${state.workspaceName} - ${state.tabTitle}`;
+}
+
 function broadcastWindowClosed(): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (window === detachedLogsWindow || window.isDestroyed()) {
@@ -41,7 +49,7 @@ export async function openDetachedLogsWindow(preloadPath: string): Promise<void>
     height: 420,
     minWidth: 760,
     minHeight: 260,
-    title: "BenchLocal Logs",
+    title: buildDetachedLogsWindowTitle(latestDetachedLogsState),
     backgroundColor: "#f1f2f4",
     webPreferences: {
       preload: preloadPath,
@@ -91,5 +99,6 @@ export function publishDetachedLogsState(state: DetachedLogsState): void {
     return;
   }
 
+  detachedLogsWindow.setTitle(buildDetachedLogsWindowTitle(state));
   detachedLogsWindow.webContents.send(DETACHED_LOGS_STATE_CHANNEL, state);
 }

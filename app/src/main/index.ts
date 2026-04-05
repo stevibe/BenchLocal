@@ -9,7 +9,7 @@ async function createMainWindow(): Promise<void> {
   await loadOrCreateConfig();
 
   const window = new BrowserWindow({
-    width: 1440,
+    width: 1500,
     height: 920,
     minWidth: 1280,
     minHeight: 820,

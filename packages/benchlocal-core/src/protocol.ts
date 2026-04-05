@@ -16,6 +16,7 @@ export interface PluginManifest {
   protocolVersion: 1;
   id: PluginId;
   name: string;
+  author?: string;
   version: string;
   description?: string;
   entry: string;
