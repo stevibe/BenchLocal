@@ -3,13 +3,31 @@ import type { BenchLocalExecutionMode } from "./workspaces.js";
 export type PluginId = string;
 export type ScenarioId = string;
 
-export interface SidecarSpec {
+export type VerifierMode = "cloud" | "docker" | "custom_url";
+
+export interface VerifierSpec {
   id: string;
-  kind: "docker-http";
+  transport: "http";
   required: boolean;
-  defaultPort?: number;
-  healthcheckPath?: string;
+  description?: string;
+  defaultMode: VerifierMode;
+  cloud?: {
+    baseUrl?: string;
+    healthcheckPath?: string;
+  };
+  docker?: {
+    image?: string;
+    buildContext?: string;
+    containerPort: number;
+    healthcheckPath?: string;
+  };
+  customUrl?: {
+    defaultUrl?: string;
+    healthcheckPath?: string;
+  };
 }
+
+export type SidecarSpec = VerifierSpec;
 
 export interface PluginManifest {
   schemaVersion: 1;
@@ -31,9 +49,11 @@ export interface PluginManifest {
     tools: boolean;
     multiTurn: boolean;
     streamingProgress: boolean;
-    sidecars: boolean;
+    verification: boolean;
     standaloneWebApp: boolean;
+    sidecars?: boolean;
   };
+  verifiers?: VerifierSpec[];
   sidecars?: SidecarSpec[];
 }
 
@@ -132,14 +152,18 @@ export interface SecretResolution {
   source: "config" | "env" | "none";
 }
 
-export interface SidecarEndpoint {
+export interface VerifierEndpoint {
   id: string;
-  kind: "docker-http";
+  transport: "http";
+  mode: VerifierMode;
   required: boolean;
-  status: "running" | "stopped" | "failed";
+  status: "running" | "stopped" | "failed" | "missing_dependency";
   url?: string;
   port?: number;
+  details?: string;
 }
+
+export type SidecarEndpoint = VerifierEndpoint;
 
 export interface HostContext {
   protocolVersion: 1;
@@ -155,7 +179,8 @@ export interface HostContext {
   models: RegisteredModel[];
   defaults: GenerationDefaults;
   secrets: SecretResolution[];
-  sidecars: SidecarEndpoint[];
+  verifiers: VerifierEndpoint[];
+  sidecars?: SidecarEndpoint[];
   logger: HostLogger;
 }
 

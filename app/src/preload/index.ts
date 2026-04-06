@@ -35,6 +35,11 @@ const api: BenchLocalDesktopApi = {
       return () => ipcRenderer.removeListener(PLUGIN_RUN_EVENT_CHANNEL, wrapped);
     }
   },
+  verifiers: {
+    list: () => ipcRenderer.invoke("benchlocal:verifiers:list"),
+    start: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:verifiers:start", input),
+    stop: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:verifiers:stop", input)
+  },
   logs: {
     openDetachedWindow: () => ipcRenderer.invoke("benchlocal:logs:open-detached"),
     closeDetachedWindow: () => ipcRenderer.invoke("benchlocal:logs:close-detached"),

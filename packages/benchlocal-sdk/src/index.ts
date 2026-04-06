@@ -12,7 +12,7 @@ import type {
   ScenarioRunInput,
   ScenarioMeta,
   SecretResolution,
-  SidecarEndpoint
+  VerifierEndpoint
 } from "@benchlocal/core";
 export type {
   BenchPlugin,
@@ -28,7 +28,7 @@ export type {
   ScenarioRunInput,
   ScenarioMeta,
   SecretResolution,
-  SidecarEndpoint
+  VerifierEndpoint
 } from "@benchlocal/core";
 
 export const BENCHLOCAL_SCHEMA_VERSION = 1 as const;
@@ -46,6 +46,8 @@ export type SidecarLookupOptions = {
   runningOnly?: boolean;
 };
 
+export type VerifierLookupOptions = SidecarLookupOptions;
+
 export type HostHelpers = {
   getProvider: (providerId: string, options?: ProviderLookupOptions) => ProviderConfig | undefined;
   getRequiredProvider: (providerId: string, options?: Omit<ProviderLookupOptions, "required">) => ProviderConfig;
@@ -54,8 +56,10 @@ export type HostHelpers = {
   getRequiredSecretValue: (providerId: string) => string;
   getRegisteredModel: (modelId: string) => RegisteredModel | undefined;
   getRequiredModel: (modelId: string) => RegisteredModel;
-  getSidecar: (sidecarId: string, options?: SidecarLookupOptions) => SidecarEndpoint | undefined;
-  getRequiredSidecar: (sidecarId: string, options?: Omit<SidecarLookupOptions, "required">) => SidecarEndpoint;
+  getVerifier: (verifierId: string, options?: VerifierLookupOptions) => VerifierEndpoint | undefined;
+  getRequiredVerifier: (verifierId: string, options?: Omit<VerifierLookupOptions, "required">) => VerifierEndpoint;
+  getSidecar: (sidecarId: string, options?: SidecarLookupOptions) => VerifierEndpoint | undefined;
+  getRequiredSidecar: (sidecarId: string, options?: Omit<SidecarLookupOptions, "required">) => VerifierEndpoint;
   resolveGenerationRequest: (overrides?: GenerationRequest) => GenerationRequest;
   getScenarioById: <TScenario extends Pick<ScenarioMeta, "id">>(scenarios: readonly TScenario[], scenarioId: string) => TScenario;
 };
@@ -86,7 +90,7 @@ export function createHostHelpers(context: HostContext): HostHelpers {
   const providerMap = new Map(context.providers.map((provider) => [provider.id, provider]));
   const secretMap = new Map(context.secrets.map((secret) => [secret.providerId, secret]));
   const modelMap = new Map(context.models.map((model) => [model.id, model]));
-  const sidecarMap = new Map(context.sidecars.map((sidecar) => [sidecar.id, sidecar]));
+  const verifierMap = new Map((context.verifiers ?? context.sidecars ?? []).map((verifier) => [verifier.id, verifier]));
 
   return {
     getProvider(providerId, options) {
@@ -150,33 +154,41 @@ export function createHostHelpers(context: HostContext): HostHelpers {
       return model;
     },
 
-    getSidecar(sidecarId, options) {
-      const sidecar = sidecarMap.get(sidecarId);
+    getVerifier(verifierId, options) {
+      const verifier = verifierMap.get(verifierId);
 
-      if (!sidecar) {
+      if (!verifier) {
         if (options?.required) {
-          throw createLookupError("Sidecar", sidecarId);
+          throw createLookupError("Verifier", verifierId);
         }
 
         return undefined;
       }
 
-      if (options?.runningOnly && sidecar.status !== "running") {
+      if (options?.runningOnly && verifier.status !== "running") {
         if (options.required) {
-          throw createLookupError("Sidecar", sidecarId, "is present but not running.");
+          throw createLookupError("Verifier", verifierId, "is present but not running.");
         }
 
         return undefined;
       }
 
-      return sidecar;
+      return verifier;
+    },
+
+    getRequiredVerifier(verifierId, options) {
+      return this.getVerifier(verifierId, {
+        ...options,
+        required: true
+      }) as VerifierEndpoint;
+    },
+
+    getSidecar(sidecarId, options) {
+      return this.getVerifier(sidecarId, options);
     },
 
     getRequiredSidecar(sidecarId, options) {
-      return this.getSidecar(sidecarId, {
-        ...options,
-        required: true
-      }) as SidecarEndpoint;
+      return this.getRequiredVerifier(sidecarId, options);
     },
 
     resolveGenerationRequest(overrides) {

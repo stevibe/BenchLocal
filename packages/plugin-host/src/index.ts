@@ -1,20 +1,26 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import type {
   BenchmarkScore,
   BenchLocalConfig,
   BenchLocalExecutionMode,
   BenchLocalPluginConfig,
+  BenchLocalVerifierConfig,
   HostContext,
   PluginRunHistoryEntry,
   PluginRunSummary,
   ProgressEvent,
   RegisteredModel,
-  SidecarEndpoint,
   ScenarioMeta,
-  ScenarioResult
+  ScenarioResult,
+  VerifierEndpoint,
+  VerifierMode,
+  VerifierSpec
 } from "@benchlocal/core";
 import { expandHomePath, type PluginInspection, type PluginManifest } from "@benchlocal/core";
 
@@ -24,6 +30,8 @@ export type LoadedPluginHandle = {
   pluginId: string;
   entryPath: string;
 };
+
+const execFileAsync = promisify(execFile);
 
 async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
   const raw = await fs.readFile(targetPath, "utf8");
@@ -37,6 +45,170 @@ async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function sanitizeRuntimeName(input: string): string {
+  return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+}
+
+function getVerifierContainerName(pluginId: string, verifierId: string): string {
+  return `benchlocal-${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(verifierId)}`;
+}
+
+async function runDockerCommand(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("docker", args, {
+    maxBuffer: 4 * 1024 * 1024
+  });
+
+  return stdout.trim();
+}
+
+async function detectDockerAvailability(): Promise<{ available: boolean; details?: string }> {
+  try {
+    const version = await runDockerCommand(["version", "--format", "{{.Server.Version}}"]);
+    return {
+      available: true,
+      details: version || "Docker available"
+    };
+  } catch (error) {
+    return {
+      available: false,
+      details: error instanceof Error ? error.message : "Docker CLI is unavailable."
+    };
+  }
+}
+
+async function inspectDockerContainer(containerName: string): Promise<{
+  exists: boolean;
+  running: boolean;
+}> {
+  try {
+    const stdout = await runDockerCommand([
+      "inspect",
+      containerName,
+      "--format",
+      "{{.State.Running}}"
+    ]);
+
+    return {
+      exists: true,
+      running: stdout === "true"
+    };
+  } catch {
+    return {
+      exists: false,
+      running: false
+    };
+  }
+}
+
+async function inspectDockerPortBinding(
+  containerName: string,
+  containerPort: number
+): Promise<{
+  exists: boolean;
+  running: boolean;
+  hostPort?: number;
+}> {
+  try {
+    const stdout = await runDockerCommand(["inspect", containerName]);
+    const parsed = JSON.parse(stdout) as Array<{
+      State?: { Running?: boolean };
+      NetworkSettings?: {
+        Ports?: Record<string, Array<{ HostPort?: string }> | null>;
+      };
+    }>;
+    const details = parsed[0];
+    const running = Boolean(details?.State?.Running);
+    const portRecord = details?.NetworkSettings?.Ports?.[`${containerPort}/tcp`];
+    const hostPortRaw = Array.isArray(portRecord) ? portRecord[0]?.HostPort : undefined;
+    const hostPort = hostPortRaw ? Number(hostPortRaw) : undefined;
+
+    return {
+      exists: true,
+      running,
+      hostPort
+    };
+  } catch {
+    return {
+      exists: false,
+      running: false
+    };
+  }
+}
+
+async function allocateLocalPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+
+    server.once("error", reject);
+
+    server.once("listening", () => {
+      const address = server.address();
+
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate local port.")));
+        return;
+      }
+
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(port);
+      });
+    });
+
+    server.listen(0);
+  });
+}
+
+async function inspectDockerImage(image: string): Promise<boolean> {
+  try {
+    await runDockerCommand(["image", "inspect", image]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stopDockerVerifierContainer(containerName: string): Promise<void> {
+  try {
+    await runDockerCommand(["rm", "-f", containerName]);
+  } catch {
+    // Treat missing containers as already stopped.
+  }
+}
+
+async function startDockerVerifierContainer(
+  containerName: string,
+  image: string,
+  hostPort: number,
+  containerPort: number,
+  options?: {
+    pullImage?: boolean;
+  }
+): Promise<void> {
+  await stopDockerVerifierContainer(containerName);
+  if (options?.pullImage !== false) {
+    await runDockerCommand(["pull", image]);
+  }
+  await runDockerCommand([
+    "run",
+    "-d",
+    "--name",
+    containerName,
+    "-p",
+    `${hostPort}:${containerPort}`,
+    image
+  ]);
+}
+
+async function buildDockerVerifierImage(tag: string, contextPath: string): Promise<void> {
+  await runDockerCommand(["build", "-t", tag, contextPath]);
 }
 
 function resolveConfiguredPluginRoot(config: BenchLocalConfig, pluginId: string, plugin: BenchLocalPluginConfig): string | undefined {
@@ -65,7 +237,9 @@ function isPluginManifest(value: unknown): value is PluginManifest {
     typeof candidate.version === "string" &&
     typeof candidate.entry === "string" &&
     typeof candidate.capabilities === "object" &&
-    candidate.capabilities !== null
+    candidate.capabilities !== null &&
+    ("verification" in (candidate.capabilities as Record<string, unknown>) ||
+      "sidecars" in (candidate.capabilities as Record<string, unknown>))
   );
 }
 
@@ -371,7 +545,7 @@ async function createHostContext(
     })
   );
 
-  const sidecars = await resolveSidecarEndpoints(pluginId, pluginConfig, manifest);
+  const verifiers = await resolveVerifierEndpoints(pluginId, pluginConfig, manifest);
 
   return {
     protocolVersion: 1,
@@ -387,7 +561,8 @@ async function createHostContext(
     models,
     defaults: config.defaults,
     secrets,
-    sidecars,
+    verifiers,
+    sidecars: verifiers,
     logger: {
       debug(message, meta) {
         console.debug(`[plugin:${pluginId}] ${message}`, meta ?? "");
@@ -409,7 +584,7 @@ async function createHostContext(
   };
 }
 
-async function probeSidecar(url: string, healthcheckPath?: string): Promise<SidecarEndpoint["status"]> {
+async function probeVerifier(url: string, healthcheckPath?: string): Promise<VerifierEndpoint["status"]> {
   if (!healthcheckPath) {
     return "running";
   }
@@ -425,30 +600,266 @@ async function probeSidecar(url: string, healthcheckPath?: string): Promise<Side
   }
 }
 
-async function resolveSidecarEndpoints(
+async function waitForVerifierReady(
+  url: string,
+  healthcheckPath?: string,
+  options?: {
+    attempts?: number;
+    delayMs?: number;
+  }
+): Promise<boolean> {
+  const attempts = options?.attempts ?? 12;
+  const delayMs = options?.delayMs ?? 500;
+
+  for (let index = 0; index < attempts; index += 1) {
+    if ((await probeVerifier(url, healthcheckPath)) === "running") {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return false;
+}
+
+function getManifestVerifiers(manifest: PluginManifest): VerifierSpec[] {
+  return manifest.verifiers ?? manifest.sidecars ?? [];
+}
+
+function getVerifierUrl(spec: VerifierSpec, config?: BenchLocalVerifierConfig): { mode: VerifierMode; url?: string; port?: number; details?: string } {
+  const mode = config?.mode ?? spec.defaultMode;
+
+  if (mode === "docker") {
+    return {
+      mode,
+      details: "BenchLocal assigns a free local port automatically."
+    };
+  }
+
+  if (mode === "cloud") {
+    return {
+      mode,
+      url: config?.cloud_url ?? spec.cloud?.baseUrl,
+      details: spec.cloud?.baseUrl ?? config?.cloud_url
+    };
+  }
+
+  return {
+    mode,
+    url: config?.custom_url ?? spec.customUrl?.defaultUrl,
+    details: config?.custom_url ?? spec.customUrl?.defaultUrl
+  };
+}
+
+async function resolveDockerVerifierEndpoint(
+  pluginId: string,
+  spec: VerifierSpec,
+  config?: BenchLocalVerifierConfig
+): Promise<VerifierEndpoint> {
+  const docker = await detectDockerAvailability();
+
+  if (!docker.available) {
+    return {
+      id: spec.id,
+      transport: spec.transport,
+      mode: "docker",
+      required: spec.required,
+      status: "missing_dependency",
+      details: docker.details
+    };
+  }
+
+  const containerName = getVerifierContainerName(pluginId, spec.id);
+  const containerPort = spec.docker?.containerPort;
+  const container: {
+    exists: boolean;
+    running: boolean;
+    hostPort?: number;
+  } = containerPort
+    ? await inspectDockerPortBinding(containerName, containerPort)
+    : await inspectDockerContainer(containerName);
+  const port = container.hostPort;
+  const url = port ? `http://127.0.0.1:${port}` : undefined;
+  const healthcheckPath = spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath;
+  const status =
+    container.running && url
+      ? await probeVerifier(url, healthcheckPath)
+      : container.exists
+        ? "stopped"
+        : "stopped";
+
+  return {
+    id: spec.id,
+    transport: spec.transport,
+    mode: "docker",
+    required: spec.required,
+    status,
+    url,
+    port,
+    details: container.running
+      ? spec.docker?.image
+      : "BenchLocal assigns a free local port automatically when this verifier starts."
+  };
+}
+
+async function resolveVerifierEndpoints(
   pluginId: string,
   pluginConfig: BenchLocalPluginConfig | undefined,
   manifest: PluginManifest
-): Promise<SidecarEndpoint[]> {
-  const sidecarSpecs = manifest.sidecars ?? [];
+): Promise<VerifierEndpoint[]> {
+  const verifierSpecs = getManifestVerifiers(manifest);
 
   return Promise.all(
-    sidecarSpecs.map(async (spec) => {
-      const configured = pluginConfig?.sidecars?.[spec.id];
-      const port = configured?.port ?? spec.defaultPort;
-      const url = port ? `http://127.0.0.1:${port}` : undefined;
-      const status = url ? await probeSidecar(url, spec.healthcheckPath) : "stopped";
+    verifierSpecs.map(async (spec) => {
+      const configured = pluginConfig?.verifiers?.[spec.id] ?? pluginConfig?.sidecars?.[spec.id];
+
+      if ((configured?.mode ?? spec.defaultMode) === "docker") {
+        return resolveDockerVerifierEndpoint(pluginId, spec, configured);
+      }
+
+      const resolved = getVerifierUrl(spec, configured);
+      const healthcheckPath =
+        spec.customUrl?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.docker?.healthcheckPath;
+      const status = resolved.url ? await probeVerifier(resolved.url, healthcheckPath) : "failed";
 
       return {
         id: spec.id,
-        kind: spec.kind,
+        transport: spec.transport,
+        mode: resolved.mode,
         required: spec.required,
         status,
-        url,
-        port
-      } satisfies SidecarEndpoint;
+        url: resolved.url,
+        port: resolved.port,
+        details: resolved.details ?? (resolved.url ? undefined : "Verifier URL is not configured.")
+      } satisfies VerifierEndpoint;
     })
   );
+}
+
+export type ConfiguredPluginVerifierStatus = {
+  pluginId: string;
+  pluginName: string;
+  verifiers: VerifierEndpoint[];
+  docker: {
+    available: boolean;
+    details?: string;
+  };
+};
+
+async function loadConfiguredPluginRuntime(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<{
+  rootDir: string;
+  pluginConfig: BenchLocalPluginConfig;
+  manifest: PluginManifest;
+}> {
+  const pluginConfig = config.plugins[pluginId];
+
+  if (!pluginConfig) {
+    throw new Error(`Unknown plugin "${pluginId}" in BenchLocal config.`);
+  }
+
+  const rootDir = resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+
+  if (!rootDir || !(await pathExists(rootDir))) {
+    throw new Error(`Plugin "${pluginId}" is not installed at a resolvable path.`);
+  }
+
+  const manifest = await readPluginManifest(rootDir);
+  return {
+    rootDir,
+    pluginConfig,
+    manifest
+  };
+}
+
+export async function getConfiguredPluginVerifierStatus(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<ConfiguredPluginVerifierStatus> {
+  const { pluginConfig, manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  const docker = await detectDockerAvailability();
+  const verifiers = await resolveVerifierEndpoints(pluginId, pluginConfig, manifest);
+
+  return {
+    pluginId,
+    pluginName: manifest.name,
+    verifiers,
+    docker
+  };
+}
+
+export async function startConfiguredPluginVerifiers(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<ConfiguredPluginVerifierStatus> {
+  const { rootDir, pluginConfig, manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  const verifierSpecs = getManifestVerifiers(manifest);
+  const docker = await detectDockerAvailability();
+
+  for (const spec of verifierSpecs) {
+    const runtime = pluginConfig.verifiers?.[spec.id] ?? pluginConfig.sidecars?.[spec.id];
+    const mode = runtime?.mode ?? spec.defaultMode;
+
+    if (mode !== "docker" || !runtime?.auto_start) {
+      continue;
+    }
+
+    if (!docker.available) {
+      continue;
+    }
+
+    let image = runtime.docker_image ?? spec.docker?.image;
+    const containerPort = spec.docker?.containerPort;
+    let pullImage = true;
+
+    if (!image && spec.docker?.buildContext) {
+      image = `benchlocal/${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(spec.id)}:local`;
+      pullImage = false;
+
+      if (!(await inspectDockerImage(image))) {
+        await buildDockerVerifierImage(image, path.resolve(rootDir, spec.docker.buildContext));
+      }
+    }
+
+    if (!image || !containerPort) {
+      continue;
+    }
+
+    const hostPort = await allocateLocalPort();
+
+    await startDockerVerifierContainer(
+      getVerifierContainerName(pluginId, spec.id),
+      image,
+      hostPort,
+      containerPort,
+      {
+        pullImage
+      }
+    );
+
+    await waitForVerifierReady(
+      `http://127.0.0.1:${hostPort}`,
+      spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath
+    );
+  }
+
+  return getConfiguredPluginVerifierStatus(config, pluginId);
+}
+
+export async function stopConfiguredPluginVerifiers(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<ConfiguredPluginVerifierStatus> {
+  const { manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  const verifierSpecs = getManifestVerifiers(manifest);
+
+  await Promise.all(
+    verifierSpecs.map((spec) => stopDockerVerifierContainer(getVerifierContainerName(pluginId, spec.id)))
+  );
+
+  return getConfiguredPluginVerifierStatus(config, pluginId);
 }
 
 async function executeSerialMode(
@@ -688,6 +1099,7 @@ export async function runConfiguredPluginBenchmark(
 ): Promise<PluginRunSummary> {
   const artifacts = await createRunArtifacts(config, pluginId);
   const { rootDir, manifest, plugin } = await loadConfiguredPlugin(config, pluginId);
+  await startConfiguredPluginVerifiers(config, pluginId);
   const hostContext = await createHostContext(config, pluginId, rootDir, manifest, artifacts);
   const enabledModels = hostContext.models.filter((model) => model.enabled);
   const selectedModels =

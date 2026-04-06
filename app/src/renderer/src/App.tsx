@@ -33,7 +33,7 @@ import type {
   BenchLocalPluginConfig,
   BenchLocalProviderConfig,
   BenchLocalProviderKind,
-  BenchLocalSidecarConfig,
+  BenchLocalVerifierConfig,
   BenchLocalWorkspace,
   BenchLocalWorkspaceState,
   BenchLocalWorkspaceTab,
@@ -44,12 +44,12 @@ import type {
   PluginRunHistoryEntry,
   PluginRunSummary
 } from "@core";
-import type { DetachedLogsState } from "@/shared/desktop-api";
+import type { DetachedLogsState, PluginVerifierStatus } from "@/shared/desktop-api";
 
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
 
-type SettingsTab = "providers" | "models" | "generation" | "plugins" | "sidecars" | "advanced";
+type SettingsTab = "providers" | "models" | "generation" | "plugins" | "verification" | "advanced";
 
 type LoadState = {
   path: string;
@@ -192,7 +192,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
   { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
   { id: "plugins", label: "Scenario Packs", blurb: "Scenario pack sources, paths, and status.", icon: <PlugZap size={16} /> },
-  { id: "sidecars", label: "Sidecars", blurb: "Verifier services and ports.", icon: <Wrench size={16} /> },
+  { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and profile options.", icon: <FolderCog size={16} /> }
 ];
 
@@ -273,14 +273,6 @@ function createEmptyPlugin(): BenchLocalPluginConfig {
     enabled: true,
     source: "local",
     path: ""
-  };
-}
-
-function createSidecar(): BenchLocalSidecarConfig {
-  return {
-    kind: "docker-http",
-    port: 4020,
-    auto_start: true
   };
 }
 
@@ -478,6 +470,7 @@ export function App() {
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
   const [pluginInspections, setPluginInspections] = useState<PluginInspection[]>([]);
+  const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -584,6 +577,15 @@ export function App() {
     }
   };
 
+  const loadVerifierStatuses = async () => {
+    try {
+      const statuses = await window.benchlocal.verifiers.list();
+      setVerifierStatuses(Object.fromEntries(statuses.map((status) => [status.pluginId, status])));
+    } catch (verifierError) {
+      setError(verifierError instanceof Error ? verifierError.message : "Failed to load verifier status.");
+    }
+  };
+
   const loadHistoryForPlugin = async (pluginId: string) => {
     try {
       const history = await window.benchlocal.plugins.history({ pluginId });
@@ -607,6 +609,7 @@ export function App() {
         const result = await window.benchlocal.config.load();
         const workspaceResult = await window.benchlocal.workspaces.load();
         const inspections = await window.benchlocal.plugins.list();
+        const verifierStatusList = await window.benchlocal.verifiers.list();
         const activeRunsResult = await window.benchlocal.plugins.activeRuns();
 
         if (cancelled) {
@@ -617,6 +620,7 @@ export function App() {
         setDraft(cloneConfig(result.config));
         setWorkspaceState(workspaceResult.state);
         setPluginInspections(inspections);
+        setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
         setActiveRuns(
           Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { pluginId: run.pluginId }]))
         );
@@ -668,6 +672,14 @@ export function App() {
       }));
     });
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen || settingsTab !== "verification") {
+      return;
+    }
+
+    void loadVerifierStatuses();
+  }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
     if (!logsOpen || !logsAutoScroll || !logContainerRef.current) {
@@ -1938,6 +1950,7 @@ export function App() {
           isBusy={isBusy}
           providerIds={providerIds}
           pluginInspections={pluginInspections}
+          verifierStatuses={verifierStatuses}
           onClose={() => setSettingsOpen(false)}
           onSave={() => void save()}
           onReset={reset}
@@ -1965,6 +1978,22 @@ export function App() {
             })
           }
           onDeleteModel={deleteModel}
+          onStartVerifier={async (pluginId) => {
+            try {
+              const status = await window.benchlocal.verifiers.start({ pluginId });
+              setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+            } catch (verifierError) {
+              setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
+            }
+          }}
+          onStopVerifier={async (pluginId) => {
+            try {
+              const status = await window.benchlocal.verifiers.stop({ pluginId });
+              setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+            } catch (verifierError) {
+              setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
+            }
+          }}
           updateDraft={updateDraft}
         />
       ) : null}
@@ -2374,7 +2403,7 @@ function ScenarioPackPickerTrigger({
                         {selectedInspection.manifest?.capabilities.tools ? "Supports tools" : "No tools"}
                       </span>
                       <span className="status-chip status-idle">
-                        {selectedInspection.manifest?.capabilities.sidecars ? "Uses sidecars" : "No sidecars"}
+                        {selectedInspection.manifest?.capabilities.verification ? "Requires verifier" : "No extra dependencies"}
                       </span>
                     </div>
 
@@ -3147,6 +3176,7 @@ function SettingsModal({
   isBusy,
   providerIds,
   pluginInspections,
+  verifierStatuses,
   onClose,
   onSave,
   onReset,
@@ -3158,6 +3188,8 @@ function SettingsModal({
   onEditModel,
   onToggleModel,
   onDeleteModel,
+  onStartVerifier,
+  onStopVerifier,
   updateDraft
 }: {
   settingsTab: SettingsTab;
@@ -3168,6 +3200,7 @@ function SettingsModal({
   isBusy: boolean;
   providerIds: string[];
   pluginInspections: PluginInspection[];
+  verifierStatuses: Record<string, PluginVerifierStatus>;
   onClose: () => void;
   onSave: () => void;
   onReset: () => void;
@@ -3179,6 +3212,8 @@ function SettingsModal({
   onEditModel: (index: number) => void;
   onToggleModel: (index: number) => void;
   onDeleteModel: (index: number) => void;
+  onStartVerifier: (pluginId: string) => Promise<void>;
+  onStopVerifier: (pluginId: string) => Promise<void>;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
   return (
@@ -3340,29 +3375,22 @@ function SettingsModal({
               />
             ) : null}
 
-            {settingsTab === "sidecars" ? (
-              <SidecarsView
+            {settingsTab === "verification" ? (
+              <VerificationView
                 draft={draft}
-                onAdd={(pluginId) =>
+                statuses={verifierStatuses}
+                onUpdate={(pluginId, verifierId, updater) =>
                   updateDraft((current) => {
-                    current.plugins[pluginId].sidecars ??= {};
-                    const baseId = "verifier";
-                    let candidate = baseId;
-                    let index = 1;
-                    while (current.plugins[pluginId].sidecars?.[candidate]) {
-                      candidate = `${baseId}-${index}`;
-                      index += 1;
-                    }
-                    current.plugins[pluginId].sidecars![candidate] = createSidecar();
+                    current.plugins[pluginId].verifiers![verifierId] = updater(current.plugins[pluginId].verifiers![verifierId]);
                     return current;
                   })
                 }
-                onUpdate={(pluginId, sidecarId, updater) =>
-                  updateDraft((current) => {
-                    current.plugins[pluginId].sidecars![sidecarId] = updater(current.plugins[pluginId].sidecars![sidecarId]);
-                    return current;
-                  })
-                }
+                onStart={async (pluginId) => {
+                  await onStartVerifier(pluginId);
+                }}
+                onStop={async (pluginId) => {
+                  await onStopVerifier(pluginId);
+                }}
               />
             ) : null}
 
@@ -3625,46 +3653,186 @@ function PluginsSettingsView({
   );
 }
 
-function SidecarsView({
+function verifierModeLabel(mode: BenchLocalVerifierConfig["mode"]): string {
+  switch (mode) {
+    case "cloud":
+      return "BenchLocal Cloud";
+    case "custom_url":
+      return "Custom URL";
+    case "docker":
+    default:
+      return "Local Docker";
+  }
+}
+
+function VerificationView({
   draft,
-  onAdd,
-  onUpdate
+  statuses,
+  onUpdate,
+  onStart,
+  onStop
 }: {
   draft: BenchLocalConfig;
-  onAdd: (pluginId: string) => void;
-  onUpdate: (pluginId: string, sidecarId: string, updater: (sidecar: BenchLocalSidecarConfig) => BenchLocalSidecarConfig) => void;
+  statuses: Record<string, PluginVerifierStatus>;
+  onUpdate: (pluginId: string, verifierId: string, updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig) => void;
+  onStart: (pluginId: string) => Promise<void>;
+  onStop: (pluginId: string) => Promise<void>;
 }) {
+  const verificationEntries = Object.entries(draft.plugins).filter(([pluginId]) => {
+    const status = statuses[pluginId];
+    return Boolean(status && status.verifiers.length > 0);
+  });
+
   return (
-    <Panel title="Verifier Sidecars" subtitle="Ports and auto-start policy for plugin-specific verification services." tone="orange" icon={<Wrench size={16} />}>
+    <Panel title="Verification Runtimes" subtitle="Choose how required verifiers run: BenchLocal Cloud, Local Docker, or a custom URL." tone="orange" icon={<Wrench size={16} />}>
       <div className="entry-grid">
-        {Object.entries(draft.plugins).map(([pluginId, plugin]) => {
-          const sidecars = plugin.sidecars ?? {};
+        {verificationEntries.map(([pluginId, plugin]) => {
+          const verifiers = plugin.verifiers ?? {};
+          const status = statuses[pluginId];
+          const hasRunningVerifier = status?.verifiers.some((entry) => entry.status === "running") ?? false;
+          const hasMissingDependency = status?.verifiers.some((entry) => entry.status === "missing_dependency") ?? false;
 
           return (
             <div key={pluginId} className="entry-card">
               <div className="section-actions" style={{ justifyContent: "space-between" }}>
                 <div>
                   <h4 style={{ margin: 0, fontSize: "1rem" }}>{pluginId}</h4>
-                  <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{Object.keys(sidecars).length} configured sidecar(s)</p>
+                  <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{Object.keys(verifiers).length} configured verifier runtime(s)</p>
                 </div>
-                <button type="button" onClick={() => onAdd(pluginId)} className="ghost-button"><Plus size={14} />Add Sidecar</button>
+                <div className="settings-table-actions">
+                  <span className={`status-chip ${
+                    hasRunningVerifier
+                      ? "status-ready"
+                      : hasMissingDependency
+                        ? "status-not-installed"
+                        : "status-idle"
+                  }`}>
+                    {hasRunningVerifier ? "running" : hasMissingDependency ? "dependency missing" : "stopped"}
+                  </span>
+                  {hasRunningVerifier ? (
+                    <button type="button" onClick={() => onStop(pluginId)} className="ghost-button ghost-button-compact"><Square size={14} />Stop</button>
+                  ) : (
+                    <button type="button" onClick={() => onStart(pluginId)} className="ghost-button ghost-button-compact"><Play size={14} />Start</button>
+                  )}
+                </div>
               </div>
 
+              {status ? (
+                <div className="banner banner-neutral banner-row">
+                  <span>Docker: {status.docker.available ? status.docker.details ?? "available" : "not detected"}</span>
+                  {status.docker.details && !status.docker.available ? <span>{status.docker.details}</span> : null}
+                </div>
+              ) : null}
+
               <div className="entry-grid" style={{ marginTop: "16px" }}>
-                {Object.entries(sidecars).map(([sidecarId, sidecar]) => (
-                  <div key={sidecarId} className="entry-card">
-                    <div className="entry-grid four-col">
-                    <Field label="Sidecar ID" value={sidecarId} readOnly onChange={() => undefined} />
-                    <InlineSelectField label="Kind" value={sidecar.kind} options={["docker-http"]} onChange={(value) => onUpdate(pluginId, sidecarId, (current) => ({ ...current, kind: value as BenchLocalSidecarConfig["kind"] }))} />
-                    <Field label="Port" type="number" value={String(sidecar.port)} onChange={(value) => onUpdate(pluginId, sidecarId, (current) => ({ ...current, port: Number(value || 1) }))} />
-                    <ToggleRow label="Auto Start" checked={sidecar.auto_start} onChange={(checked) => onUpdate(pluginId, sidecarId, (current) => ({ ...current, auto_start: checked }))} />
+                {Object.entries(verifiers).map(([verifierId, verifier]) => {
+                  const runtime = status?.verifiers.find((entry) => entry.id === verifierId);
+
+                  return (
+                    <div key={verifierId} className="entry-card">
+                      <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <h5 style={{ margin: 0, fontSize: "0.96rem" }}>{verifierId}</h5>
+                          <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.88rem" }}>
+                            {runtime?.url ?? "No verifier endpoint configured"}
+                          </p>
+                        </div>
+                        <div className="settings-table-actions">
+                          <span className="status-chip status-idle">{verifierModeLabel(verifier.mode)}</span>
+                          {runtime ? (
+                            <span className={`status-chip ${
+                              runtime.status === "running"
+                                ? "status-ready"
+                                : runtime.status === "missing_dependency"
+                                  ? "status-not-installed"
+                                  : runtime.status === "failed"
+                                    ? "status-danger"
+                                    : "status-idle"
+                            }`}>
+                              {runtime.status.replaceAll("_", " ")}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="entry-grid four-col" style={{ marginTop: "16px" }}>
+                        <Field label="Verifier ID" value={verifierId} readOnly onChange={() => undefined} />
+                        <InlineSelectField
+                          label="Mode"
+                          value={verifier.mode}
+                          options={["docker", "cloud", "custom_url"]}
+                          getOptionLabel={(value) => verifierModeLabel(value as BenchLocalVerifierConfig["mode"])}
+                          onChange={(value) =>
+                            onUpdate(pluginId, verifierId, (current) => ({
+                              ...current,
+                              mode: value as BenchLocalVerifierConfig["mode"]
+                            }))
+                          }
+                        />
+                        <ToggleRow
+                          label="Auto Start"
+                          checked={verifier.auto_start}
+                          onChange={(checked) =>
+                            onUpdate(pluginId, verifierId, (current) => ({
+                              ...current,
+                              auto_start: checked
+                            }))
+                          }
+                        />
+                        {verifier.mode === "docker" ? (
+                          <Field
+                            label="Local Port"
+                            value="Assigned automatically by BenchLocal at startup"
+                            readOnly
+                            onChange={() => undefined}
+                          />
+                        ) : null}
+                        <Field
+                          label="Cloud URL"
+                          value={verifier.cloud_url ?? ""}
+                          placeholder="https://verify.example.com"
+                          onChange={(value) =>
+                            onUpdate(pluginId, verifierId, (current) => ({
+                              ...current,
+                              cloud_url: value || undefined
+                            }))
+                          }
+                        />
+                        <Field
+                          label="Custom URL"
+                          value={verifier.custom_url ?? ""}
+                          placeholder="http://127.0.0.1:4010"
+                          onChange={(value) =>
+                            onUpdate(pluginId, verifierId, (current) => ({
+                              ...current,
+                              custom_url: value || undefined
+                            }))
+                          }
+                        />
+                        <Field
+                          label="Docker Image Override"
+                          value={verifier.docker_image ?? ""}
+                          placeholder="benchlocal/bugfind-verifier:latest"
+                          onChange={(value) =>
+                            onUpdate(pluginId, verifierId, (current) => ({
+                              ...current,
+                              docker_image: value || undefined
+                            }))
+                          }
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
         })}
+        {verificationEntries.length === 0 ? (
+          <div className="entry-card">
+            <p className="muted-copy">No installed scenario packs currently require a verifier.</p>
+          </div>
+        ) : null}
       </div>
     </Panel>
   );

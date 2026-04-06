@@ -31,11 +31,18 @@ export type BenchLocalModelConfig = {
   enabled: boolean;
 };
 
-export type BenchLocalSidecarConfig = {
-  kind: "docker-http";
+export type BenchLocalVerifierMode = "cloud" | "docker" | "custom_url";
+
+export type BenchLocalVerifierConfig = {
+  mode: BenchLocalVerifierMode;
   port: number;
   auto_start: boolean;
+  custom_url?: string;
+  cloud_url?: string;
+  docker_image?: string;
 };
+
+export type BenchLocalSidecarConfig = BenchLocalVerifierConfig;
 
 export type BenchLocalPluginConfig = {
   enabled: boolean;
@@ -44,6 +51,7 @@ export type BenchLocalPluginConfig = {
   path?: string;
   ref?: string;
   auto_update?: boolean;
+  verifiers?: Record<string, BenchLocalVerifierConfig>;
   sidecars?: Record<string, BenchLocalSidecarConfig>;
 };
 
@@ -99,10 +107,13 @@ const ModelSchema = z.object({
   enabled: z.boolean().default(true)
 });
 
-const SidecarSchema = z.object({
-  kind: z.literal("docker-http").default("docker-http"),
+const VerifierSchema = z.object({
+  mode: z.enum(["cloud", "docker", "custom_url"]).default("docker"),
   port: z.number().int().min(1).max(65535),
-  auto_start: z.boolean().default(true)
+  auto_start: z.boolean().default(true),
+  custom_url: z.string().trim().min(1).optional(),
+  cloud_url: z.string().trim().min(1).optional(),
+  docker_image: z.string().trim().min(1).optional()
 });
 
 const PluginSchema = z
@@ -113,7 +124,8 @@ const PluginSchema = z
     path: z.string().trim().min(1).optional(),
     ref: z.string().trim().min(1).optional(),
     auto_update: z.boolean().optional(),
-    sidecars: z.record(z.string(), SidecarSchema).optional()
+    verifiers: z.record(z.string(), VerifierSchema).optional(),
+    sidecars: z.record(z.string(), VerifierSchema).optional()
   })
   .superRefine((value, context) => {
     if (value.source === "github" && !value.repo) {
@@ -328,9 +340,9 @@ export function createDefaultConfig(): BenchLocalConfig {
         enabled: true,
         source: "github",
         repo: "stevibe/BugFind-15",
-        sidecars: {
+        verifiers: {
           verifier: {
-            kind: "docker-http",
+            mode: "docker",
             port: 4010,
             auto_start: true
           }
@@ -355,9 +367,9 @@ export function createDefaultConfig(): BenchLocalConfig {
         enabled: true,
         source: "local",
         path: path.resolve(workspaceRoot, "../StructOutput-15"),
-        sidecars: {
+        verifiers: {
           verifier: {
-            kind: "docker-http",
+            mode: "docker",
             port: 4011,
             auto_start: true
           }
@@ -415,7 +427,15 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
       ...parsed.defaults
     },
     providers: normalizedProviders,
-    plugins: parsed.plugins
+    plugins: Object.fromEntries(
+      Object.entries(parsed.plugins).map(([pluginId, plugin]) => [
+        pluginId,
+        {
+          ...plugin,
+          verifiers: plugin.verifiers ?? plugin.sidecars
+        }
+      ])
+    )
   };
 
   const seenModelIds = new Set<string>();
@@ -434,6 +454,18 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
     }
 
     seenModelIds.add(model.id);
+  }
+
+  for (const [pluginId, plugin] of Object.entries(config.plugins)) {
+    for (const [verifierId, verifier] of Object.entries(plugin.verifiers ?? {})) {
+      if (verifier.custom_url) {
+        assertValidHttpUrl(verifier.custom_url, `plugins.${pluginId}.verifiers.${verifierId}.custom_url`);
+      }
+
+      if (verifier.cloud_url) {
+        assertValidHttpUrl(verifier.cloud_url, `plugins.${pluginId}.verifiers.${verifierId}.cloud_url`);
+      }
+    }
   }
 
   return config;

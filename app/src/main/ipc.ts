@@ -10,7 +10,15 @@ import {
   saveConfigFile,
   saveWorkspaceStateFile
 } from "@core";
-import { inspectConfiguredPlugins, listRunHistoryForPlugin, loadRunSummaryForPlugin, runConfiguredPluginBenchmark } from "@plugin-host";
+import {
+  getConfiguredPluginVerifierStatus,
+  inspectConfiguredPlugins,
+  listRunHistoryForPlugin,
+  loadRunSummaryForPlugin,
+  runConfiguredPluginBenchmark,
+  startConfiguredPluginVerifiers,
+  stopConfiguredPluginVerifiers
+} from "@plugin-host";
 import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
@@ -26,6 +34,9 @@ const PLUGIN_STOP_CHANNEL = "benchlocal:plugins:stop";
 const PLUGIN_HISTORY_CHANNEL = "benchlocal:plugins:history";
 const PLUGIN_HISTORY_LOAD_CHANNEL = "benchlocal:plugins:history-load";
 const PLUGIN_RUN_EVENT_CHANNEL = "benchlocal:plugins:run-event";
+const VERIFIERS_LIST_CHANNEL = "benchlocal:verifiers:list";
+const VERIFIERS_START_CHANNEL = "benchlocal:verifiers:start";
+const VERIFIERS_STOP_CHANNEL = "benchlocal:verifiers:stop";
 const LOGS_OPEN_DETACHED_CHANNEL = "benchlocal:logs:open-detached";
 const LOGS_CLOSE_DETACHED_CHANNEL = "benchlocal:logs:close-detached";
 const LOGS_PUBLISH_STATE_CHANNEL = "benchlocal:logs:publish-state";
@@ -164,6 +175,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PLUGIN_HISTORY_LOAD_CHANNEL, async (_event, input: { pluginId: string; runId: string }) => {
     const { config } = await loadOrCreateConfig();
     return loadRunSummaryForPlugin(config, input.pluginId, input.runId);
+  });
+
+  ipcMain.handle(VERIFIERS_LIST_CHANNEL, async () => {
+    const { config } = await loadOrCreateConfig();
+    const inspections = await inspectConfiguredPlugins(config);
+    const relevant = inspections.filter((inspection) => inspection.manifest?.capabilities.verification || inspection.manifest?.capabilities.sidecars);
+    return Promise.all(relevant.map((inspection) => getConfiguredPluginVerifierStatus(config, inspection.id)));
+  });
+
+  ipcMain.handle(VERIFIERS_START_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return startConfiguredPluginVerifiers(config, input.pluginId);
+  });
+
+  ipcMain.handle(VERIFIERS_STOP_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return stopConfiguredPluginVerifiers(config, input.pluginId);
   });
 
   ipcMain.handle(LOGS_OPEN_DETACHED_CHANNEL, async () => {

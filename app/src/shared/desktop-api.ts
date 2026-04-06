@@ -4,7 +4,8 @@ import type {
   BenchLocalWorkspaceState,
   PluginInspection,
   PluginRunHistoryEntry,
-  PluginRunSummary
+  PluginRunSummary,
+  VerifierEndpoint
 } from "@core";
 
 export type DetachedLogsState = {
@@ -18,6 +19,16 @@ export type ConfigLoadResult = {
   path: string;
   created: boolean;
   config: BenchLocalConfig;
+};
+
+export type PluginVerifierStatus = {
+  pluginId: string;
+  pluginName: string;
+  docker: {
+    available: boolean;
+    details?: string;
+  };
+  verifiers: VerifierEndpoint[];
 };
 
 export interface BenchLocalDesktopApi {
@@ -39,6 +50,11 @@ export interface BenchLocalDesktopApi {
     history(input: { pluginId: string }): Promise<PluginRunHistoryEntry[]>;
     loadHistory(input: { pluginId: string; runId: string }): Promise<PluginRunSummary>;
     onRunEvent(listener: (payload: { tabId: string; event: ProgressEvent }) => void): () => void;
+  };
+  verifiers: {
+    list(): Promise<PluginVerifierStatus[]>;
+    start(input: { pluginId: string }): Promise<PluginVerifierStatus>;
+    stop(input: { pluginId: string }): Promise<PluginVerifierStatus>;
   };
   logs: {
     openDetachedWindow(): Promise<{ opened: boolean }>;
