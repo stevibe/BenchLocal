@@ -12,12 +12,16 @@ import {
 } from "@core";
 import {
   getConfiguredPluginVerifierStatus,
+  installScenarioPackFromRegistry,
   inspectConfiguredPlugins,
   listRunHistoryForPlugin,
+  loadScenarioPackRegistry,
   loadRunSummaryForPlugin,
   runConfiguredPluginBenchmark,
   startConfiguredPluginVerifiers,
-  stopConfiguredPluginVerifiers
+  stopConfiguredPluginVerifiers,
+  uninstallScenarioPack,
+  updateScenarioPackFromRegistry
 } from "@plugin-host";
 import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
 
@@ -28,6 +32,10 @@ const WORKSPACES_SAVE_CHANNEL = "benchlocal:workspaces:save";
 const WORKSPACES_EXPORT_CHANNEL = "benchlocal:workspaces:export";
 const WORKSPACES_IMPORT_CHANNEL = "benchlocal:workspaces:import";
 const PLUGIN_LIST_CHANNEL = "benchlocal:plugins:list";
+const PLUGIN_REGISTRY_CHANNEL = "benchlocal:plugins:registry";
+const PLUGIN_INSTALL_CHANNEL = "benchlocal:plugins:install";
+const PLUGIN_UPDATE_CHANNEL = "benchlocal:plugins:update";
+const PLUGIN_UNINSTALL_CHANNEL = "benchlocal:plugins:uninstall";
 const PLUGIN_ACTIVE_RUNS_CHANNEL = "benchlocal:plugins:active-runs";
 const PLUGIN_RUN_CHANNEL = "benchlocal:plugins:run";
 const PLUGIN_STOP_CHANNEL = "benchlocal:plugins:stop";
@@ -158,6 +166,41 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(PLUGIN_LIST_CHANNEL, async () => {
     const { config } = await loadOrCreateConfig();
     return inspectConfiguredPlugins(config);
+  });
+
+  ipcMain.handle(PLUGIN_REGISTRY_CHANNEL, async () => {
+    const { config } = await loadOrCreateConfig();
+    return loadScenarioPackRegistry(config);
+  });
+
+  ipcMain.handle(PLUGIN_INSTALL_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    const saved = await installScenarioPackFromRegistry(config, input.pluginId);
+    return {
+      path: getConfigPath(),
+      created: false,
+      config: saved
+    };
+  });
+
+  ipcMain.handle(PLUGIN_UPDATE_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    const saved = await updateScenarioPackFromRegistry(config, input.pluginId);
+    return {
+      path: getConfigPath(),
+      created: false,
+      config: saved
+    };
+  });
+
+  ipcMain.handle(PLUGIN_UNINSTALL_CHANNEL, async (_event, input: { pluginId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    const saved = await uninstallScenarioPack(config, input.pluginId);
+    return {
+      path: getConfigPath(),
+      created: false,
+      config: saved
+    };
   });
 
   ipcMain.handle(PLUGIN_ACTIVE_RUNS_CHANNEL, async () => {

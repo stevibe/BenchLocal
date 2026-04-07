@@ -101,10 +101,11 @@ export function getWorkspaceStatePath(): string {
   return path.join(getBenchLocalHome(), "state.json");
 }
 
-export function createDefaultWorkspaceState(defaultPlugin = "toolcall-15"): BenchLocalWorkspaceState {
+export function createDefaultWorkspaceState(defaultPlugin = ""): BenchLocalWorkspaceState {
   const now = new Date().toISOString();
   const workspaceId = `workspace-${randomUUID()}`;
   const tabId = `tab-${randomUUID()}`;
+  const hasDefaultPlugin = Boolean(defaultPlugin.trim());
 
   return {
     schema_version: 1,
@@ -123,8 +124,8 @@ export function createDefaultWorkspaceState(defaultPlugin = "toolcall-15"): Benc
     tabs: {
       [tabId]: {
         id: tabId,
-        title: defaultPlugin,
-        pluginId: defaultPlugin,
+        title: hasDefaultPlugin ? defaultPlugin : "New Tab",
+        pluginId: hasDefaultPlugin ? defaultPlugin : null,
         focusedScenarioId: null,
         modelSelections: [],
         executionMode: "parallel_by_model",
@@ -135,7 +136,7 @@ export function createDefaultWorkspaceState(defaultPlugin = "toolcall-15"): Benc
   };
 }
 
-function normalizeWorkspaceState(raw: unknown, defaultPlugin = "toolcall-15"): BenchLocalWorkspaceState {
+function normalizeWorkspaceState(raw: unknown, defaultPlugin = ""): BenchLocalWorkspaceState {
   const defaults = createDefaultWorkspaceState(defaultPlugin);
   const parsed = WorkspaceStateSchema.parse(raw ?? {});
 
@@ -182,7 +183,7 @@ function normalizeWorkspaceState(raw: unknown, defaultPlugin = "toolcall-15"): B
 
 export async function loadWorkspaceStateFile(
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = "toolcall-15"
+  defaultPlugin = ""
 ): Promise<BenchLocalWorkspaceState> {
   const raw = await fs.readFile(statePath, "utf8");
   return normalizeWorkspaceState(JSON.parse(raw), defaultPlugin);
@@ -190,7 +191,7 @@ export async function loadWorkspaceStateFile(
 
 export async function loadOrCreateWorkspaceState(
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = "toolcall-15"
+  defaultPlugin = ""
 ): Promise<LoadedBenchLocalWorkspaceState> {
   await fs.mkdir(path.dirname(statePath), { recursive: true });
 
@@ -222,7 +223,7 @@ export async function loadOrCreateWorkspaceState(
 export async function saveWorkspaceStateFile(
   state: BenchLocalWorkspaceState,
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = "toolcall-15"
+  defaultPlugin = ""
 ): Promise<BenchLocalWorkspaceState> {
   const normalized = normalizeWorkspaceState(state, defaultPlugin);
   await fs.mkdir(path.dirname(statePath), { recursive: true });

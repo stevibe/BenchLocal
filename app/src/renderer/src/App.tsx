@@ -30,7 +30,6 @@ import type {
   BenchLocalConfig,
   BenchLocalExecutionMode,
   BenchLocalModelConfig,
-  BenchLocalPluginConfig,
   BenchLocalProviderConfig,
   BenchLocalProviderKind,
   BenchLocalVerifierConfig,
@@ -42,7 +41,8 @@ import type {
   ScenarioResult,
   PluginInspection,
   PluginRunHistoryEntry,
-  PluginRunSummary
+  PluginRunSummary,
+  ScenarioPackRegistryEntry
 } from "@core";
 import type { DetachedLogsState, PluginVerifierStatus } from "@/shared/desktop-api";
 
@@ -191,7 +191,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
   { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
   { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
-  { id: "plugins", label: "Scenario Packs", blurb: "Scenario pack sources, paths, and status.", icon: <PlugZap size={16} /> },
+  { id: "plugins", label: "Scenario Packs", blurb: "Browse, install, update, and remove official scenario packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and profile options.", icon: <FolderCog size={16} /> }
 ];
@@ -265,14 +265,6 @@ function createEmptyModel(providerId = "openrouter"): ModelFormState {
     label: "",
     group: "primary",
     enabled: true
-  };
-}
-
-function createEmptyPlugin(): BenchLocalPluginConfig {
-  return {
-    enabled: true,
-    source: "local",
-    path: ""
   };
 }
 
@@ -470,6 +462,7 @@ export function App() {
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
   const [pluginInspections, setPluginInspections] = useState<PluginInspection[]>([]);
+  const [registryEntries, setRegistryEntries] = useState<ScenarioPackRegistryEntry[]>([]);
   const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -577,6 +570,15 @@ export function App() {
     }
   };
 
+  const loadRegistryEntries = async () => {
+    try {
+      const entries = await window.benchlocal.plugins.registry();
+      setRegistryEntries(entries);
+    } catch (registryError) {
+      setError(registryError instanceof Error ? registryError.message : "Failed to load scenario pack registry.");
+    }
+  };
+
   const loadVerifierStatuses = async () => {
     try {
       const statuses = await window.benchlocal.verifiers.list();
@@ -609,6 +611,7 @@ export function App() {
         const result = await window.benchlocal.config.load();
         const workspaceResult = await window.benchlocal.workspaces.load();
         const inspections = await window.benchlocal.plugins.list();
+        const registry = await window.benchlocal.plugins.registry();
         const verifierStatusList = await window.benchlocal.verifiers.list();
         const activeRunsResult = await window.benchlocal.plugins.activeRuns();
 
@@ -620,6 +623,7 @@ export function App() {
         setDraft(cloneConfig(result.config));
         setWorkspaceState(workspaceResult.state);
         setPluginInspections(inspections);
+        setRegistryEntries(registry);
         setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
         setActiveRuns(
           Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { pluginId: run.pluginId }]))
@@ -801,11 +805,95 @@ export function App() {
       setLoadState(result);
       setDraft(cloneConfig(result.config));
       await loadPluginInspections();
+      await loadRegistryEntries();
       setNotice("Saved ~/.benchlocal/config.toml");
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save BenchLocal config.");
       return false;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const refreshScenarioPackState = async (result?: LoadState) => {
+    const nextLoadState = result ?? (await window.benchlocal.config.load());
+    const inspections = await window.benchlocal.plugins.list();
+    const registry = await window.benchlocal.plugins.registry();
+    const verifierStatusList = await window.benchlocal.verifiers.list();
+
+    setLoadState(nextLoadState);
+    setDraft(cloneConfig(nextLoadState.config));
+    setPluginInspections(inspections);
+    setRegistryEntries(registry);
+    setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
+  };
+
+  const ensureScenarioPackMutationReady = async (): Promise<boolean> => {
+    if (!hasUnsavedChanges) {
+      return true;
+    }
+
+    return save();
+  };
+
+  const installScenarioPack = async (pluginId: string) => {
+    if (!(await ensureScenarioPackMutationReady())) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+
+    try {
+      const result = await window.benchlocal.plugins.install({ pluginId });
+      await refreshScenarioPackState(result);
+      setNotice(`Installed ${pluginId}.`);
+    } catch (installError) {
+      setError(installError instanceof Error ? installError.message : `Failed to install ${pluginId}.`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const updateScenarioPack = async (pluginId: string) => {
+    if (!(await ensureScenarioPackMutationReady())) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+
+    try {
+      const result = await window.benchlocal.plugins.update({ pluginId });
+      await refreshScenarioPackState(result);
+      setNotice(`Updated ${pluginId}.`);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : `Failed to update ${pluginId}.`);
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const uninstallInstalledScenarioPack = async (pluginId: string) => {
+    if (!(await ensureScenarioPackMutationReady())) {
+      return;
+    }
+
+    if (Object.values(activeRuns).some((run) => run.pluginId === pluginId)) {
+      setError("Stop active scenario pack runs before uninstalling this pack.");
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+
+    try {
+      const result = await window.benchlocal.plugins.uninstall({ pluginId });
+      await refreshScenarioPackState(result);
+      setNotice(`Uninstalled ${pluginId}.`);
+    } catch (uninstallError) {
+      setError(uninstallError instanceof Error ? uninstallError.message : `Failed to uninstall ${pluginId}.`);
     } finally {
       setIsBusy(false);
     }
@@ -1950,6 +2038,7 @@ export function App() {
           isBusy={isBusy}
           providerIds={providerIds}
           pluginInspections={pluginInspections}
+          registryEntries={registryEntries}
           verifierStatuses={verifierStatuses}
           onClose={() => setSettingsOpen(false)}
           onSave={() => void save()}
@@ -1994,6 +2083,10 @@ export function App() {
               setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
             }
           }}
+          onRefreshRegistry={() => void loadRegistryEntries()}
+          onInstallScenarioPack={(pluginId) => void installScenarioPack(pluginId)}
+          onUpdateScenarioPack={(pluginId) => void updateScenarioPack(pluginId)}
+          onUninstallScenarioPack={(pluginId) => void uninstallInstalledScenarioPack(pluginId)}
           updateDraft={updateDraft}
         />
       ) : null}
@@ -2422,7 +2515,15 @@ function ScenarioPackPickerTrigger({
                       </button>
                     </div>
                   </>
-                ) : null}
+                ) : (
+                  <div className="entry-card" style={{ marginTop: "40px" }}>
+                    <p className="eyebrow">No Installed Scenario Packs</p>
+                    <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a scenario pack from Settings</h3>
+                    <p className="section-copy" style={{ marginTop: "10px" }}>
+                      BenchLocal now starts with zero installed scenario packs. Open Settings, go to Scenario Packs, and install one from the official registry.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -3091,7 +3192,7 @@ function EmptyWorkspace() {
         <p className="eyebrow">No Active Scenario Pack</p>
         <h3 className="panel-title">Select a scenario pack to open its workspace</h3>
         <p className="section-copy" style={{ marginTop: "12px", maxWidth: "52ch" }}>
-          Use the pack picker in the toolbar to choose scenario packs, then click one from the sidebar. BenchLocal will keep providers, models, and shared parameters in one place while each scenario pack owns its scenarios and scoring.
+          Install official scenario packs from Settings, then use the pack picker in the toolbar to open them here. BenchLocal keeps providers, models, and shared parameters in one place while each scenario pack owns its scenarios and scoring.
         </p>
       </div>
     </section>
@@ -3176,6 +3277,7 @@ function SettingsModal({
   isBusy,
   providerIds,
   pluginInspections,
+  registryEntries,
   verifierStatuses,
   onClose,
   onSave,
@@ -3190,6 +3292,10 @@ function SettingsModal({
   onDeleteModel,
   onStartVerifier,
   onStopVerifier,
+  onRefreshRegistry,
+  onInstallScenarioPack,
+  onUpdateScenarioPack,
+  onUninstallScenarioPack,
   updateDraft
 }: {
   settingsTab: SettingsTab;
@@ -3200,6 +3306,7 @@ function SettingsModal({
   isBusy: boolean;
   providerIds: string[];
   pluginInspections: PluginInspection[];
+  registryEntries: ScenarioPackRegistryEntry[];
   verifierStatuses: Record<string, PluginVerifierStatus>;
   onClose: () => void;
   onSave: () => void;
@@ -3214,6 +3321,10 @@ function SettingsModal({
   onDeleteModel: (index: number) => void;
   onStartVerifier: (pluginId: string) => Promise<void>;
   onStopVerifier: (pluginId: string) => Promise<void>;
+  onRefreshRegistry: () => void;
+  onInstallScenarioPack: (pluginId: string) => void;
+  onUpdateScenarioPack: (pluginId: string) => void;
+  onUninstallScenarioPack: (pluginId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
   return (
@@ -3350,28 +3461,14 @@ function SettingsModal({
             ) : null}
 
             {settingsTab === "plugins" ? (
-              <PluginsSettingsView
+              <ScenarioPackRegistryView
                 draft={draft}
                 inspections={pluginInspections}
-                onAdd={() =>
-                  updateDraft((current) => {
-                    const baseId = "new-plugin";
-                    let candidate = baseId;
-                    let index = 1;
-                    while (current.plugins[candidate]) {
-                      candidate = `${baseId}-${index}`;
-                      index += 1;
-                    }
-                    current.plugins[candidate] = createEmptyPlugin();
-                    return current;
-                  })
-                }
-                onChange={(pluginId, updater) =>
-                  updateDraft((current) => {
-                    current.plugins[pluginId] = updater(current.plugins[pluginId]);
-                    return current;
-                  })
-                }
+                registryEntries={registryEntries}
+                onRefresh={onRefreshRegistry}
+                onInstall={onInstallScenarioPack}
+                onUpdate={onUpdateScenarioPack}
+                onUninstall={onUninstallScenarioPack}
               />
             ) : null}
 
@@ -3420,8 +3517,8 @@ function SettingsModal({
                     current.ui.theme = value as BenchLocalConfig["ui"]["theme"];
                     return current;
                   })} />
-                  <Field label="Default Scenario Pack" value={draft.default_plugin} onChange={(value) => updateDraft((current) => {
-                    current.default_plugin = value;
+                  <Field label="Official Registry URL" value={draft.registry.official_url} onChange={(value) => updateDraft((current) => {
+                    current.registry.official_url = value;
                     return current;
                   })} />
                   <div className="helper-copy">
@@ -3601,53 +3698,164 @@ function ModelsView({
   );
 }
 
-function PluginsSettingsView({
+function ScenarioPackRegistryView({
   draft,
   inspections,
-  onAdd,
-  onChange
+  registryEntries,
+  onRefresh,
+  onInstall,
+  onUpdate,
+  onUninstall
 }: {
   draft: BenchLocalConfig;
   inspections: PluginInspection[];
-  onAdd: () => void;
-  onChange: (pluginId: string, updater: (plugin: BenchLocalPluginConfig) => BenchLocalPluginConfig) => void;
+  registryEntries: ScenarioPackRegistryEntry[];
+  onRefresh: () => void;
+  onInstall: (pluginId: string) => void;
+  onUpdate: (pluginId: string) => void;
+  onUninstall: (pluginId: string) => void;
 }) {
   const inspectionsById = Object.fromEntries(inspections.map((inspection) => [inspection.id, inspection]));
+  const installedEntries = registryEntries.filter((entry) => draft.plugins[entry.id]);
+  const availableEntries = registryEntries.filter((entry) => !draft.plugins[entry.id]);
+  const unlistedInstalledIds = Object.keys(draft.plugins).filter(
+    (pluginId) => !registryEntries.some((entry) => entry.id === pluginId)
+  );
 
   return (
-    <Panel title="Scenario Pack Registry" subtitle="Installed scenario pack entries, local paths, and runtime readiness." tone="sky" icon={<PlugZap size={16} />}>
+    <Panel title="Scenario Pack Registry" subtitle="Install, update, and remove official scenario packs from the BenchLocal registry." tone="sky" icon={<PlugZap size={16} />}>
       <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">A scenario pack must expose `benchlocal.plugin.json` plus a compiled entrypoint before it is runnable from the desktop app.</p>
-        <button type="button" onClick={onAdd} className="primary-button"><Plus size={14} />Add Scenario Pack</button>
+        <p className="muted-copy">BenchLocal starts with zero installed packs. Install official scenario packs from the registry, and only installed packs appear in New Tab.</p>
+        <button type="button" onClick={onRefresh} className="ghost-button"><RotateCcw size={14} />Refresh Registry</button>
       </div>
 
       <div className="entry-grid" style={{ marginTop: "20px" }}>
-        {Object.entries(draft.plugins).map(([pluginId, plugin]) => {
-          const inspection = inspectionsById[pluginId];
-
-          return (
-            <div key={pluginId} className="entry-card">
-              <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: "1rem" }}>{pluginId}</h4>
-                  <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>Runtime status: {inspection?.status ?? "not scanned"}</p>
-                </div>
-                <span className={`status-chip ${plugin.enabled ? "status-ready" : "status-inactive"}`}>
-                  {plugin.enabled ? "enabled" : "disabled"}
-                </span>
-              </div>
-
-              <div className="entry-grid two-col" style={{ marginTop: "16px" }}>
-                <InlineSelectField label="Source" value={plugin.source} options={["github", "local", "git"]} onChange={(value) => onChange(pluginId, (current) => ({ ...current, source: value as BenchLocalPluginConfig["source"] }))} />
-                <ToggleRow label="Enabled" checked={plugin.enabled} onChange={(checked) => onChange(pluginId, (current) => ({ ...current, enabled: checked }))} />
-                <Field label="Repo" value={plugin.repo ?? ""} placeholder="stevibe/ToolCall-15" onChange={(value) => onChange(pluginId, (current) => ({ ...current, repo: value || undefined }))} />
-                <Field label="Local Path" value={plugin.path ?? ""} placeholder="/absolute/path/to/plugin" onChange={(value) => onChange(pluginId, (current) => ({ ...current, path: value || undefined }))} />
-              </div>
-
-              {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
+        <div className="entry-card">
+          <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h4 style={{ margin: 0, fontSize: "1rem" }}>Installed</h4>
+              <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{installedEntries.length} installed scenario pack(s)</p>
             </div>
-          );
-        })}
+          </div>
+
+          <div className="entry-grid" style={{ marginTop: "16px" }}>
+            {installedEntries.length === 0 && unlistedInstalledIds.length === 0 ? (
+              <div className="entry-card">
+                <p className="muted-copy">No scenario packs are installed yet.</p>
+              </div>
+            ) : (
+              installedEntries.map((entry) => {
+                const inspection = inspectionsById[entry.id];
+                const installed = draft.plugins[entry.id];
+                const updateAvailable =
+                  installed?.version !== entry.version ||
+                  (entry.source.type === "github" ? installed?.ref !== entry.source.tag : false);
+
+                return (
+                  <div key={entry.id} className="entry-card">
+                    <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
+                        <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? entry.id}</p>
+                        <p className="settings-row-secondary settings-mono-cell" style={{ marginTop: "8px" }}>{entry.id}</p>
+                      </div>
+                      <div className="settings-table-actions">
+                        <span className="status-chip status-idle">v{installed?.version ?? entry.version}</span>
+                        <span className={`status-chip ${statusClasses(inspection?.status ?? "not_installed")}`}>
+                          {(inspection?.status ?? "not_installed").replaceAll("_", " ")}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
+                      <button type="button" onClick={() => onUpdate(entry.id)} className="ghost-button ghost-button-compact" disabled={!updateAvailable}>
+                        <RotateCcw size={14} />
+                        {updateAvailable ? "Update" : "Up to date"}
+                      </button>
+                      <button type="button" onClick={() => onUninstall(entry.id)} className="ghost-button ghost-button-compact">
+                        <Trash2 size={14} />
+                        Delete
+                      </button>
+                    </div>
+
+                    {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
+                  </div>
+                );
+              })
+            )}
+            {unlistedInstalledIds.map((pluginId) => {
+              const inspection = inspectionsById[pluginId];
+              const installed = draft.plugins[pluginId];
+
+              return (
+                <div key={pluginId} className="entry-card">
+                  <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: "1rem" }}>{inspection?.manifest?.name ?? pluginId}</h4>
+                      <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>Installed, but not listed in the official registry.</p>
+                      <p className="settings-row-secondary settings-mono-cell" style={{ marginTop: "8px" }}>{pluginId}</p>
+                    </div>
+                    <div className="settings-table-actions">
+                      {installed?.version ? <span className="status-chip status-idle">v{installed.version}</span> : null}
+                      <span className={`status-chip ${statusClasses(inspection?.status ?? "not_installed")}`}>
+                        {(inspection?.status ?? "not_installed").replaceAll("_", " ")}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
+                    <button type="button" onClick={() => onUninstall(pluginId)} className="ghost-button ghost-button-compact">
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </div>
+
+                  {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="entry-card">
+          <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h4 style={{ margin: 0, fontSize: "1rem" }}>Available</h4>
+              <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{availableEntries.length} available from the official registry</p>
+            </div>
+          </div>
+
+          <div className="entry-grid" style={{ marginTop: "16px" }}>
+            {availableEntries.length === 0 ? (
+              <div className="entry-card">
+                <p className="muted-copy">Everything in the registry is already installed.</p>
+              </div>
+            ) : (
+              availableEntries.map((entry) => (
+                <div key={entry.id} className="entry-card">
+                  <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
+                      <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? "No description provided."}</p>
+                      <div className="settings-table-actions" style={{ marginTop: "10px", justifyContent: "flex-start" }}>
+                        <span className="status-chip status-idle">v{entry.version}</span>
+                        {entry.author ? <span className="status-chip status-idle">{entry.author}</span> : null}
+                        <span className="status-chip status-idle">{entry.scenarioCount ?? "?"} tests</span>
+                        <span className="status-chip status-idle">
+                          {entry.capabilities?.verification ? "Requires verifier" : "No extra dependencies"}
+                        </span>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => onInstall(entry.id)} className="primary-button">
+                      <Plus size={14} />
+                      Install
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </Panel>
   );

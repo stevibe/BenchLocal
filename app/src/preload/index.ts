@@ -20,6 +20,10 @@ const api: BenchLocalDesktopApi = {
   },
   plugins: {
     list: () => ipcRenderer.invoke("benchlocal:plugins:list"),
+    registry: () => ipcRenderer.invoke("benchlocal:plugins:registry"),
+    install: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:install", input),
+    update: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:update", input),
+    uninstall: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:uninstall", input),
     activeRuns: () => ipcRenderer.invoke("benchlocal:plugins:active-runs"),
     run: (input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel" }) =>
       ipcRenderer.invoke("benchlocal:plugins:run", input),

@@ -1,7 +1,6 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parse, stringify } from "smol-toml";
 import { z } from "zod";
 
@@ -35,7 +34,7 @@ export type BenchLocalVerifierMode = "cloud" | "docker" | "custom_url";
 
 export type BenchLocalVerifierConfig = {
   mode: BenchLocalVerifierMode;
-  port: number;
+  port?: number;
   auto_start: boolean;
   custom_url?: string;
   cloud_url?: string;
@@ -50,9 +49,14 @@ export type BenchLocalPluginConfig = {
   repo?: string;
   path?: string;
   ref?: string;
+  version?: string;
   auto_update?: boolean;
   verifiers?: Record<string, BenchLocalVerifierConfig>;
   sidecars?: Record<string, BenchLocalSidecarConfig>;
+};
+
+export type BenchLocalRegistryConfig = {
+  official_url: string;
 };
 
 export type BenchLocalConfig = {
@@ -62,6 +66,7 @@ export type BenchLocalConfig = {
   plugin_storage_dir: string;
   log_storage_dir: string;
   cache_dir: string;
+  registry: BenchLocalRegistryConfig;
   ui: {
     theme: "system" | "light" | "dark";
     show_secondary_table: boolean;
@@ -109,7 +114,7 @@ const ModelSchema = z.object({
 
 const VerifierSchema = z.object({
   mode: z.enum(["cloud", "docker", "custom_url"]).default("docker"),
-  port: z.number().int().min(1).max(65535),
+  port: z.number().int().min(1).max(65535).optional(),
   auto_start: z.boolean().default(true),
   custom_url: z.string().trim().min(1).optional(),
   cloud_url: z.string().trim().min(1).optional(),
@@ -123,6 +128,7 @@ const PluginSchema = z
     repo: z.string().trim().min(1).optional(),
     path: z.string().trim().min(1).optional(),
     ref: z.string().trim().min(1).optional(),
+    version: z.string().trim().min(1).optional(),
     auto_update: z.boolean().optional(),
     verifiers: z.record(z.string(), VerifierSchema).optional(),
     sidecars: z.record(z.string(), VerifierSchema).optional()
@@ -145,11 +151,18 @@ const PluginSchema = z
 
 const ConfigSchema = z.object({
   schema_version: z.literal(1).default(1),
-  default_plugin: z.string().trim().min(1).default("toolcall-15"),
+  default_plugin: z.string().trim().default(""),
   run_storage_dir: z.string().trim().min(1),
   plugin_storage_dir: z.string().trim().min(1),
   log_storage_dir: z.string().trim().min(1),
   cache_dir: z.string().trim().min(1),
+  registry: z
+    .object({
+      official_url: z.string().trim().min(1)
+    })
+    .default({
+      official_url: "https://raw.githubusercontent.com/stevibe/benchlocal-registry/main/registry.json"
+    }),
   ui: z
     .object({
       theme: z.enum(["system", "light", "dark"]).default("system"),
@@ -203,10 +216,6 @@ export function expandHomePath(input: string): string {
 
 export function getConfigPath(): string {
   return path.join(getBenchLocalHome(), "config.toml");
-}
-
-function getBenchLocalWorkspaceRoot(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 }
 
 function createDefaultProviders(): Record<string, BenchLocalProviderConfig> {
@@ -288,15 +297,17 @@ function inferProviderName(providerId: string, kind: BenchLocalProviderKind): st
 
 export function createDefaultConfig(): BenchLocalConfig {
   const home = getBenchLocalHome();
-  const workspaceRoot = getBenchLocalWorkspaceRoot();
 
   return {
     schema_version: 1,
-    default_plugin: "toolcall-15",
+    default_plugin: "",
     run_storage_dir: path.join(home, "runs"),
     plugin_storage_dir: path.join(home, "plugins"),
     log_storage_dir: path.join(home, "logs"),
     cache_dir: path.join(home, "cache"),
+    registry: {
+      official_url: "https://raw.githubusercontent.com/stevibe/benchlocal-registry/main/registry.json"
+    },
     ui: {
       theme: "system",
       show_secondary_table: true
@@ -330,52 +341,7 @@ export function createDefaultConfig(): BenchLocalConfig {
         enabled: false
       }
     ],
-    plugins: {
-      "toolcall-15": {
-        enabled: true,
-        source: "github",
-        repo: "stevibe/ToolCall-15"
-      },
-      "bugfind-15": {
-        enabled: true,
-        source: "github",
-        repo: "stevibe/BugFind-15",
-        verifiers: {
-          verifier: {
-            mode: "docker",
-            port: 4010,
-            auto_start: true
-          }
-        }
-      },
-      "dataextract-15": {
-        enabled: true,
-        source: "local",
-        path: path.resolve(workspaceRoot, "../DataExtract-15")
-      },
-      "instructfollow-15": {
-        enabled: true,
-        source: "local",
-        path: path.resolve(workspaceRoot, "../InstructFollow-15")
-      },
-      "reasonmath-15": {
-        enabled: true,
-        source: "local",
-        path: path.resolve(workspaceRoot, "../ReasonMath-15")
-      },
-      "structoutput-15": {
-        enabled: true,
-        source: "local",
-        path: path.resolve(workspaceRoot, "../StructOutput-15"),
-        verifiers: {
-          verifier: {
-            mode: "docker",
-            port: 4011,
-            auto_start: true
-          }
-        }
-      }
-    }
+    plugins: {}
   };
 }
 
@@ -418,6 +384,10 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
   const config: BenchLocalConfig = {
     ...defaults,
     ...parsed,
+    registry: {
+      ...defaults.registry,
+      ...parsed.registry
+    },
     ui: {
       ...defaults.ui,
       ...parsed.ui

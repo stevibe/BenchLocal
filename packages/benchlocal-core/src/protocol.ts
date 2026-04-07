@@ -57,6 +57,38 @@ export interface PluginManifest {
   sidecars?: SidecarSpec[];
 }
 
+export interface ScenarioPackRegistryEntry {
+  id: PluginId;
+  name: string;
+  author?: string;
+  description?: string;
+  version: string;
+  source:
+    | {
+        type: "github";
+        repo: string;
+        tag: string;
+      }
+    | {
+        type: "archive";
+        url: string;
+      };
+  homepage?: string;
+  license?: string;
+  scenarioCount?: number;
+  capabilities?: {
+    tools?: boolean;
+    multiTurn?: boolean;
+    verification?: boolean;
+    standaloneWebApp?: boolean;
+  };
+}
+
+export interface ScenarioPackRegistry {
+  schemaVersion: 1;
+  packs: ScenarioPackRegistryEntry[];
+}
+
 export type PluginInspectionStatus =
   | "ready"
   | "not_installed"

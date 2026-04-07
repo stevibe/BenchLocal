@@ -5,6 +5,7 @@ import type {
   PluginInspection,
   PluginRunHistoryEntry,
   PluginRunSummary,
+  ScenarioPackRegistryEntry,
   VerifierEndpoint
 } from "@core";
 
@@ -44,6 +45,10 @@ export interface BenchLocalDesktopApi {
   };
   plugins: {
     list(): Promise<PluginInspection[]>;
+    registry(): Promise<ScenarioPackRegistryEntry[]>;
+    install(input: { pluginId: string }): Promise<ConfigLoadResult>;
+    update(input: { pluginId: string }): Promise<ConfigLoadResult>;
+    uninstall(input: { pluginId: string }): Promise<ConfigLoadResult>;
     activeRuns(): Promise<Array<{ tabId: string; pluginId: string }>>;
     run(input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel" }): Promise<PluginRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;

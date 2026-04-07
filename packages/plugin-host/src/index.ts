@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type {
   BenchmarkScore,
@@ -18,11 +18,19 @@ import type {
   RegisteredModel,
   ScenarioMeta,
   ScenarioResult,
+  ScenarioPackRegistry,
+  ScenarioPackRegistryEntry,
   VerifierEndpoint,
   VerifierMode,
   VerifierSpec
 } from "@benchlocal/core";
-import { expandHomePath, type PluginInspection, type PluginManifest } from "@benchlocal/core";
+import {
+  expandHomePath,
+  getConfigPath,
+  saveConfigFile,
+  type PluginInspection,
+  type PluginManifest
+} from "@benchlocal/core";
 
 export type PluginHostStatus = "idle" | "loading" | "ready" | "error";
 
@@ -38,6 +46,33 @@ async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
   return JSON.parse(raw) as TValue;
 }
 
+function isScenarioPackRegistryEntry(value: unknown): value is ScenarioPackRegistryEntry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const source = candidate.source as Record<string, unknown> | undefined;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.name === "string" &&
+    typeof candidate.version === "string" &&
+    typeof source === "object" &&
+    source !== null &&
+    ((source.type === "github" && typeof source.repo === "string" && typeof source.tag === "string") ||
+      (source.type === "archive" && typeof source.url === "string"))
+  );
+}
+
+function isScenarioPackRegistry(value: unknown): value is ScenarioPackRegistry {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return candidate.schemaVersion === 1 && Array.isArray(candidate.packs) && candidate.packs.every(isScenarioPackRegistryEntry);
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.access(targetPath);
@@ -45,6 +80,10 @@ async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function getBenchLocalWorkspaceRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 }
 
 function sanitizeRuntimeName(input: string): string {
@@ -55,9 +94,31 @@ function getVerifierContainerName(pluginId: string, verifierId: string): string 
   return `benchlocal-${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(verifierId)}`;
 }
 
+function getGitHubCloneUrl(repo: string): string {
+  return `https://github.com/${repo}.git`;
+}
+
 async function runDockerCommand(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args, {
     maxBuffer: 4 * 1024 * 1024
+  });
+
+  return stdout.trim();
+}
+
+async function runGitCommand(args: string[], options?: { cwd?: string }): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd: options?.cwd,
+    maxBuffer: 8 * 1024 * 1024
+  });
+
+  return stdout.trim();
+}
+
+async function runTarCommand(args: string[], options?: { cwd?: string }): Promise<string> {
+  const { stdout } = await execFileAsync("tar", args, {
+    cwd: options?.cwd,
+    maxBuffer: 8 * 1024 * 1024
   });
 
   return stdout.trim();
@@ -375,6 +436,169 @@ export async function inspectConfiguredPlugins(config: BenchLocalConfig): Promis
   );
 }
 
+export async function loadScenarioPackRegistry(config: BenchLocalConfig): Promise<ScenarioPackRegistryEntry[]> {
+  const response = await fetch(config.registry.official_url, {
+    method: "GET",
+    headers: {
+      accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch scenario pack registry (${response.status}).`);
+  }
+
+  const parsed = (await response.json()) as unknown;
+
+  if (!isScenarioPackRegistry(parsed)) {
+    throw new Error("Scenario pack registry payload is invalid.");
+  }
+
+  return parsed.packs.slice().sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function installGitHubScenarioPack(rootDir: string, repo: string, tag: string): Promise<void> {
+  await fs.mkdir(path.dirname(rootDir), { recursive: true });
+
+  const tempDir = `${rootDir}.tmp-${randomUUID().slice(0, 8)}`;
+  await fs.rm(tempDir, { recursive: true, force: true });
+  await fs.rm(rootDir, { recursive: true, force: true });
+
+  try {
+    await runGitCommand(["clone", "--depth", "1", "--branch", tag, getGitHubCloneUrl(repo), tempDir]);
+    await fs.rename(tempDir, rootDir);
+  } catch (error) {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function installArchiveScenarioPack(rootDir: string, url: string): Promise<void> {
+  await fs.mkdir(path.dirname(rootDir), { recursive: true });
+
+  const tempPrefix = `${rootDir}.tmp-${randomUUID().slice(0, 8)}`;
+  const archivePath = `${tempPrefix}.tar.gz`;
+  const extractDir = `${tempPrefix}-extract`;
+  const stageDir = `${tempPrefix}-stage`;
+  await fs.rm(archivePath, { force: true });
+  await fs.rm(extractDir, { recursive: true, force: true });
+  await fs.rm(stageDir, { recursive: true, force: true });
+  await fs.rm(rootDir, { recursive: true, force: true });
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Failed to download scenario pack archive (${response.status}).`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(archivePath, buffer);
+    await fs.mkdir(extractDir, { recursive: true });
+    await runTarCommand(["-xzf", archivePath, "-C", extractDir]);
+
+    const entries = await fs.readdir(extractDir, { withFileTypes: true });
+    const topLevelDir =
+      entries.length === 1 && entries[0]?.isDirectory()
+        ? path.join(extractDir, entries[0].name)
+        : extractDir;
+
+    await fs.cp(topLevelDir, stageDir, { recursive: true });
+    await fs.rename(stageDir, rootDir);
+  } catch (error) {
+    await fs.rm(archivePath, { force: true });
+    await fs.rm(extractDir, { recursive: true, force: true });
+    await fs.rm(stageDir, { recursive: true, force: true });
+    await fs.rm(rootDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  await fs.rm(archivePath, { force: true });
+  await fs.rm(extractDir, { recursive: true, force: true });
+}
+
+async function copyIfPresent(sourcePath: string, targetPath: string): Promise<void> {
+  if (!(await pathExists(sourcePath))) {
+    return;
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: true });
+  await fs.cp(sourcePath, targetPath, { recursive: true });
+}
+
+async function hydrateBenchLocalRuntimeDependencies(rootDir: string): Promise<void> {
+  const workspaceRoot = getBenchLocalWorkspaceRoot();
+  const nodeModulesRoot = path.join(rootDir, "node_modules");
+  const scopedRoot = path.join(nodeModulesRoot, "@benchlocal");
+
+  await fs.mkdir(scopedRoot, { recursive: true });
+
+  await copyIfPresent(path.join(workspaceRoot, "packages/benchlocal-sdk"), path.join(scopedRoot, "sdk"));
+  await copyIfPresent(path.join(workspaceRoot, "packages/benchlocal-core"), path.join(scopedRoot, "core"));
+  await copyIfPresent(path.join(workspaceRoot, "node_modules/zod"), path.join(nodeModulesRoot, "zod"));
+  await copyIfPresent(path.join(workspaceRoot, "node_modules/smol-toml"), path.join(nodeModulesRoot, "smol-toml"));
+}
+
+export async function installScenarioPackFromRegistry(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<BenchLocalConfig> {
+  const registry = await loadScenarioPackRegistry(config);
+  const entry = registry.find((candidate) => candidate.id === pluginId);
+
+  if (!entry) {
+    throw new Error(`Scenario pack "${pluginId}" was not found in the official registry.`);
+  }
+
+  const rootDir = path.join(expandHomePath(config.plugin_storage_dir), pluginId);
+  if (entry.source.type === "github") {
+    await installGitHubScenarioPack(rootDir, entry.source.repo, entry.source.tag);
+  } else {
+    await installArchiveScenarioPack(rootDir, entry.source.url);
+  }
+  await hydrateBenchLocalRuntimeDependencies(rootDir);
+  const manifest = await readPluginManifest(rootDir);
+  const nextConfig: BenchLocalConfig = structuredClone(config);
+  const existing = nextConfig.plugins[pluginId];
+  nextConfig.plugins[pluginId] = bootstrapPluginConfigFromManifest(manifest, entry, existing);
+
+  if (!nextConfig.default_plugin) {
+    nextConfig.default_plugin = pluginId;
+  }
+
+  await saveConfigFile(nextConfig, getConfigPath());
+  return nextConfig;
+}
+
+export async function updateScenarioPackFromRegistry(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<BenchLocalConfig> {
+  if (!config.plugins[pluginId]) {
+    throw new Error(`Scenario pack "${pluginId}" is not installed.`);
+  }
+
+  return installScenarioPackFromRegistry(config, pluginId);
+}
+
+export async function uninstallScenarioPack(
+  config: BenchLocalConfig,
+  pluginId: string
+): Promise<BenchLocalConfig> {
+  const rootDir = path.join(expandHomePath(config.plugin_storage_dir), pluginId);
+  await fs.rm(rootDir, { recursive: true, force: true });
+
+  const nextConfig: BenchLocalConfig = structuredClone(config);
+  delete nextConfig.plugins[pluginId];
+
+  if (nextConfig.default_plugin === pluginId) {
+    nextConfig.default_plugin = Object.keys(nextConfig.plugins)[0] ?? "";
+  }
+
+  await saveConfigFile(nextConfig, getConfigPath());
+  return nextConfig;
+}
+
 type LoadedBenchPlugin = {
   manifest: PluginManifest;
   listScenarios: () => Promise<ScenarioMeta[]>;
@@ -624,6 +848,44 @@ async function waitForVerifierReady(
 
 function getManifestVerifiers(manifest: PluginManifest): VerifierSpec[] {
   return manifest.verifiers ?? manifest.sidecars ?? [];
+}
+
+function bootstrapVerifierConfig(spec: VerifierSpec, existing?: BenchLocalVerifierConfig): BenchLocalVerifierConfig {
+  return {
+    mode: existing?.mode ?? spec.defaultMode,
+    auto_start: existing?.auto_start ?? true,
+    port: existing?.port,
+    custom_url: existing?.custom_url ?? spec.customUrl?.defaultUrl,
+    cloud_url: existing?.cloud_url ?? spec.cloud?.baseUrl,
+    docker_image: existing?.docker_image ?? spec.docker?.image
+  };
+}
+
+function bootstrapPluginConfigFromManifest(
+  manifest: PluginManifest,
+  entry: ScenarioPackRegistryEntry,
+  existing?: BenchLocalPluginConfig
+): BenchLocalPluginConfig {
+  const verifierSpecs = getManifestVerifiers(manifest);
+  const verifiers =
+    verifierSpecs.length > 0
+      ? Object.fromEntries(
+          verifierSpecs.map((spec) => [
+            spec.id,
+            bootstrapVerifierConfig(spec, existing?.verifiers?.[spec.id] ?? existing?.sidecars?.[spec.id])
+          ])
+        )
+      : undefined;
+
+  return {
+    enabled: existing?.enabled ?? true,
+    source: entry.source.type === "github" ? "github" : "git",
+    repo: entry.source.type === "github" ? entry.source.repo : undefined,
+    ref: entry.source.type === "github" ? entry.source.tag : undefined,
+    version: entry.version,
+    auto_update: existing?.auto_update,
+    verifiers
+  };
 }
 
 function getVerifierUrl(spec: VerifierSpec, config?: BenchLocalVerifierConfig): { mode: VerifierMode; url?: string; port?: number; details?: string } {
