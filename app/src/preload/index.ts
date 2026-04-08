@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { BenchLocalConfig, BenchLocalWorkspaceState, ProgressEvent } from "@core";
 import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-api";
 
+const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
+const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const PLUGIN_RUN_EVENT_CHANNEL = "benchlocal:plugins:run-event";
 const DETACHED_LOGS_STATE_CHANNEL = "benchlocal:logs:state";
 const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
@@ -10,6 +12,10 @@ const api: BenchLocalDesktopApi = {
   config: {
     load: () => ipcRenderer.invoke("benchlocal:config:load"),
     save: (config: BenchLocalConfig) => ipcRenderer.invoke("benchlocal:config:save", config)
+  },
+  themes: {
+    list: () => ipcRenderer.invoke(THEMES_LIST_CHANNEL),
+    load: (input: { themeId: string }) => ipcRenderer.invoke(THEMES_LOAD_CHANNEL, input)
   },
   workspaces: {
     load: () => ipcRenderer.invoke("benchlocal:workspaces:load"),

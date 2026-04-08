@@ -24,9 +24,12 @@ import {
   updateScenarioPackFromRegistry
 } from "@plugin-host";
 import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
+import { listAvailableThemes, loadAvailableTheme } from "./themes";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
+const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
+const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const WORKSPACES_LOAD_CHANNEL = "benchlocal:workspaces:load";
 const WORKSPACES_SAVE_CHANNEL = "benchlocal:workspaces:save";
 const WORKSPACES_EXPORT_CHANNEL = "benchlocal:workspaces:export";
@@ -72,6 +75,14 @@ export function registerIpcHandlers(): void {
       created: false,
       config: saved
     };
+  });
+
+  ipcMain.handle(THEMES_LIST_CHANNEL, async () => {
+    return listAvailableThemes();
+  });
+
+  ipcMain.handle(THEMES_LOAD_CHANNEL, async (_event, input: { themeId: string }) => {
+    return loadAvailableTheme(input.themeId);
   });
 
   ipcMain.handle(WORKSPACES_LOAD_CHANNEL, async () => {

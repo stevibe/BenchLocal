@@ -32,6 +32,8 @@ import type {
   BenchLocalModelConfig,
   BenchLocalProviderConfig,
   BenchLocalProviderKind,
+  BenchLocalThemeDefinition,
+  BenchLocalThemeDescriptor,
   BenchLocalVerifierConfig,
   BenchLocalWorkspace,
   BenchLocalWorkspaceState,
@@ -170,6 +172,14 @@ type LoadedHistoryEntry = {
   runId: string;
   startedAt: string;
 };
+
+function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
+  if (themeId === "system") {
+    return `System (${prefersDark ? "Dark" : "Light"})`;
+  }
+
+  return themes.find((theme) => theme.id === themeId)?.name ?? themeId;
+}
 
 const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: string }> = [
   { value: "serial", label: "Serial" },
@@ -463,6 +473,11 @@ export function App() {
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
   const [pluginInspections, setPluginInspections] = useState<PluginInspection[]>([]);
   const [registryEntries, setRegistryEntries] = useState<ScenarioPackRegistryEntry[]>([]);
+  const [availableThemes, setAvailableThemes] = useState<BenchLocalThemeDescriptor[]>([]);
+  const [activeThemeDefinition, setActiveThemeDefinition] = useState<BenchLocalThemeDefinition | null>(null);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
+  );
   const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -522,11 +537,24 @@ export function App() {
   );
   const activeLogEvents = activeLiveRun?.events ?? activeRunSummary?.events ?? [];
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+  const tabStripShellRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
+  const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
+  const appliedThemeKeysRef = useRef<string[]>([]);
   const [tabStripOverflow, setTabStripOverflow] = useState(false);
+  const [activeTabMask, setActiveTabMask] = useState<{ left: number; width: number } | null>(null);
 
   const hasUnsavedChanges =
     loadState && draft ? JSON.stringify(loadState.config) !== JSON.stringify(draft) : false;
+  const effectiveThemeId = useMemo(() => {
+    const requested = draft?.ui.theme ?? "system";
+
+    if (requested === "system") {
+      return systemPrefersDark ? "dark" : "light";
+    }
+
+    return requested;
+  }, [draft?.ui.theme, systemPrefersDark]);
 
   const updateDraft = (updater: (current: BenchLocalConfig) => BenchLocalConfig) => {
     setDraft((current) => {
@@ -588,6 +616,15 @@ export function App() {
     }
   };
 
+  const loadThemes = async () => {
+    try {
+      const themes = await window.benchlocal.themes.list();
+      setAvailableThemes(themes);
+    } catch (themeError) {
+      setError(themeError instanceof Error ? themeError.message : "Failed to load available themes.");
+    }
+  };
+
   const loadHistoryForPlugin = async (pluginId: string) => {
     try {
       const history = await window.benchlocal.plugins.history({ pluginId });
@@ -612,6 +649,7 @@ export function App() {
         const workspaceResult = await window.benchlocal.workspaces.load();
         const inspections = await window.benchlocal.plugins.list();
         const registry = await window.benchlocal.plugins.registry();
+        const themes = await window.benchlocal.themes.list();
         const verifierStatusList = await window.benchlocal.verifiers.list();
         const activeRunsResult = await window.benchlocal.plugins.activeRuns();
 
@@ -624,6 +662,7 @@ export function App() {
         setWorkspaceState(workspaceResult.state);
         setPluginInspections(inspections);
         setRegistryEntries(registry);
+        setAvailableThemes(themes);
         setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
         setActiveRuns(
           Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { pluginId: run.pluginId }]))
@@ -646,6 +685,62 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      setSystemPrefersDark(media.matches);
+    };
+
+    handleChange();
+    media.addEventListener("change", handleChange);
+
+    return () => {
+      media.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTheme = async () => {
+      const theme = await window.benchlocal.themes.load({ themeId: effectiveThemeId });
+
+      if (!cancelled) {
+        setActiveThemeDefinition(theme);
+      }
+    };
+
+    void loadTheme();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveThemeId]);
+
+  useEffect(() => {
+    if (!activeThemeDefinition || typeof document === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+
+    for (const key of appliedThemeKeysRef.current) {
+      root.style.removeProperty(key);
+    }
+
+    for (const [key, value] of Object.entries(activeThemeDefinition.variables)) {
+      root.style.setProperty(key, value);
+    }
+
+    appliedThemeKeysRef.current = Object.keys(activeThemeDefinition.variables);
+    root.style.setProperty("color-scheme", activeThemeDefinition.colorScheme);
+    root.dataset.theme = activeThemeDefinition.id;
+  }, [activeThemeDefinition]);
 
   useEffect(() => {
     return window.benchlocal.plugins.onRunEvent(({ tabId, event }) => {
@@ -683,6 +778,14 @@ export function App() {
     }
 
     void loadVerifierStatuses();
+  }, [settingsOpen, settingsTab]);
+
+  useEffect(() => {
+    if (!settingsOpen || settingsTab !== "advanced") {
+      return;
+    }
+
+    void loadThemes();
   }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
@@ -791,6 +894,44 @@ export function App() {
       window.removeEventListener("resize", updateOverflow);
     };
   }, [workspaceTabs.length, activeWorkspace?.id, sidebarOpen]);
+
+  useEffect(() => {
+    const shell = tabStripShellRef.current;
+    const strip = tabStripRef.current;
+    const activeTabId = activeTab?.id;
+
+    if (!shell || !strip || !activeTabId) {
+      setActiveTabMask(null);
+      return;
+    }
+
+    const updateMask = () => {
+      const activeElement = tabChipRefs.current.get(activeTabId);
+
+      if (!activeElement) {
+        setActiveTabMask(null);
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const tabRect = activeElement.getBoundingClientRect();
+
+      setActiveTabMask({
+        left: Math.round(tabRect.left - shellRect.left),
+        width: Math.round(tabRect.width)
+      });
+    };
+
+    const frameId = window.requestAnimationFrame(updateMask);
+    window.addEventListener("resize", updateMask);
+    strip.addEventListener("scroll", updateMask, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener("resize", updateMask);
+      strip.removeEventListener("scroll", updateMask);
+    };
+  }, [activeTab?.id, workspaceTabs, sidebarOpen, tabStripOverflow]);
 
   const save = async (): Promise<boolean> => {
     if (!draft) {
@@ -1753,7 +1894,16 @@ export function App() {
 	                {draft ? (
 	                  activeWorkspace ? (
 	                    <div className="tabbed-workspace">
-	                      <div className="tab-strip-shell">
+	                      <div ref={tabStripShellRef} className="tab-strip-shell">
+                          {activeTabMask ? (
+                            <span
+                              className="tab-strip-active-mask"
+                              style={{
+                                left: `${activeTabMask.left}px`,
+                                width: `${activeTabMask.width}px`
+                              }}
+                            />
+                          ) : null}
                           <div ref={tabStripRef} className="tab-strip">
 	                          {workspaceTabs.map((tab) => {
 	                            const inspection = pluginInspections.find((candidate) => candidate.id === tab.pluginId);
@@ -1764,6 +1914,13 @@ export function App() {
 		                              <button
 		                                key={tab.id}
 		                                type="button"
+                                      ref={(element) => {
+                                        if (element) {
+                                          tabChipRefs.current.set(tab.id, element);
+                                        } else {
+                                          tabChipRefs.current.delete(tab.id);
+                                        }
+                                      }}
                                       draggable
                                       onDragStart={(event) => {
                                         event.dataTransfer.setData("text/plain", tab.id);
@@ -2034,6 +2191,8 @@ export function App() {
           setSettingsTab={setSettingsTab}
           draft={draft}
           loadState={loadState}
+          availableThemes={availableThemes}
+          systemPrefersDark={systemPrefersDark}
           hasUnsavedChanges={hasUnsavedChanges}
           isBusy={isBusy}
           providerIds={providerIds}
@@ -3273,6 +3432,8 @@ function SettingsModal({
   setSettingsTab,
   draft,
   loadState,
+  availableThemes,
+  systemPrefersDark,
   hasUnsavedChanges,
   isBusy,
   providerIds,
@@ -3302,6 +3463,8 @@ function SettingsModal({
   setSettingsTab: (tab: SettingsTab) => void;
   draft: BenchLocalConfig;
   loadState: LoadState | null;
+  availableThemes: BenchLocalThemeDescriptor[];
+  systemPrefersDark: boolean;
   hasUnsavedChanges: boolean;
   isBusy: boolean;
   providerIds: string[];
@@ -3327,6 +3490,8 @@ function SettingsModal({
   onUninstallScenarioPack: (pluginId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
+  const themeOptions = ["system", ...availableThemes.map((theme) => theme.id)];
+
   return (
     <div className="settings-backdrop">
       <div className="settings-shell">
@@ -3513,17 +3678,23 @@ function SettingsModal({
                   })} />
                 </Panel>
                 <Panel title="Profile" subtitle="Desktop state and app-level preferences." tone="orange" icon={<Settings2 size={16} />}>
-                  <InlineSelectField label="Theme" value={draft.ui.theme} options={["system", "light", "dark"]} onChange={(value) => updateDraft((current) => {
-                    current.ui.theme = value as BenchLocalConfig["ui"]["theme"];
-                    return current;
-                  })} />
+                  <InlineSelectField
+                    label="Theme"
+                    value={draft.ui.theme}
+                    options={themeOptions}
+                    getOptionLabel={(value) => resolveThemeLabel(value, availableThemes, systemPrefersDark)}
+                    onChange={(value) => updateDraft((current) => {
+                      current.ui.theme = value;
+                      return current;
+                    })}
+                  />
                   <Field label="Official Registry URL" value={draft.registry.official_url} onChange={(value) => updateDraft((current) => {
                     current.registry.official_url = value;
                     return current;
                   })} />
                   <div className="helper-copy">
                     <p>Durable settings live in <strong>config.toml</strong>.</p>
-                    <p style={{ marginTop: "8px" }}>Ephemeral renderer state should later live in <strong>state.json</strong>.</p>
+                    <p style={{ marginTop: "8px" }}>Custom theme JSON files can be added under <strong>~/.benchlocal/themes/</strong>.</p>
                   </div>
                 </Panel>
               </section>

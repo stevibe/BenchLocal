@@ -1,5 +1,7 @@
 import type {
   BenchLocalConfig,
+  BenchLocalThemeDefinition,
+  BenchLocalThemeDescriptor,
   ProgressEvent,
   BenchLocalWorkspaceState,
   PluginInspection,
@@ -36,6 +38,10 @@ export interface BenchLocalDesktopApi {
   config: {
     load(): Promise<ConfigLoadResult>;
     save(config: BenchLocalConfig): Promise<ConfigLoadResult>;
+  };
+  themes: {
+    list(): Promise<BenchLocalThemeDescriptor[]>;
+    load(input: { themeId: string }): Promise<BenchLocalThemeDefinition | null>;
   };
   workspaces: {
     load(): Promise<{ path: string; created: boolean; state: BenchLocalWorkspaceState }>;

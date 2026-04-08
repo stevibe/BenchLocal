@@ -68,7 +68,7 @@ export type BenchLocalConfig = {
   cache_dir: string;
   registry: BenchLocalRegistryConfig;
   ui: {
-    theme: "system" | "light" | "dark";
+    theme: string;
     show_secondary_table: boolean;
   };
   defaults: {
@@ -165,7 +165,7 @@ const ConfigSchema = z.object({
     }),
   ui: z
     .object({
-      theme: z.enum(["system", "light", "dark"]).default("system"),
+      theme: z.string().trim().min(1).default("system"),
       show_secondary_table: z.boolean().default(true)
     })
     .default({

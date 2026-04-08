@@ -1,12 +1,19 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeTheme } from "electron";
 import path from "node:path";
 import { loadOrCreateConfig } from "@core";
 import { registerIpcHandlers } from "./ipc";
+import { loadAvailableTheme } from "./themes";
 
 const isDev = !app.isPackaged;
 
 async function createMainWindow(): Promise<void> {
-  await loadOrCreateConfig();
+  const loadState = await loadOrCreateConfig();
+  const effectiveThemeId =
+    loadState.config.ui.theme === "system"
+      ? (nativeTheme.shouldUseDarkColors ? "dark" : "light")
+      : loadState.config.ui.theme;
+  const theme = await loadAvailableTheme(effectiveThemeId);
+  const backgroundColor = theme?.variables["--bg"] ?? "#f1f2f4";
 
   const window = new BrowserWindow({
     width: 1500,
@@ -14,7 +21,15 @@ async function createMainWindow(): Promise<void> {
     minWidth: 1280,
     minHeight: 820,
     title: "BenchLocal",
-    backgroundColor: "#f1f2f4",
+    backgroundColor,
+    titleBarStyle: process.platform === "darwin" ? "hidden" : undefined,
+    trafficLightPosition:
+      process.platform === "darwin"
+        ? {
+            x: 18,
+            y: 29
+          }
+        : undefined,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
