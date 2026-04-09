@@ -145,6 +145,11 @@ export interface ScenarioMeta {
   category?: string;
   tags?: string[];
   description?: string;
+  promptText?: string;
+  detailCards?: Array<{
+    title: string;
+    content: string;
+  }>;
 }
 
 export interface ProviderConfig {

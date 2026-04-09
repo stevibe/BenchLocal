@@ -94,22 +94,75 @@ function getVerifierContainerName(pluginId: string, verifierId: string): string 
   return `benchlocal-${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(verifierId)}`;
 }
 
-function getGitHubCloneUrl(repo: string): string {
-  return `https://github.com/${repo}.git`;
+function getGitHubArchiveUrl(repo: string, tag: string): string {
+  return `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
+}
+
+function getScenarioPackBaseDir(config: BenchLocalConfig, pluginId: string): string {
+  return path.join(expandHomePath(config.plugin_storage_dir), pluginId);
+}
+
+function getScenarioPackVersionsDir(baseDir: string): string {
+  return path.join(baseDir, "versions");
+}
+
+function getScenarioPackCurrentPointerPath(baseDir: string): string {
+  return path.join(baseDir, "current.json");
+}
+
+async function readScenarioPackCurrentVersion(baseDir: string): Promise<string | null> {
+  const pointerPath = getScenarioPackCurrentPointerPath(baseDir);
+
+  if (!(await pathExists(pointerPath))) {
+    return null;
+  }
+
+  const parsed = await readJsonFile<{ version?: string }>(pointerPath);
+  return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : null;
+}
+
+async function writeScenarioPackCurrentVersion(baseDir: string, version: string): Promise<void> {
+  const pointerPath = getScenarioPackCurrentPointerPath(baseDir);
+  const tempPath = `${pointerPath}.tmp-${randomUUID().slice(0, 8)}`;
+  await fs.writeFile(
+    tempPath,
+    JSON.stringify(
+      {
+        version,
+        updatedAt: new Date().toISOString()
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await fs.rename(tempPath, pointerPath);
+}
+
+async function removeScenarioPackCurrentVersion(baseDir: string): Promise<void> {
+  await fs.rm(getScenarioPackCurrentPointerPath(baseDir), { force: true });
+}
+
+async function cleanupScenarioPackStaging(baseDir: string): Promise<void> {
+  if (!(await pathExists(baseDir))) {
+    return;
+  }
+
+  const entries = await fs.readdir(baseDir, { withFileTypes: true });
+  await Promise.all(
+    entries
+      .filter((entry) => entry.name.startsWith(".staging-"))
+      .map((entry) => fs.rm(path.join(baseDir, entry.name), { recursive: true, force: true }))
+  );
+}
+
+function sanitizeScenarioPackVersion(input: string): string {
+  return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || randomUUID().slice(0, 8);
 }
 
 async function runDockerCommand(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("docker", args, {
     maxBuffer: 4 * 1024 * 1024
-  });
-
-  return stdout.trim();
-}
-
-async function runGitCommand(args: string[], options?: { cwd?: string }): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd: options?.cwd,
-    maxBuffer: 8 * 1024 * 1024
   });
 
   return stdout.trim();
@@ -272,13 +325,38 @@ async function buildDockerVerifierImage(tag: string, contextPath: string): Promi
   await runDockerCommand(["build", "-t", tag, contextPath]);
 }
 
-function resolveConfiguredPluginRoot(config: BenchLocalConfig, pluginId: string, plugin: BenchLocalPluginConfig): string | undefined {
+async function resolveInstalledScenarioPackRoot(config: BenchLocalConfig, pluginId: string): Promise<string | undefined> {
+  const baseDir = getScenarioPackBaseDir(config, pluginId);
+
+  if (!(await pathExists(baseDir))) {
+    return undefined;
+  }
+
+  const currentVersion = await readScenarioPackCurrentVersion(baseDir);
+
+  if (currentVersion) {
+    const versionDir = path.join(getScenarioPackVersionsDir(baseDir), currentVersion);
+
+    if (await pathExists(versionDir)) {
+      return versionDir;
+    }
+  }
+
+  const legacyManifestPath = path.join(baseDir, "benchlocal.plugin.json");
+  if (await pathExists(legacyManifestPath)) {
+    return baseDir;
+  }
+
+  return undefined;
+}
+
+async function resolveConfiguredPluginRoot(config: BenchLocalConfig, pluginId: string, plugin: BenchLocalPluginConfig): Promise<string | undefined> {
   if (plugin.source === "local") {
     return plugin.path ? expandHomePath(plugin.path) : undefined;
   }
 
-  if (plugin.source === "github" || plugin.source === "git") {
-    return path.join(expandHomePath(config.plugin_storage_dir), pluginId);
+  if (plugin.source === "registry" || plugin.source === "github" || plugin.source === "git") {
+    return resolveInstalledScenarioPackRoot(config, pluginId);
   }
 
   return undefined;
@@ -331,8 +409,15 @@ function normalizePluginModule(module: Record<string, unknown>): Record<string, 
   return current;
 }
 
+async function importFreshModule(entryPath: string): Promise<Record<string, unknown>> {
+  const stats = await fs.stat(entryPath);
+  const url = pathToFileURL(entryPath);
+  url.searchParams.set("mtime", String(stats.mtimeMs));
+  return (await import(url.href)) as Record<string, unknown>;
+}
+
 async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginConfig: BenchLocalPluginConfig): Promise<PluginInspection> {
-  const rootDir = resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
 
   if (!rootDir) {
     return {
@@ -393,7 +478,7 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
   }
 
   try {
-    const loaded = normalizePluginModule((await import(pathToFileURL(entryPath).href)) as Record<string, unknown>);
+    const loaded = normalizePluginModule(await importFreshModule(entryPath));
     const listScenarios = loaded.listScenarios;
 
     if (typeof listScenarios !== "function") {
@@ -457,64 +542,55 @@ export async function loadScenarioPackRegistry(config: BenchLocalConfig): Promis
   return parsed.packs.slice().sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function installGitHubScenarioPack(rootDir: string, repo: string, tag: string): Promise<void> {
-  await fs.mkdir(path.dirname(rootDir), { recursive: true });
+type ScenarioPackInstallAction = "install" | "update" | "uninstall";
+type ScenarioPackInstallPhase =
+  | "resolving"
+  | "downloading"
+  | "extracting"
+  | "hydrating"
+  | "validating"
+  | "activating"
+  | "removing"
+  | "complete";
 
-  const tempDir = `${rootDir}.tmp-${randomUUID().slice(0, 8)}`;
-  await fs.rm(tempDir, { recursive: true, force: true });
-  await fs.rm(rootDir, { recursive: true, force: true });
+export type ScenarioPackInstallProgress = {
+  pluginId: string;
+  action: ScenarioPackInstallAction;
+  phase: ScenarioPackInstallPhase;
+  message: string;
+};
 
-  try {
-    await runGitCommand(["clone", "--depth", "1", "--branch", tag, getGitHubCloneUrl(repo), tempDir]);
-    await fs.rename(tempDir, rootDir);
-  } catch (error) {
-    await fs.rm(tempDir, { recursive: true, force: true });
-    throw error;
-  }
+type InstallProgressReporter = (progress: ScenarioPackInstallProgress) => void | Promise<void>;
+
+async function reportInstallProgress(
+  reporter: InstallProgressReporter | undefined,
+  progress: ScenarioPackInstallProgress
+): Promise<void> {
+  await reporter?.(progress);
 }
 
-async function installArchiveScenarioPack(rootDir: string, url: string): Promise<void> {
-  await fs.mkdir(path.dirname(rootDir), { recursive: true });
+async function downloadScenarioPackArchive(
+  archiveUrl: string,
+  archivePath: string,
+  reporter: InstallProgressReporter | undefined,
+  pluginId: string,
+  action: ScenarioPackInstallAction
+): Promise<void> {
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action,
+    phase: "downloading",
+    message: "Downloading scenario pack artifact."
+  });
 
-  const tempPrefix = `${rootDir}.tmp-${randomUUID().slice(0, 8)}`;
-  const archivePath = `${tempPrefix}.tar.gz`;
-  const extractDir = `${tempPrefix}-extract`;
-  const stageDir = `${tempPrefix}-stage`;
-  await fs.rm(archivePath, { force: true });
-  await fs.rm(extractDir, { recursive: true, force: true });
-  await fs.rm(stageDir, { recursive: true, force: true });
-  await fs.rm(rootDir, { recursive: true, force: true });
+  const response = await fetch(archiveUrl);
 
-  try {
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`Failed to download scenario pack archive (${response.status}).`);
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.writeFile(archivePath, buffer);
-    await fs.mkdir(extractDir, { recursive: true });
-    await runTarCommand(["-xzf", archivePath, "-C", extractDir]);
-
-    const entries = await fs.readdir(extractDir, { withFileTypes: true });
-    const topLevelDir =
-      entries.length === 1 && entries[0]?.isDirectory()
-        ? path.join(extractDir, entries[0].name)
-        : extractDir;
-
-    await fs.cp(topLevelDir, stageDir, { recursive: true });
-    await fs.rename(stageDir, rootDir);
-  } catch (error) {
-    await fs.rm(archivePath, { force: true });
-    await fs.rm(extractDir, { recursive: true, force: true });
-    await fs.rm(stageDir, { recursive: true, force: true });
-    await fs.rm(rootDir, { recursive: true, force: true });
-    throw error;
+  if (!response.ok) {
+    throw new Error(`Failed to download scenario pack archive (${response.status}).`);
   }
 
-  await fs.rm(archivePath, { force: true });
-  await fs.rm(extractDir, { recursive: true, force: true });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fs.writeFile(archivePath, buffer);
 }
 
 async function copyIfPresent(sourcePath: string, targetPath: string): Promise<void> {
@@ -539,10 +615,87 @@ async function hydrateBenchLocalRuntimeDependencies(rootDir: string): Promise<vo
   await copyIfPresent(path.join(workspaceRoot, "node_modules/smol-toml"), path.join(nodeModulesRoot, "smol-toml"));
 }
 
+async function stageScenarioPackArchiveInstall(
+  baseDir: string,
+  pluginId: string,
+  version: string,
+  archiveUrl: string,
+  reporter?: InstallProgressReporter,
+  action: ScenarioPackInstallAction = "install"
+): Promise<string> {
+  await fs.mkdir(baseDir, { recursive: true });
+  await fs.mkdir(getScenarioPackVersionsDir(baseDir), { recursive: true });
+  await cleanupScenarioPackStaging(baseDir);
+
+  const stagingRoot = path.join(baseDir, `.staging-${randomUUID().slice(0, 8)}`);
+  const archivePath = path.join(stagingRoot, "package.tar.gz");
+  const extractDir = path.join(stagingRoot, "extract");
+  const versionKey = `${sanitizeScenarioPackVersion(version)}-${randomUUID().slice(0, 8)}`;
+  const versionStageDir = path.join(stagingRoot, versionKey);
+  const finalVersionDir = path.join(getScenarioPackVersionsDir(baseDir), versionKey);
+
+  await fs.mkdir(stagingRoot, { recursive: true });
+
+  try {
+    await downloadScenarioPackArchive(archiveUrl, archivePath, reporter, pluginId, action);
+    await reportInstallProgress(reporter, {
+      pluginId,
+      action,
+      phase: "extracting",
+      message: "Extracting scenario pack artifact."
+    });
+    await fs.mkdir(extractDir, { recursive: true });
+    await runTarCommand(["-xzf", archivePath, "-C", extractDir]);
+
+    const entries = await fs.readdir(extractDir, { withFileTypes: true });
+    const topLevelDir =
+      entries.length === 1 && entries[0]?.isDirectory()
+        ? path.join(extractDir, entries[0].name)
+        : extractDir;
+
+    await fs.cp(topLevelDir, versionStageDir, { recursive: true });
+    await reportInstallProgress(reporter, {
+      pluginId,
+      action,
+      phase: "hydrating",
+      message: "Preparing scenario pack runtime."
+    });
+    await hydrateBenchLocalRuntimeDependencies(versionStageDir);
+    await reportInstallProgress(reporter, {
+      pluginId,
+      action,
+      phase: "validating",
+      message: "Validating scenario pack."
+    });
+
+    const manifest = await readPluginManifest(versionStageDir);
+    const entryPath = path.resolve(versionStageDir, manifest.entry);
+
+    if (!(await pathExists(entryPath))) {
+      throw new Error(`Scenario pack entry is missing: ${entryPath}`);
+    }
+
+    await fs.rename(versionStageDir, finalVersionDir);
+    return finalVersionDir;
+  } catch (error) {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+    throw error;
+  } finally {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+  }
+}
+
 export async function installScenarioPackFromRegistry(
   config: BenchLocalConfig,
-  pluginId: string
+  pluginId: string,
+  reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "install",
+    phase: "resolving",
+    message: "Resolving scenario pack from registry."
+  });
   const registry = await loadScenarioPackRegistry(config);
   const entry = registry.find((candidate) => candidate.id === pluginId);
 
@@ -550,14 +703,18 @@ export async function installScenarioPackFromRegistry(
     throw new Error(`Scenario pack "${pluginId}" was not found in the official registry.`);
   }
 
-  const rootDir = path.join(expandHomePath(config.plugin_storage_dir), pluginId);
-  if (entry.source.type === "github") {
-    await installGitHubScenarioPack(rootDir, entry.source.repo, entry.source.tag);
-  } else {
-    await installArchiveScenarioPack(rootDir, entry.source.url);
-  }
-  await hydrateBenchLocalRuntimeDependencies(rootDir);
+  const baseDir = getScenarioPackBaseDir(config, pluginId);
+  const archiveUrl =
+    entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
+  const rootDir = await stageScenarioPackArchiveInstall(baseDir, pluginId, entry.version, archiveUrl, reporter, "install");
   const manifest = await readPluginManifest(rootDir);
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "install",
+    phase: "activating",
+    message: "Activating scenario pack."
+  });
+  await writeScenarioPackCurrentVersion(baseDir, path.basename(rootDir));
   const nextConfig: BenchLocalConfig = structuredClone(config);
   const existing = nextConfig.plugins[pluginId];
   nextConfig.plugins[pluginId] = bootstrapPluginConfigFromManifest(manifest, entry, existing);
@@ -567,26 +724,75 @@ export async function installScenarioPackFromRegistry(
   }
 
   await saveConfigFile(nextConfig, getConfigPath());
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "install",
+    phase: "complete",
+    message: "Scenario pack installed."
+  });
   return nextConfig;
 }
 
 export async function updateScenarioPackFromRegistry(
   config: BenchLocalConfig,
-  pluginId: string
+  pluginId: string,
+  reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
   if (!config.plugins[pluginId]) {
     throw new Error(`Scenario pack "${pluginId}" is not installed.`);
   }
 
-  return installScenarioPackFromRegistry(config, pluginId);
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "update",
+    phase: "resolving",
+    message: "Resolving scenario pack update."
+  });
+  const registry = await loadScenarioPackRegistry(config);
+  const entry = registry.find((candidate) => candidate.id === pluginId);
+
+  if (!entry) {
+    throw new Error(`Scenario pack "${pluginId}" was not found in the official registry.`);
+  }
+
+  const baseDir = getScenarioPackBaseDir(config, pluginId);
+  const archiveUrl =
+    entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
+  const rootDir = await stageScenarioPackArchiveInstall(baseDir, pluginId, entry.version, archiveUrl, reporter, "update");
+  const manifest = await readPluginManifest(rootDir);
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "update",
+    phase: "activating",
+    message: "Activating updated scenario pack."
+  });
+  await writeScenarioPackCurrentVersion(baseDir, path.basename(rootDir));
+
+  const nextConfig: BenchLocalConfig = structuredClone(config);
+  const existing = nextConfig.plugins[pluginId];
+  nextConfig.plugins[pluginId] = bootstrapPluginConfigFromManifest(manifest, entry, existing);
+  await saveConfigFile(nextConfig, getConfigPath());
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "update",
+    phase: "complete",
+    message: "Scenario pack updated."
+  });
+  return nextConfig;
 }
 
 export async function uninstallScenarioPack(
   config: BenchLocalConfig,
-  pluginId: string
+  pluginId: string,
+  reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
-  const rootDir = path.join(expandHomePath(config.plugin_storage_dir), pluginId);
-  await fs.rm(rootDir, { recursive: true, force: true });
+  const rootDir = getScenarioPackBaseDir(config, pluginId);
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "uninstall",
+    phase: "removing",
+    message: "Removing scenario pack."
+  });
 
   const nextConfig: BenchLocalConfig = structuredClone(config);
   delete nextConfig.plugins[pluginId];
@@ -596,6 +802,14 @@ export async function uninstallScenarioPack(
   }
 
   await saveConfigFile(nextConfig, getConfigPath());
+  await removeScenarioPackCurrentVersion(rootDir);
+  await fs.rm(rootDir, { recursive: true, force: true });
+  await reportInstallProgress(reporter, {
+    pluginId,
+    action: "uninstall",
+    phase: "complete",
+    message: "Scenario pack removed."
+  });
   return nextConfig;
 }
 
@@ -649,7 +863,7 @@ async function loadConfiguredPlugin(config: BenchLocalConfig, pluginId: string):
     throw new Error(`Unknown plugin "${pluginId}" in BenchLocal config.`);
   }
 
-  const rootDir = resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
 
   if (!rootDir || !(await pathExists(rootDir))) {
     throw new Error(`Plugin "${pluginId}" is not installed at a resolvable path.`);
@@ -662,7 +876,7 @@ async function loadConfiguredPlugin(config: BenchLocalConfig, pluginId: string):
     throw new Error(`Plugin entry is missing: ${entryPath}`);
   }
 
-  const imported = (await import(pathToFileURL(entryPath).href)) as Record<string, unknown>;
+  const imported = await importFreshModule(entryPath);
 
   return {
     rootDir,
@@ -879,7 +1093,7 @@ function bootstrapPluginConfigFromManifest(
 
   return {
     enabled: existing?.enabled ?? true,
-    source: entry.source.type === "github" ? "github" : "git",
+    source: "registry",
     repo: entry.source.type === "github" ? entry.source.repo : undefined,
     ref: entry.source.type === "github" ? entry.source.tag : undefined,
     version: entry.version,
@@ -1022,7 +1236,7 @@ async function loadConfiguredPluginRuntime(
     throw new Error(`Unknown plugin "${pluginId}" in BenchLocal config.`);
   }
 
-  const rootDir = resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
 
   if (!rootDir || !(await pathExists(rootDir))) {
     throw new Error(`Plugin "${pluginId}" is not installed at a resolvable path.`);

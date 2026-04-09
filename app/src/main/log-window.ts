@@ -50,7 +50,6 @@ export async function openDetachedLogsWindow(preloadPath: string): Promise<void>
     minWidth: 760,
     minHeight: 260,
     title: buildDetachedLogsWindowTitle(latestDetachedLogsState),
-<<<<<<< HEAD
     backgroundColor: "#111827",
     titleBarStyle: process.platform === "darwin" ? "hidden" : undefined,
     trafficLightPosition:

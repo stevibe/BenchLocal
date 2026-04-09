@@ -22,6 +22,7 @@ import {
   Settings2,
   Sidebar,
   SlidersHorizontal,
+  LoaderCircle,
   Trash2,
   Wrench,
   X
@@ -46,7 +47,7 @@ import type {
   PluginRunSummary,
   ScenarioPackRegistryEntry
 } from "@core";
-import type { DetachedLogsState, PluginVerifierStatus } from "@/shared/desktop-api";
+import type { DetachedLogsState, PluginVerifierStatus, ScenarioPackMutationProgress } from "@/shared/desktop-api";
 
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
@@ -173,6 +174,8 @@ type LoadedHistoryEntry = {
   startedAt: string;
 };
 
+type ScenarioPackMutationState = ScenarioPackMutationProgress;
+
 function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
   if (themeId === "system") {
     return `System (${prefersDark ? "Dark" : "Light"})`;
@@ -236,6 +239,19 @@ function providerKindLabel(kind: BenchLocalProviderKind): string {
 
 function defaultProviderName(kind: BenchLocalProviderKind): string {
   return providerKindLabel(kind);
+}
+
+function scenarioPackMutationLabel(mutation: ScenarioPackMutationState): string {
+  switch (mutation.action) {
+    case "install":
+      return mutation.phase === "complete" ? "Installed" : "Installing...";
+    case "update":
+      return mutation.phase === "complete" ? "Updated" : "Updating...";
+    case "uninstall":
+      return mutation.phase === "complete" ? "Removed" : "Removing...";
+    default:
+      return mutation.message;
+  }
 }
 
 function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
@@ -506,6 +522,7 @@ export function App() {
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [scenarioPackMutations, setScenarioPackMutations] = useState<Record<string, ScenarioPackMutationState>>({});
 
   const providerIds = useMemo(() => Object.keys(draft?.providers ?? {}), [draft]);
   const readyInspections = useMemo(() => pluginInspections.filter((inspection) => inspection.status === "ready"), [pluginInspections]);
@@ -773,6 +790,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    return window.benchlocal.plugins.onMutationProgress((payload) => {
+      setScenarioPackMutations((current) => ({
+        ...current,
+        [payload.pluginId]: payload
+      }));
+    });
+  }, []);
+
+  useEffect(() => {
     if (!settingsOpen || settingsTab !== "verification") {
       return;
     }
@@ -985,6 +1011,15 @@ export function App() {
 
     setIsBusy(true);
     setError(null);
+    setScenarioPackMutations((current) => ({
+      ...current,
+      [pluginId]: {
+        pluginId,
+        action: "install",
+        phase: "resolving",
+        message: "Resolving scenario pack from registry."
+      }
+    }));
 
     try {
       const result = await window.benchlocal.plugins.install({ pluginId });
@@ -994,6 +1029,11 @@ export function App() {
       setError(installError instanceof Error ? installError.message : `Failed to install ${pluginId}.`);
     } finally {
       setIsBusy(false);
+      setScenarioPackMutations((current) => {
+        const next = { ...current };
+        delete next[pluginId];
+        return next;
+      });
     }
   };
 
@@ -1004,6 +1044,15 @@ export function App() {
 
     setIsBusy(true);
     setError(null);
+    setScenarioPackMutations((current) => ({
+      ...current,
+      [pluginId]: {
+        pluginId,
+        action: "update",
+        phase: "resolving",
+        message: "Resolving scenario pack update."
+      }
+    }));
 
     try {
       const result = await window.benchlocal.plugins.update({ pluginId });
@@ -1013,6 +1062,11 @@ export function App() {
       setError(updateError instanceof Error ? updateError.message : `Failed to update ${pluginId}.`);
     } finally {
       setIsBusy(false);
+      setScenarioPackMutations((current) => {
+        const next = { ...current };
+        delete next[pluginId];
+        return next;
+      });
     }
   };
 
@@ -1028,6 +1082,15 @@ export function App() {
 
     setIsBusy(true);
     setError(null);
+    setScenarioPackMutations((current) => ({
+      ...current,
+      [pluginId]: {
+        pluginId,
+        action: "uninstall",
+        phase: "removing",
+        message: "Removing scenario pack."
+      }
+    }));
 
     try {
       const result = await window.benchlocal.plugins.uninstall({ pluginId });
@@ -1037,6 +1100,11 @@ export function App() {
       setError(uninstallError instanceof Error ? uninstallError.message : `Failed to uninstall ${pluginId}.`);
     } finally {
       setIsBusy(false);
+      setScenarioPackMutations((current) => {
+        const next = { ...current };
+        delete next[pluginId];
+        return next;
+      });
     }
   };
 
@@ -2198,6 +2266,7 @@ export function App() {
           providerIds={providerIds}
           pluginInspections={pluginInspections}
           registryEntries={registryEntries}
+          scenarioPackMutations={scenarioPackMutations}
           verifierStatuses={verifierStatuses}
           onClose={() => setSettingsOpen(false)}
           onSave={() => void save()}
@@ -3004,25 +3073,31 @@ function BenchmarkSection({
             </summary>
 
             <div className="scenario-detail-grid scenario-detail-grid-main">
-              <DetailCard
-                title="What this tests"
-                content={currentScenario?.description ?? "Click a scenario column in the scenario pack table below to inspect that scenario."}
-              />
-              <DetailCard
-                title="Prompt Contract"
-                content={
-                  currentScenario?.description ??
-                  "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as scenario pack metadata expands."
-                }
-              />
-              <DetailCard
-                title="Run Notes"
-                content={
-                  runSummary
-                    ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
-                    : "Run this scenario pack, then use the scenario columns in the table below to switch the preview context."
-                }
-              />
+              {(currentScenario?.detailCards?.length
+                ? currentScenario.detailCards
+                : [
+                    {
+                      title: "What this tests",
+                      content:
+                        currentScenario?.description ??
+                        "Click a scenario column in the scenario pack table below to inspect that scenario."
+                    },
+                    {
+                      title: "Prompt Contract",
+                      content:
+                        currentScenario?.description ??
+                        "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as scenario pack metadata expands."
+                    },
+                    {
+                      title: "Run Notes",
+                      content: runSummary
+                        ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
+                        : "Run this scenario pack, then use the scenario columns in the table below to switch the preview context."
+                    }
+                  ]
+              ).map((card) => (
+                <DetailCard key={card.title} title={card.title} content={card.content} />
+              ))}
             </div>
           </details>
 
@@ -3366,13 +3441,80 @@ function DetachedLogsWindow() {
     events: []
   });
   const [autoScroll, setAutoScroll] = useState(true);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(
+    typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
+  );
+  const [themeDefinition, setThemeDefinition] = useState<BenchLocalThemeDefinition | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
+  const appliedThemeKeysRef = useRef<string[]>([]);
 
   useEffect(() => {
     return window.benchlocal.logs.onDetachedState((nextState) => {
       setState(nextState);
     });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      setSystemPrefersDark(media.matches);
+    };
+
+    handleChange();
+    media.addEventListener("change", handleChange);
+
+    return () => {
+      media.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTheme = async () => {
+      const configResult = await window.benchlocal.config.load();
+      const requestedThemeId = configResult.config.ui.theme === "system"
+        ? systemPrefersDark
+          ? "dark"
+          : "light"
+        : configResult.config.ui.theme;
+      const nextTheme = await window.benchlocal.themes.load({ themeId: requestedThemeId });
+
+      if (!cancelled) {
+        setThemeDefinition(nextTheme);
+      }
+    };
+
+    void loadTheme();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [systemPrefersDark]);
+
+  useEffect(() => {
+    if (!themeDefinition || typeof document === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+
+    for (const key of appliedThemeKeysRef.current) {
+      root.style.removeProperty(key);
+    }
+
+    for (const [key, value] of Object.entries(themeDefinition.variables)) {
+      root.style.setProperty(key, value);
+    }
+
+    appliedThemeKeysRef.current = Object.keys(themeDefinition.variables);
+    root.style.setProperty("color-scheme", themeDefinition.colorScheme);
+    root.dataset.theme = themeDefinition.id;
+  }, [themeDefinition]);
 
   useEffect(() => {
     if (!autoScroll || !logContainerRef.current) {
@@ -3390,8 +3532,7 @@ function DetachedLogsWindow() {
     <div className="detached-logs-shell">
       <header className="detached-logs-header">
         <div>
-          <h2 className="detached-logs-title">{state.tabTitle}</h2>
-          <p className="muted-copy" style={{ marginTop: "6px" }}>{state.workspaceName}</p>
+          <h2 className="detached-logs-title">{state.workspaceName} · {state.tabTitle}</h2>
         </div>
         <div className="section-actions">
           <label className="drawer-toggle">
@@ -3412,7 +3553,7 @@ function DetachedLogsWindow() {
       </header>
 
       {state.events.length > 0 ? (
-        <div ref={logContainerRef} className="event-trail detached-logs-trail">
+        <div ref={logContainerRef} className="detached-logs-trail">
           {state.events.map((event, index) => (
             <div key={`${event.type}-${index}`} className="event-row">
               <span className="event-type">{event.type}</span>
@@ -3421,7 +3562,7 @@ function DetachedLogsWindow() {
           ))}
         </div>
       ) : (
-        <div className="bottom-drawer-empty">No run logs are being streamed yet.</div>
+        <div className="detached-logs-empty">No run logs are being streamed yet.</div>
       )}
     </div>
   );
@@ -3439,6 +3580,7 @@ function SettingsModal({
   providerIds,
   pluginInspections,
   registryEntries,
+  scenarioPackMutations,
   verifierStatuses,
   onClose,
   onSave,
@@ -3470,6 +3612,7 @@ function SettingsModal({
   providerIds: string[];
   pluginInspections: PluginInspection[];
   registryEntries: ScenarioPackRegistryEntry[];
+  scenarioPackMutations: Record<string, ScenarioPackMutationState>;
   verifierStatuses: Record<string, PluginVerifierStatus>;
   onClose: () => void;
   onSave: () => void;
@@ -3630,6 +3773,7 @@ function SettingsModal({
                 draft={draft}
                 inspections={pluginInspections}
                 registryEntries={registryEntries}
+                scenarioPackMutations={scenarioPackMutations}
                 onRefresh={onRefreshRegistry}
                 onInstall={onInstallScenarioPack}
                 onUpdate={onUpdateScenarioPack}
@@ -3873,6 +4017,7 @@ function ScenarioPackRegistryView({
   draft,
   inspections,
   registryEntries,
+  scenarioPackMutations,
   onRefresh,
   onInstall,
   onUpdate,
@@ -3881,6 +4026,7 @@ function ScenarioPackRegistryView({
   draft: BenchLocalConfig;
   inspections: PluginInspection[];
   registryEntries: ScenarioPackRegistryEntry[];
+  scenarioPackMutations: Record<string, ScenarioPackMutationState>;
   onRefresh: () => void;
   onInstall: (pluginId: string) => void;
   onUpdate: (pluginId: string) => void;
@@ -3918,6 +4064,8 @@ function ScenarioPackRegistryView({
               installedEntries.map((entry) => {
                 const inspection = inspectionsById[entry.id];
                 const installed = draft.plugins[entry.id];
+                const mutation = scenarioPackMutations[entry.id];
+                const isMutating = Boolean(mutation);
                 const updateAvailable =
                   installed?.version !== entry.version ||
                   (entry.source.type === "github" ? installed?.ref !== entry.source.tag : false);
@@ -3939,16 +4087,17 @@ function ScenarioPackRegistryView({
                     </div>
 
                     <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
-                      <button type="button" onClick={() => onUpdate(entry.id)} className="ghost-button ghost-button-compact" disabled={!updateAvailable}>
-                        <RotateCcw size={14} />
-                        {updateAvailable ? "Update" : "Up to date"}
+                      <button type="button" onClick={() => onUpdate(entry.id)} className="ghost-button ghost-button-compact" disabled={!updateAvailable || isMutating}>
+                        {mutation?.action === "update" ? <LoaderCircle size={14} className="spinner" /> : <RotateCcw size={14} />}
+                        {mutation?.action === "update" ? scenarioPackMutationLabel(mutation) : updateAvailable ? "Update" : "Up to date"}
                       </button>
-                      <button type="button" onClick={() => onUninstall(entry.id)} className="ghost-button ghost-button-compact">
-                        <Trash2 size={14} />
-                        Delete
+                      <button type="button" onClick={() => onUninstall(entry.id)} className="ghost-button ghost-button-compact" disabled={isMutating}>
+                        {mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
+                        {mutation?.action === "uninstall" ? scenarioPackMutationLabel(mutation) : "Delete"}
                       </button>
                     </div>
 
+                    {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
                     {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
                   </div>
                 );
@@ -3957,6 +4106,7 @@ function ScenarioPackRegistryView({
             {unlistedInstalledIds.map((pluginId) => {
               const inspection = inspectionsById[pluginId];
               const installed = draft.plugins[pluginId];
+              const mutation = scenarioPackMutations[pluginId];
 
               return (
                 <div key={pluginId} className="entry-card">
@@ -3975,12 +4125,13 @@ function ScenarioPackRegistryView({
                   </div>
 
                   <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
-                    <button type="button" onClick={() => onUninstall(pluginId)} className="ghost-button ghost-button-compact">
-                      <Trash2 size={14} />
-                      Delete
+                    <button type="button" onClick={() => onUninstall(pluginId)} className="ghost-button ghost-button-compact" disabled={Boolean(mutation)}>
+                      {mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
+                      {mutation?.action === "uninstall" ? scenarioPackMutationLabel(mutation) : "Delete"}
                     </button>
                   </div>
 
+                  {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
                   {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
                 </div>
               );
@@ -4002,28 +4153,34 @@ function ScenarioPackRegistryView({
                 <p className="muted-copy">Everything in the registry is already installed.</p>
               </div>
             ) : (
-              availableEntries.map((entry) => (
-                <div key={entry.id} className="entry-card">
-                  <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
-                      <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? "No description provided."}</p>
-                      <div className="settings-table-actions" style={{ marginTop: "10px", justifyContent: "flex-start" }}>
-                        <span className="status-chip status-idle">v{entry.version}</span>
-                        {entry.author ? <span className="status-chip status-idle">{entry.author}</span> : null}
-                        <span className="status-chip status-idle">{entry.scenarioCount ?? "?"} tests</span>
-                        <span className="status-chip status-idle">
-                          {entry.capabilities?.verification ? "Requires verifier" : "No extra dependencies"}
-                        </span>
+              availableEntries.map((entry) => {
+                const mutation = scenarioPackMutations[entry.id];
+
+                return (
+                  <div key={entry.id} className="entry-card">
+                    <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
+                        <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? "No description provided."}</p>
+                        <div className="settings-table-actions" style={{ marginTop: "10px", justifyContent: "flex-start" }}>
+                          <span className="status-chip status-idle">v{entry.version}</span>
+                          {entry.author ? <span className="status-chip status-idle">{entry.author}</span> : null}
+                          <span className="status-chip status-idle">{entry.scenarioCount ?? "?"} tests</span>
+                          <span className="status-chip status-idle">
+                            {entry.capabilities?.verification ? "Requires verifier" : "No extra dependencies"}
+                          </span>
+                        </div>
                       </div>
+                      <button type="button" onClick={() => onInstall(entry.id)} className="primary-button" disabled={Boolean(mutation)}>
+                        {mutation?.action === "install" ? <LoaderCircle size={14} className="spinner" /> : <Plus size={14} />}
+                        {mutation?.action === "install" ? scenarioPackMutationLabel(mutation) : "Install"}
+                      </button>
                     </div>
-                    <button type="button" onClick={() => onInstall(entry.id)} className="primary-button">
-                      <Plus size={14} />
-                      Install
-                    </button>
+
+                    {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

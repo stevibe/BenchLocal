@@ -39,6 +39,7 @@ const PLUGIN_REGISTRY_CHANNEL = "benchlocal:plugins:registry";
 const PLUGIN_INSTALL_CHANNEL = "benchlocal:plugins:install";
 const PLUGIN_UPDATE_CHANNEL = "benchlocal:plugins:update";
 const PLUGIN_UNINSTALL_CHANNEL = "benchlocal:plugins:uninstall";
+const PLUGIN_MUTATION_PROGRESS_CHANNEL = "benchlocal:plugins:mutation-progress";
 const PLUGIN_ACTIVE_RUNS_CHANNEL = "benchlocal:plugins:active-runs";
 const PLUGIN_RUN_CHANNEL = "benchlocal:plugins:run";
 const PLUGIN_STOP_CHANNEL = "benchlocal:plugins:stop";
@@ -186,7 +187,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(PLUGIN_INSTALL_CHANNEL, async (_event, input: { pluginId: string }) => {
     const { config } = await loadOrCreateConfig();
-    const saved = await installScenarioPackFromRegistry(config, input.pluginId);
+    const saved = await installScenarioPackFromRegistry(config, input.pluginId, (progress) => {
+      _event.sender.send(PLUGIN_MUTATION_PROGRESS_CHANNEL, progress);
+    });
     return {
       path: getConfigPath(),
       created: false,
@@ -196,7 +199,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(PLUGIN_UPDATE_CHANNEL, async (_event, input: { pluginId: string }) => {
     const { config } = await loadOrCreateConfig();
-    const saved = await updateScenarioPackFromRegistry(config, input.pluginId);
+    const saved = await updateScenarioPackFromRegistry(config, input.pluginId, (progress) => {
+      _event.sender.send(PLUGIN_MUTATION_PROGRESS_CHANNEL, progress);
+    });
     return {
       path: getConfigPath(),
       created: false,
@@ -206,7 +211,9 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(PLUGIN_UNINSTALL_CHANNEL, async (_event, input: { pluginId: string }) => {
     const { config } = await loadOrCreateConfig();
-    const saved = await uninstallScenarioPack(config, input.pluginId);
+    const saved = await uninstallScenarioPack(config, input.pluginId, (progress) => {
+      _event.sender.send(PLUGIN_MUTATION_PROGRESS_CHANNEL, progress);
+    });
     return {
       path: getConfigPath(),
       created: false,

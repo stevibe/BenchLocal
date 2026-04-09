@@ -5,6 +5,7 @@ import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-a
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const PLUGIN_RUN_EVENT_CHANNEL = "benchlocal:plugins:run-event";
+const PLUGIN_MUTATION_PROGRESS_CHANNEL = "benchlocal:plugins:mutation-progress";
 const DETACHED_LOGS_STATE_CHANNEL = "benchlocal:logs:state";
 const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
 
@@ -30,6 +31,14 @@ const api: BenchLocalDesktopApi = {
     install: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:install", input),
     update: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:update", input),
     uninstall: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:uninstall", input),
+    onMutationProgress: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => {
+        listener(payload);
+      };
+
+      ipcRenderer.on(PLUGIN_MUTATION_PROGRESS_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(PLUGIN_MUTATION_PROGRESS_CHANNEL, wrapped);
+    },
     activeRuns: () => ipcRenderer.invoke("benchlocal:plugins:active-runs"),
     run: (input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel" }) =>
       ipcRenderer.invoke("benchlocal:plugins:run", input),

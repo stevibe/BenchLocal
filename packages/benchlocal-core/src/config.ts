@@ -45,7 +45,7 @@ export type BenchLocalSidecarConfig = BenchLocalVerifierConfig;
 
 export type BenchLocalPluginConfig = {
   enabled: boolean;
-  source: "github" | "local" | "git";
+  source: "registry" | "github" | "local" | "git";
   repo?: string;
   path?: string;
   ref?: string;
@@ -124,7 +124,7 @@ const VerifierSchema = z.object({
 const PluginSchema = z
   .object({
     enabled: z.boolean().default(true),
-    source: z.enum(["github", "local", "git"]).default("github"),
+    source: z.enum(["registry", "github", "local", "git"]).default("registry"),
     repo: z.string().trim().min(1).optional(),
     path: z.string().trim().min(1).optional(),
     ref: z.string().trim().min(1).optional(),

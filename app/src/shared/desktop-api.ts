@@ -34,6 +34,13 @@ export type PluginVerifierStatus = {
   verifiers: VerifierEndpoint[];
 };
 
+export type ScenarioPackMutationProgress = {
+  pluginId: string;
+  action: "install" | "update" | "uninstall";
+  phase: "resolving" | "downloading" | "extracting" | "hydrating" | "validating" | "activating" | "removing" | "complete";
+  message: string;
+};
+
 export interface BenchLocalDesktopApi {
   config: {
     load(): Promise<ConfigLoadResult>;
@@ -55,6 +62,7 @@ export interface BenchLocalDesktopApi {
     install(input: { pluginId: string }): Promise<ConfigLoadResult>;
     update(input: { pluginId: string }): Promise<ConfigLoadResult>;
     uninstall(input: { pluginId: string }): Promise<ConfigLoadResult>;
+    onMutationProgress(listener: (payload: ScenarioPackMutationProgress) => void): () => void;
     activeRuns(): Promise<Array<{ tabId: string; pluginId: string }>>;
     run(input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel" }): Promise<PluginRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;

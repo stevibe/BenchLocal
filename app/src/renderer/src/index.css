@@ -662,6 +662,7 @@ pre {
 }
 
 .detached-logs-shell {
+  width: 100vw;
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -688,10 +689,11 @@ pre {
 }
 
 .detached-logs-title {
-  margin: 6px 0 0;
-  font-size: 1rem;
+  margin: 0;
+  font-size: 1.02rem;
   font-weight: 650;
   letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .detached-logs-trail {
@@ -700,6 +702,24 @@ pre {
   border: none;
   border-radius: 0;
   background: var(--log-drawer-bg);
+  color: var(--log-drawer-ink);
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow: auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.detached-logs-empty {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--muted);
+  background: var(--workspace-canvas-bg);
 }
 
 .status-footer {
