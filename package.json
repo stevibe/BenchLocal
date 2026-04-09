@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace app",
+    "dev:devtools": "BENCHLOCAL_OPEN_DEVTOOLS=1 npm run dev --workspace app",
     "build": "npm run build --workspace @benchlocal/core && npm run build --workspace @benchlocal/sdk && npm run build --workspace @benchlocal/plugin-host && npm run build --workspace app",
     "typecheck": "npm run typecheck --workspace @benchlocal/core && npm run typecheck --workspace @benchlocal/sdk && npm run typecheck --workspace @benchlocal/plugin-host && npm run typecheck --workspace app"
   }

@@ -67,7 +67,6 @@ type ProviderFormState = {
   enabled: boolean;
   base_url: string;
   api_key: string;
-  api_key_env: string;
 };
 
 type ProviderModalState =
@@ -213,26 +212,6 @@ function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
   return structuredClone(config);
 }
 
-function providerStatus(provider: BenchLocalProviderConfig): string {
-  if (!provider.enabled) {
-    return "Deactivated";
-  }
-
-  if (provider.api_key && provider.api_key_env) {
-    return "Stored API key + env fallback";
-  }
-
-  if (provider.api_key) {
-    return "Stored API key";
-  }
-
-  if (provider.api_key_env) {
-    return "Credential-backed";
-  }
-
-  return "Open endpoint";
-}
-
 function providerKindLabel(kind: BenchLocalProviderKind): string {
   return PROVIDER_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
 }
@@ -274,13 +253,12 @@ function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
 
 function createEmptyProvider(): ProviderFormState {
   return {
-    id: "",
+    id: `openai_compatible-${crypto.randomUUID()}`,
     kind: "openai_compatible",
     name: "",
     enabled: true,
     base_url: "https://api.example.com/v1",
-    api_key: "",
-    api_key_env: ""
+    api_key: ""
   };
 }
 
@@ -301,8 +279,7 @@ function toProviderForm(id: string, provider: BenchLocalProviderConfig): Provide
     name: provider.name,
     enabled: provider.enabled,
     base_url: provider.base_url,
-    api_key: provider.api_key ?? "",
-    api_key_env: provider.api_key_env ?? ""
+    api_key: provider.api_key ?? ""
   };
 }
 
@@ -1668,51 +1645,17 @@ export function App() {
 
     const providerId = providerModal.form.id.trim();
 
-    if (!providerId) {
-      setError("Provider ID is required.");
-      return;
-    }
-
-    const renamedModelIds =
-      providerModal.mode === "edit" && providerModal.initialId !== providerId
-        ? Object.fromEntries(
-            (draft?.models ?? [])
-              .filter((model) => model.provider === providerModal.initialId)
-              .map((model) => [model.id, `${providerId}:${model.model}`])
-          )
-        : null;
-
     updateDraft((current) => {
-      if (providerModal.mode === "edit" && providerModal.initialId !== providerId) {
-        delete current.providers[providerModal.initialId];
-        current.models = current.models.map((model) =>
-          model.provider === providerModal.initialId ? { ...model, provider: providerId, id: `${providerId}:${model.model}` } : model
-        );
-      }
-
       current.providers[providerId] = {
         kind: providerModal.form.kind,
         name: providerModal.form.name.trim() || defaultProviderName(providerModal.form.kind),
         enabled: providerModal.form.enabled,
         base_url: providerModal.form.base_url.trim(),
-        api_key: providerModal.form.api_key.trim() || undefined,
-        api_key_env: providerModal.form.api_key_env.trim() || undefined
+        api_key: providerModal.form.api_key.trim() || undefined
       };
 
       return current;
     });
-
-    if (renamedModelIds && Object.keys(renamedModelIds).length > 0) {
-      updateWorkspaceState((current) => {
-        for (const tab of Object.values(current.tabs)) {
-          tab.modelSelections = tab.modelSelections.map((selection) => ({
-            ...selection,
-            modelId: renamedModelIds[selection.modelId] ?? selection.modelId
-          }));
-        }
-        return current;
-      });
-    }
 
     setProviderModal(null);
     setNotice(providerModal.mode === "create" ? "Added provider draft entry." : "Updated provider draft entry.");
@@ -1737,6 +1680,25 @@ export function App() {
     }
 
     setNotice(`Deleted provider "${providerId}".`);
+  };
+
+  const confirmDeleteProvider = (providerId: string) => {
+    const provider = draft?.providers[providerId];
+    const linkedModelCount = (draft?.models ?? []).filter((model) => model.provider === providerId).length;
+
+    setConfirmDialog({
+      title: "Delete Provider",
+      subtitle:
+        linkedModelCount > 0
+          ? `Delete ${provider?.name ?? "this provider"}? This will also delete ${linkedModelCount} linked ${linkedModelCount === 1 ? "model" : "models"} and remove them from any tab selections.`
+          : `Delete ${provider?.name ?? "this provider"}?`,
+      confirmLabel: "Delete Provider",
+      tone: "danger",
+      onConfirm: () => {
+        deleteProvider(providerId);
+        setProviderModal(null);
+      }
+    });
   };
 
   const saveModelModal = () => {
@@ -1803,6 +1765,33 @@ export function App() {
     setNotice("Deleted model.");
   };
 
+  const confirmDeleteModel = (index: number) => {
+    const model = draft?.models[index];
+    if (!model) {
+      return;
+    }
+
+    const linkedTabCount = workspaceState
+      ? Object.values(workspaceState.tabs).filter((tab) =>
+          tab.modelSelections.some((selection) => selection.modelId === model.id)
+        ).length
+      : 0;
+
+    setConfirmDialog({
+      title: "Delete Model",
+      subtitle:
+        linkedTabCount > 0
+          ? `Delete ${model.label}? This will also remove it from ${linkedTabCount} tab ${linkedTabCount === 1 ? "selection" : "selections"}.`
+          : `Delete ${model.label}?`,
+      confirmLabel: "Delete Model",
+      tone: "danger",
+      onConfirm: () => {
+        deleteModel(index);
+        setModelModal(null);
+      }
+    });
+  };
+
   return (
     <div>
       <main className="page-shell">
@@ -1826,29 +1815,82 @@ export function App() {
 	                <h1>LLM Scenario Pack Suite</h1>
 	              </div>
 
-              <div className="toolbar-cluster">
-	                <ScenarioPackPickerTrigger
-	                  inspections={readyInspections}
-	                  open={tabMenuOpen}
-	                  setOpen={setTabMenuOpen}
-	                  onCreateTab={createTab}
-	                  disabled={!activeWorkspace}
-	                />
-	                <button
-	                  type="button"
-	                  onClick={() => setSettingsOpen(true)}
-                  className="ghost-button"
-                  aria-label="Open settings"
-                  title="Settings"
-                >
-                  <Cog size={16} />
-                  Settings
-                </button>
-              </div>
+              {!settingsOpen ? (
+                <div className="toolbar-cluster">
+	                  <ScenarioPackPickerTrigger
+	                    inspections={readyInspections}
+	                    open={tabMenuOpen}
+	                    setOpen={setTabMenuOpen}
+	                    onCreateTab={createTab}
+	                    disabled={!activeWorkspace}
+	                  />
+	                  <button
+	                    type="button"
+	                    onClick={() => setSettingsOpen(true)}
+                    className="ghost-button"
+                    aria-label="Open settings"
+                    title="Settings"
+                  >
+                    <Cog size={16} />
+                    Settings
+                  </button>
+                </div>
+              ) : null}
             </div>
           </header>
 
-	          <div className={`desktop-layout${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+          {settingsOpen && draft ? (
+            <SettingsScene
+              settingsTab={settingsTab}
+              setSettingsTab={setSettingsTab}
+              draft={draft}
+              loadState={loadState}
+              availableThemes={availableThemes}
+              systemPrefersDark={systemPrefersDark}
+              hasUnsavedChanges={hasUnsavedChanges}
+              isBusy={isBusy}
+              providerIds={providerIds}
+              pluginInspections={pluginInspections}
+              registryEntries={registryEntries}
+              scenarioPackMutations={scenarioPackMutations}
+              verifierStatuses={verifierStatuses}
+              onBack={() => setSettingsOpen(false)}
+              onSave={() => void save()}
+              onReset={reset}
+              onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
+              onEditProvider={(providerId) =>
+                setProviderModal({
+                  mode: "edit",
+                  initialId: providerId,
+                  form: toProviderForm(providerId, draft.providers[providerId])
+                })
+              }
+              onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
+              onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
+              onStartVerifier={async (pluginId) => {
+                try {
+                  const status = await window.benchlocal.verifiers.start({ pluginId });
+                  setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+                } catch (verifierError) {
+                  setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
+                }
+              }}
+              onStopVerifier={async (pluginId) => {
+                try {
+                  const status = await window.benchlocal.verifiers.stop({ pluginId });
+                  setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+                } catch (verifierError) {
+                  setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
+                }
+              }}
+              onRefreshRegistry={() => void loadRegistryEntries()}
+              onInstallScenarioPack={(pluginId) => void installScenarioPack(pluginId)}
+              onUpdateScenarioPack={(pluginId) => void updateScenarioPack(pluginId)}
+              onUninstallScenarioPack={(pluginId) => void uninstallInstalledScenarioPack(pluginId)}
+              updateDraft={updateDraft}
+            />
+          ) : (
+            <div className={`desktop-layout${sidebarOpen ? "" : " sidebar-collapsed"}`}>
 	            <aside className={`desktop-sidebar${sidebarOpen ? "" : " is-hidden"}`}>
 	              <div className="sidebar-section">
                   <div className="sidebar-section-header">
@@ -2208,176 +2250,130 @@ export function App() {
                   </section>
                 ) : null}
 	            </section>
-          </div>
-          <footer className="status-footer">
-            <div className="status-footer-group">
-              <span className="status-footer-item">
-                {activeWorkspace?.name ?? "No Workspace"}
-              </span>
-              <span className="status-footer-divider" />
-              <span className="status-footer-item">
-                {activeTab?.title ?? "No Tab"}
-              </span>
             </div>
-            <div className="status-footer-group">
-              <button
-                type="button"
-                onClick={() => setLogsOpen((current) => !current)}
-                className={`status-footer-button${logsOpen ? " is-active" : ""}`}
-              >
-                <Logs size={13} />
-                {logsOpen ? "Hide Logs" : "Show Logs"}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  if (logsDetached) {
-                    await window.benchlocal.logs.closeDetachedWindow();
-                    setLogsDetached(false);
-                    return;
-                  }
+          )}
+          {!settingsOpen ? (
+            <footer className="status-footer">
+              <div className="status-footer-group">
+                <span className="status-footer-item">
+                  {activeWorkspace?.name ?? "No Workspace"}
+                </span>
+                <span className="status-footer-divider" />
+                <span className="status-footer-item">
+                  {activeTab?.title ?? "No Tab"}
+                </span>
+              </div>
+              <div className="status-footer-group">
+                <button
+                  type="button"
+                  onClick={() => setLogsOpen((current) => !current)}
+                  className={`status-footer-button${logsOpen ? " is-active" : ""}`}
+                >
+                  <Logs size={13} />
+                  {logsOpen ? "Hide Logs" : "Show Logs"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (logsDetached) {
+                      await window.benchlocal.logs.closeDetachedWindow();
+                      setLogsDetached(false);
+                      return;
+                    }
 
-                  await window.benchlocal.logs.openDetachedWindow();
-                  setLogsDetached(true);
-                  setLogsOpen(false);
-                }}
-                className={`status-footer-button${logsDetached ? " is-active" : ""}`}
-              >
-                <Sidebar size={13} />
-                {logsDetached ? "Close Log Window" : "Detach Logs"}
-              </button>
-              <span className="status-footer-item">{activeLogEvents.length} events</span>
-            </div>
-          </footer>
+                    await window.benchlocal.logs.openDetachedWindow();
+                    setLogsDetached(true);
+                    setLogsOpen(false);
+                  }}
+                  className={`status-footer-button${logsDetached ? " is-active" : ""}`}
+                >
+                  <Sidebar size={13} />
+                  {logsDetached ? "Close Log Window" : "Detach Logs"}
+                </button>
+                <span className="status-footer-item">{activeLogEvents.length} events</span>
+              </div>
+            </footer>
+          ) : null}
         </section>
 
       </main>
 
-      {settingsOpen && draft ? (
-        <SettingsModal
-          settingsTab={settingsTab}
-          setSettingsTab={setSettingsTab}
-          draft={draft}
-          loadState={loadState}
-          availableThemes={availableThemes}
-          systemPrefersDark={systemPrefersDark}
-          hasUnsavedChanges={hasUnsavedChanges}
-          isBusy={isBusy}
-          providerIds={providerIds}
-          pluginInspections={pluginInspections}
-          registryEntries={registryEntries}
-          scenarioPackMutations={scenarioPackMutations}
-          verifierStatuses={verifierStatuses}
-          onClose={() => setSettingsOpen(false)}
-          onSave={() => void save()}
-          onReset={reset}
-          onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
-          onEditProvider={(providerId) =>
-            setProviderModal({
-              mode: "edit",
-              initialId: providerId,
-              form: toProviderForm(providerId, draft.providers[providerId])
-            })
-          }
-          onToggleProvider={(providerId) =>
-            updateDraft((current) => {
-              current.providers[providerId].enabled = !current.providers[providerId].enabled;
-              return current;
-            })
-          }
-          onDeleteProvider={deleteProvider}
-          onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
-          onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
-          onToggleModel={(index) =>
-            updateDraft((current) => {
-              current.models[index].enabled = !current.models[index].enabled;
-              return current;
-            })
-          }
-          onDeleteModel={deleteModel}
-          onStartVerifier={async (pluginId) => {
-            try {
-              const status = await window.benchlocal.verifiers.start({ pluginId });
-              setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
-            } catch (verifierError) {
-              setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
-            }
-          }}
-          onStopVerifier={async (pluginId) => {
-            try {
-              const status = await window.benchlocal.verifiers.stop({ pluginId });
-              setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
-            } catch (verifierError) {
-              setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
-            }
-          }}
-          onRefreshRegistry={() => void loadRegistryEntries()}
-          onInstallScenarioPack={(pluginId) => void installScenarioPack(pluginId)}
-          onUpdateScenarioPack={(pluginId) => void updateScenarioPack(pluginId)}
-          onUninstallScenarioPack={(pluginId) => void uninstallInstalledScenarioPack(pluginId)}
-          updateDraft={updateDraft}
-        />
-      ) : null}
-
       {providerModal ? (
         <Modal
           title={providerModal.mode === "create" ? "Add Provider" : "Edit Provider"}
-          subtitle="Create or update a shared provider entry. BenchLocal stores provider API keys in ~/.benchlocal/config.toml so every scenario pack can reuse them."
+          subtitle="Create or update a shared provider entry."
           onClose={() => setProviderModal(null)}
           onSubmit={saveProviderModal}
           submitLabel={providerModal.mode === "create" ? "Create Provider" : "Save Provider"}
+          leadingActions={
+            providerModal.mode === "edit" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  confirmDeleteProvider(providerModal.initialId);
+                }}
+                className="button-danger"
+              >
+                <Trash2 size={14} />
+                Delete Provider
+              </button>
+            ) : undefined
+          }
         >
-          <Field label="Provider ID" value={providerModal.form.id} readOnly={providerModal.mode === "edit"} onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, id: value } } : current)} />
-          <InlineSelectField
-            label="Provider Kind"
-            value={providerModal.form.kind}
-            options={PROVIDER_KIND_OPTIONS.map((option) => option.value)}
-            getOptionLabel={(value) => providerKindLabel(value as BenchLocalProviderKind)}
-            onChange={(value) =>
-              setProviderModal((current) =>
-                current
-                  ? {
-                      ...current,
-                      form: {
-                        ...current.form,
-                        kind: value as BenchLocalProviderKind,
-                        name:
-                          current.form.name.trim() === "" || current.form.name === defaultProviderName(current.form.kind)
-                            ? defaultProviderName(value as BenchLocalProviderKind)
-                            : current.form.name,
-                        base_url:
-                          current.form.base_url === defaultProviderBaseUrl(current.form.kind)
-                            ? defaultProviderBaseUrl(value as BenchLocalProviderKind)
-                            : current.form.base_url
+          <div className="entry-grid two-col">
+            <InlineSelectField
+              label="Provider Kind"
+              value={providerModal.form.kind}
+              options={PROVIDER_KIND_OPTIONS.map((option) => option.value)}
+              getOptionLabel={(value) => providerKindLabel(value as BenchLocalProviderKind)}
+              onChange={(value) =>
+                setProviderModal((current) =>
+                  current
+                    ? {
+                        ...current,
+                        form: {
+                          ...current.form,
+                          id:
+                            current.mode === "create"
+                              ? `${value as BenchLocalProviderKind}-${crypto.randomUUID()}`
+                              : current.form.id,
+                          kind: value as BenchLocalProviderKind,
+                          name:
+                            current.form.name.trim() === "" || current.form.name === defaultProviderName(current.form.kind)
+                              ? defaultProviderName(value as BenchLocalProviderKind)
+                              : current.form.name,
+                          base_url:
+                            current.form.base_url === defaultProviderBaseUrl(current.form.kind)
+                              ? defaultProviderBaseUrl(value as BenchLocalProviderKind)
+                              : current.form.base_url
+                        }
                       }
-                    }
-                  : current
-              )
-            }
-          />
-          <Field
-            label="Display Name"
-            value={providerModal.form.name}
-            placeholder={defaultProviderName(providerModal.form.kind)}
-            onChange={(value) =>
-              setProviderModal((current) => current ? { ...current, form: { ...current.form, name: value } } : current)
-            }
-          />
+                    : current
+                )
+              }
+            />
+            <Field
+              label="Display Name"
+              value={providerModal.form.name}
+              placeholder={defaultProviderName(providerModal.form.kind)}
+              onChange={(value) =>
+                setProviderModal((current) => current ? { ...current, form: { ...current.form, name: value } } : current)
+              }
+            />
+            <Field
+              label="API Key"
+              type="password"
+              value={providerModal.form.api_key}
+              placeholder="sk-or-v1-..."
+              onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, api_key: value } } : current)}
+            />
+            <FieldToggle
+              label="Enabled"
+              checked={providerModal.form.enabled}
+              onChange={(checked) => setProviderModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
+            />
+          </div>
           <Field label="Base URL" value={providerModal.form.base_url} onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, base_url: value } } : current)} />
-          <Field
-            label="API Key"
-            type="password"
-            value={providerModal.form.api_key}
-            placeholder="sk-or-v1-..."
-            onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, api_key: value } } : current)}
-          />
-          <Field
-            label="API Key Env"
-            value={providerModal.form.api_key_env}
-            placeholder="OPENROUTER_API_KEY"
-            onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, api_key_env: value } } : current)}
-          />
-          <ToggleRow label="Enabled" checked={providerModal.form.enabled} onChange={(checked) => setProviderModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)} />
         </Modal>
       ) : null}
 
@@ -2388,22 +2384,42 @@ export function App() {
           onClose={() => setModelModal(null)}
           onSubmit={saveModelModal}
           submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
+          leadingActions={
+            modelModal.mode === "edit" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  confirmDeleteModel(modelModal.index);
+                }}
+                className="button-danger"
+              >
+                <Trash2 size={14} />
+                Delete Model
+              </button>
+            ) : undefined
+          }
         >
-          <InlineSelectField
-            label="Provider"
-            value={modelModal.form.provider}
-            options={providerIds.length > 0 ? providerIds : ["openrouter"]}
-            getOptionLabel={(value) => {
-              const provider = draft?.providers[value];
-              return provider ? `${provider.name} (${value})` : value;
-            }}
-            onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
-          />
-          <Field label="Model Identifier" value={modelModal.form.model} placeholder="openai/gpt-4.1" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, model: value } } : current)} />
-          <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
-          <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
-          <Field label="Computed ID" value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(/:$/, "")} readOnly onChange={() => undefined} />
-          <ToggleRow label="Enabled" checked={modelModal.form.enabled} onChange={(checked) => setModelModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)} />
+          <div className="entry-grid two-col">
+            <InlineSelectField
+              label="Provider"
+              value={modelModal.form.provider}
+              options={providerIds.length > 0 ? providerIds : ["openrouter"]}
+              getOptionLabel={(value) => {
+                const provider = draft?.providers[value];
+                return provider ? provider.name : value;
+              }}
+              onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
+            />
+            <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
+            <Field label="Model Identifier" value={modelModal.form.model} placeholder="openai/gpt-4.1" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, model: value } } : current)} />
+            <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
+            <Field label="Computed ID" value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(/:$/, "")} readOnly onChange={() => undefined} />
+            <FieldToggle
+              label="Enabled"
+              checked={modelModal.form.enabled}
+              onChange={(checked) => setModelModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
+            />
+          </div>
         </Modal>
       ) : null}
 
@@ -3568,7 +3584,7 @@ function DetachedLogsWindow() {
   );
 }
 
-function SettingsModal({
+function SettingsScene({
   settingsTab,
   setSettingsTab,
   draft,
@@ -3582,17 +3598,13 @@ function SettingsModal({
   registryEntries,
   scenarioPackMutations,
   verifierStatuses,
-  onClose,
+  onBack,
   onSave,
   onReset,
   onCreateProvider,
   onEditProvider,
-  onToggleProvider,
-  onDeleteProvider,
   onCreateModel,
   onEditModel,
-  onToggleModel,
-  onDeleteModel,
   onStartVerifier,
   onStopVerifier,
   onRefreshRegistry,
@@ -3614,17 +3626,13 @@ function SettingsModal({
   registryEntries: ScenarioPackRegistryEntry[];
   scenarioPackMutations: Record<string, ScenarioPackMutationState>;
   verifierStatuses: Record<string, PluginVerifierStatus>;
-  onClose: () => void;
+  onBack: () => void;
   onSave: () => void;
   onReset: () => void;
   onCreateProvider: () => void;
   onEditProvider: (providerId: string) => void;
-  onToggleProvider: (providerId: string) => void;
-  onDeleteProvider: (providerId: string) => void;
   onCreateModel: () => void;
   onEditModel: (index: number) => void;
-  onToggleModel: (index: number) => void;
-  onDeleteModel: (index: number) => void;
   onStartVerifier: (pluginId: string) => Promise<void>;
   onStopVerifier: (pluginId: string) => Promise<void>;
   onRefreshRegistry: () => void;
@@ -3634,81 +3642,65 @@ function SettingsModal({
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
   const themeOptions = ["system", ...availableThemes.map((theme) => theme.id)];
-
   return (
-    <div className="settings-backdrop">
-      <div className="settings-shell">
-        <aside className="settings-nav">
-          <div className="settings-nav-header">
-            <div className="settings-nav-icon">
-              <Settings2 size={16} />
-            </div>
-            <div>
-              <p className="eyebrow">Settings</p>
-              <h2 className="settings-nav-title">Preferences</h2>
-            </div>
+    <section className="settings-scene">
+      <aside className="settings-sidebar">
+        <div className="settings-sidebar-header">
+          <button type="button" onClick={onBack} className="settings-back-button">
+            <ChevronLeft size={16} />
+            Back to Main Scene
+          </button>
+          <div className="settings-sidebar-title-block">
+            <p className="eyebrow">Settings</p>
+            <h2 className="settings-sidebar-title">Preferences</h2>
           </div>
+        </div>
 
-          <div className="settings-tab-list">
-            {SETTINGS_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setSettingsTab(tab.id)}
-                className={`settings-tab${settingsTab === tab.id ? " is-active" : ""}`}
-              >
-                <span className="settings-tab-icon">{tab.icon}</span>
-                <span className="settings-tab-copy">
-                  <span className="settings-tab-title">{tab.label}</span>
-                  <span className="settings-tab-blurb">{tab.blurb}</span>
-                </span>
-              </button>
-            ))}
+        <div className="settings-sidebar-group">
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSettingsTab(tab.id)}
+              className={`settings-sidebar-item${settingsTab === tab.id ? " is-active" : ""}`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {hasUnsavedChanges ? (
+          <div className="settings-sidebar-footer">
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={isBusy}
+              className="ghost-button settings-scene-action"
+            >
+              <RotateCcw size={14} />
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={isBusy}
+              className="primary-button settings-scene-action"
+            >
+              <Save size={14} />
+              Save
+            </button>
           </div>
-        </aside>
+        ) : null}
+      </aside>
 
-        <div className="settings-content">
-          <div className="settings-content-header">
-            <div>
-              <p className="eyebrow">Settings</p>
-              <h3 className="panel-title">{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.label}</h3>
-              <p className="section-copy" style={{ marginTop: "12px", maxWidth: "56ch" }}>{SETTINGS_TABS.find((tab) => tab.id === settingsTab)?.blurb}</p>
-            </div>
-            <div className="settings-actions">
-              <button type="button" onClick={onClose} className="ghost-button">
-                <X size={14} />
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={onReset}
-                disabled={!hasUnsavedChanges || isBusy}
-                className="ghost-button"
-              >
-                <RotateCcw size={14} />
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={onSave}
-                disabled={!hasUnsavedChanges || isBusy}
-                className="primary-button"
-              >
-                <Save size={14} />
-                Save
-              </button>
-            </div>
-          </div>
-
-          <div className="settings-body">
+      <div className="settings-scene-content">
+        <div className="settings-body settings-body-scene">
             {settingsTab === "providers" ? (
               <ProvidersView
                 providers={draft.providers}
                 models={draft.models}
                 onCreate={onCreateProvider}
                 onEdit={onEditProvider}
-                onToggle={onToggleProvider}
-                onDelete={onDeleteProvider}
               />
             ) : null}
 
@@ -3718,8 +3710,6 @@ function SettingsModal({
                 providerIds={providerIds}
                 onCreate={onCreateModel}
                 onEdit={onEditModel}
-                onToggle={onToggleModel}
-                onDelete={onDeleteModel}
               />
             ) : null}
 
@@ -3843,10 +3833,9 @@ function SettingsModal({
                 </Panel>
               </section>
             ) : null}
-          </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -3854,26 +3843,25 @@ function ProvidersView({
   providers,
   models,
   onCreate,
-  onEdit,
-  onToggle,
-  onDelete
+  onEdit
 }: {
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
   onCreate: () => void;
   onEdit: (providerId: string) => void;
-  onToggle: (providerId: string) => void;
-  onDelete: (providerId: string) => void;
 }) {
   const providerIds = Object.keys(providers);
 
   return (
-    <Panel title="Provider Registry" subtitle="Provider endpoints, credentials, and activation state shared across all scenario packs." tone="sky" icon={<Server size={16} />}>
-      <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">Providers are shared across every scenario pack, so users should only need to configure them once.</p>
+    <Panel
+      title="Provider Registry"
+      subtitle="Provider endpoints, credentials, and activation state shared across all scenario packs."
+      tone="sky"
+      icon={<Server size={16} />}
+      actions={
         <button type="button" onClick={onCreate} className="primary-button"><Plus size={14} />Add Provider</button>
-      </div>
-
+      }
+    >
       <div className="settings-list-table-wrap">
         <table className="settings-list-table">
           <thead>
@@ -3883,7 +3871,6 @@ function ProvidersView({
               <th>Status</th>
               <th>Base URL</th>
               <th>Models</th>
-              <th>Credential</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -3896,11 +3883,9 @@ function ProvidersView({
                 <tr key={providerId}>
                   <td>
                     <div className="settings-row-primary">{provider.name}</div>
-                    <div className="settings-row-secondary settings-mono-cell">{providerId}</div>
                   </td>
                   <td>
                     <div className="settings-row-secondary">{providerKindLabel(provider.kind)}</div>
-                    <div className="settings-row-secondary">{providerStatus(provider)}</div>
                   </td>
                   <td>
                     <span className={`status-chip ${provider.enabled ? "status-ready" : "status-inactive"}`}>
@@ -3910,21 +3895,8 @@ function ProvidersView({
                   <td className="settings-mono-cell">{provider.base_url}</td>
                   <td>{linkedModels}</td>
                   <td>
-                    <div className="settings-row-secondary">
-                      {provider.api_key ? "Stored in ~/.benchlocal/config.toml" : "No stored key"}
-                    </div>
-                    <div className="settings-row-secondary">
-                      {provider.api_key_env ? `Env fallback: ${provider.api_key_env}` : "No env fallback"}
-                    </div>
-                  </td>
-                  <td>
                     <div className="settings-table-actions">
                       <button type="button" onClick={() => onEdit(providerId)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
-                      <button type="button" onClick={() => onToggle(providerId)} className="button-warn button-compact">
-                        <Wrench size={14} />
-                        {provider.enabled ? "Deactivate" : "Activate"}
-                      </button>
-                      <button type="button" onClick={() => onDelete(providerId)} className="button-danger button-compact"><Trash2 size={14} />Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -3941,21 +3913,20 @@ function ModelsView({
   models,
   providerIds,
   onCreate,
-  onEdit,
-  onToggle,
-  onDelete
+  onEdit
 }: {
   models: BenchLocalModelConfig[];
   providerIds: string[];
   onCreate: () => void;
   onEdit: (index: number) => void;
-  onToggle: (index: number) => void;
-  onDelete: (index: number) => void;
 }) {
   return (
-    <Panel title="Shared Model Registry" subtitle="Model labels, provider mapping, and activation state available across all scenario packs." tone="orange" icon={<Bot size={16} />}>
-      <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">Each model entry references one provider and becomes available across all scenario packs.</p>
+    <Panel
+      title="Shared Model Registry"
+      subtitle="Model labels, provider mapping, and activation state available across all scenario packs."
+      tone="orange"
+      icon={<Bot size={16} />}
+      actions={
         <button
           type="button"
           onClick={onCreate}
@@ -3965,8 +3936,8 @@ function ModelsView({
           <Plus size={14} />
           Add Model
         </button>
-      </div>
-
+      }
+    >
       <div className="settings-list-table-wrap">
         <table className="settings-list-table">
           <thead>
@@ -3997,11 +3968,6 @@ function ModelsView({
                 <td>
                   <div className="settings-table-actions">
                     <button type="button" onClick={() => onEdit(index)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
-                    <button type="button" onClick={() => onToggle(index)} className="button-warn button-compact">
-                      <Wrench size={14} />
-                      {model.enabled ? "Deactivate" : "Activate"}
-                    </button>
-                    <button type="button" onClick={() => onDelete(index)} className="button-danger button-compact"><Trash2 size={14} />Delete</button>
                   </div>
                 </td>
               </tr>
@@ -4379,12 +4345,14 @@ function Panel({
   subtitle,
   tone,
   icon,
+  actions,
   children
 }: {
   title: string;
   subtitle: string;
   tone: "sky" | "orange" | "slate";
   icon?: ReactNode;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -4397,6 +4365,7 @@ function Panel({
             <p className="section-copy settings-panel-subtitle">{subtitle}</p>
           </div>
         </div>
+        {actions ? <div className="panel-header-actions">{actions}</div> : null}
       </div>
       <div className="settings-panel-body">{children}</div>
     </section>
@@ -4519,6 +4488,7 @@ function Modal({
   onSubmit,
   submitLabel,
   submitTone = "primary",
+  leadingActions,
   children
 }: {
   title: string;
@@ -4527,6 +4497,7 @@ function Modal({
   onSubmit: () => void;
   submitLabel: string;
   submitTone?: "primary" | "danger";
+  leadingActions?: ReactNode;
   children?: ReactNode;
 }) {
   const hasBody = Boolean(children);
@@ -4548,6 +4519,7 @@ function Modal({
         {hasBody ? <div style={{ marginTop: "20px", display: "grid", gap: "16px" }}>{children}</div> : null}
 
         <div className={`modal-actions${hasBody ? "" : " modal-actions-compact"}`}>
+          <div className="modal-actions-leading">{leadingActions}</div>
           <button type="button" onClick={onSubmit} className={submitTone === "danger" ? "button-danger" : "primary-button"}>{submitLabel}</button>
         </div>
       </div>
@@ -4598,6 +4570,26 @@ function ToggleRow({
     <label className="toggle-row">
       <span className="toggle-label">{label}</span>
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+    </label>
+  );
+}
+
+function FieldToggle({
+  label,
+  checked,
+  onChange
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="field-block">
+      <span className="field-label">{label}</span>
+      <span className="field-toggle">
+        <span className="toggle-label">{checked ? "Enabled" : "Disabled"}</span>
+        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+      </span>
     </label>
   );
 }

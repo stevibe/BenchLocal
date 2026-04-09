@@ -5,6 +5,7 @@ import { registerIpcHandlers } from "./ipc";
 import { loadAvailableTheme } from "./themes";
 
 const isDev = !app.isPackaged;
+const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
 
 async function createMainWindow(): Promise<void> {
   const loadState = await loadOrCreateConfig();
@@ -43,6 +44,9 @@ async function createMainWindow(): Promise<void> {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(process.env.VITE_DEV_SERVER_URL);
+    if (shouldOpenDevTools) {
+      window.webContents.openDevTools({ mode: "detach", activate: true });
+    }
     const bridgeStatus = await window.webContents.executeJavaScript(
       "({ hasBenchLocal: typeof window.benchlocal !== 'undefined', keys: window.benchlocal ? Object.keys(window.benchlocal) : [] })"
     );
@@ -51,6 +55,9 @@ async function createMainWindow(): Promise<void> {
   }
 
   await window.loadFile(path.join(__dirname, "../renderer/index.html"));
+  if (shouldOpenDevTools) {
+    window.webContents.openDevTools({ mode: "detach", activate: true });
+  }
 }
 
 app.whenReady().then(async () => {
