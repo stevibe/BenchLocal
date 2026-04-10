@@ -34,7 +34,6 @@ export type BenchLocalVerifierMode = "cloud" | "docker" | "custom_url";
 
 export type BenchLocalVerifierConfig = {
   mode: BenchLocalVerifierMode;
-  port?: number;
   auto_start: boolean;
   custom_url?: string;
   cloud_url?: string;
@@ -114,7 +113,6 @@ const ModelSchema = z.object({
 
 const VerifierSchema = z.object({
   mode: z.enum(["cloud", "docker", "custom_url"]).default("docker"),
-  port: z.number().int().min(1).max(65535).optional(),
   auto_start: z.boolean().default(true),
   custom_url: z.string().trim().min(1).optional(),
   cloud_url: z.string().trim().min(1).optional(),

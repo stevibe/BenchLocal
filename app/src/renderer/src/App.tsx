@@ -202,9 +202,9 @@ const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: strin
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
   { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
   { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
-  { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
   { id: "plugins", label: "Scenario Packs", blurb: "Browse, install, update, and remove official scenario packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
+  { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and profile options.", icon: <FolderCog size={16} /> }
 ];
 
@@ -2380,7 +2380,7 @@ export function App() {
       {modelModal ? (
         <Modal
           title={modelModal.mode === "create" ? "Add Model" : "Edit Model"}
-          subtitle="Models are shared across every installed scenario pack. BenchLocal computes the stable provider:model ID automatically."
+          subtitle="Models are shared across every installed scenario pack."
           onClose={() => setModelModal(null)}
           onSubmit={saveModelModal}
           submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
@@ -3999,157 +3999,139 @@ function ScenarioPackRegistryView({
   onUninstall: (pluginId: string) => void;
 }) {
   const inspectionsById = Object.fromEntries(inspections.map((inspection) => [inspection.id, inspection]));
-  const installedEntries = registryEntries.filter((entry) => draft.plugins[entry.id]);
-  const availableEntries = registryEntries.filter((entry) => !draft.plugins[entry.id]);
   const unlistedInstalledIds = Object.keys(draft.plugins).filter(
     (pluginId) => !registryEntries.some((entry) => entry.id === pluginId)
   );
+  const rows = [
+    ...registryEntries.map((entry) => {
+      const installed = draft.plugins[entry.id];
+      const inspection = inspectionsById[entry.id];
+      const mutation = scenarioPackMutations[entry.id];
+      const updateAvailable =
+        Boolean(installed) &&
+        (installed?.version !== entry.version ||
+          (entry.source.type === "github" ? installed?.ref !== entry.source.tag : false));
+
+      return {
+        id: entry.id,
+        name: entry.name,
+        description: entry.description ?? "No description provided.",
+        version: entry.version,
+        installed: Boolean(installed),
+        status: installed ? inspection?.status ?? "not_installed" : "not_installed",
+        mutation,
+        updateAvailable,
+        isRegistryEntry: true
+      } as const;
+    }),
+    ...unlistedInstalledIds.map((pluginId) => {
+      const installed = draft.plugins[pluginId];
+      const inspection = inspectionsById[pluginId];
+      const mutation = scenarioPackMutations[pluginId];
+
+      return {
+        id: pluginId,
+        name: inspection?.manifest?.name ?? pluginId,
+        description: "Installed, but not listed in the official registry.",
+        version: installed?.version ?? "unknown",
+        installed: true,
+        status: inspection?.status ?? "not_installed",
+        mutation,
+        updateAvailable: false,
+        isRegistryEntry: false
+      } as const;
+    })
+  ];
 
   return (
-    <Panel title="Scenario Pack Registry" subtitle="Install, update, and remove official scenario packs from the BenchLocal registry." tone="sky" icon={<PlugZap size={16} />}>
-      <div className="section-actions" style={{ justifyContent: "space-between" }}>
-        <p className="muted-copy">BenchLocal starts with zero installed packs. Install official scenario packs from the registry, and only installed packs appear in New Tab.</p>
-        <button type="button" onClick={onRefresh} className="ghost-button"><RotateCcw size={14} />Refresh Registry</button>
-      </div>
-
-      <div className="entry-grid" style={{ marginTop: "20px" }}>
-        <div className="entry-card">
-          <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ margin: 0, fontSize: "1rem" }}>Installed</h4>
-              <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{installedEntries.length} installed scenario pack(s)</p>
-            </div>
-          </div>
-
-          <div className="entry-grid" style={{ marginTop: "16px" }}>
-            {installedEntries.length === 0 && unlistedInstalledIds.length === 0 ? (
-              <div className="entry-card">
-                <p className="muted-copy">No scenario packs are installed yet.</p>
-              </div>
+    <Panel
+      title="Scenario Pack Registry"
+      subtitle="Install and remove official scenario packs from the BenchLocal registry."
+      tone="sky"
+      icon={<PlugZap size={16} />}
+      actions={<button type="button" onClick={onRefresh} className="ghost-button"><RotateCcw size={14} />Refresh Registry</button>}
+    >
+      <div className="settings-list-table-wrap">
+        <table className="settings-list-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Description</th>
+              <th>Version</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={5}>
+                  <div className="settings-row-secondary">No scenario packs are available in the registry.</div>
+                </td>
+              </tr>
             ) : (
-              installedEntries.map((entry) => {
-                const inspection = inspectionsById[entry.id];
-                const installed = draft.plugins[entry.id];
-                const mutation = scenarioPackMutations[entry.id];
-                const isMutating = Boolean(mutation);
-                const updateAvailable =
-                  installed?.version !== entry.version ||
-                  (entry.source.type === "github" ? installed?.ref !== entry.source.tag : false);
-
+              rows.map((row) => {
+                const isMutating = Boolean(row.mutation);
                 return (
-                  <div key={entry.id} className="entry-card">
-                    <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
-                        <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? entry.id}</p>
-                        <p className="settings-row-secondary settings-mono-cell" style={{ marginTop: "8px" }}>{entry.id}</p>
+                  <tr key={row.id}>
+                    <td>
+                      <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
+                    </td>
+                    <td>{row.description}</td>
+                    <td>
+                      <div className="settings-table-actions settings-table-actions-inline">
+                        <span>v{row.version}</span>
+                        {row.installed && row.isRegistryEntry && row.updateAvailable ? (
+                          <button
+                            type="button"
+                            onClick={() => onUpdate(row.id)}
+                            className="ghost-button ghost-button-compact"
+                            disabled={isMutating}
+                          >
+                            {row.mutation?.action === "update" ? <LoaderCircle size={14} className="spinner" /> : <RotateCcw size={14} />}
+                            {row.mutation?.action === "update" ? scenarioPackMutationLabel(row.mutation) : "Upgrade"}
+                          </button>
+                        ) : null}
                       </div>
-                      <div className="settings-table-actions">
-                        <span className="status-chip status-idle">v{installed?.version ?? entry.version}</span>
-                        <span className={`status-chip ${statusClasses(inspection?.status ?? "not_installed")}`}>
-                          {(inspection?.status ?? "not_installed").replaceAll("_", " ")}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
-                      <button type="button" onClick={() => onUpdate(entry.id)} className="ghost-button ghost-button-compact" disabled={!updateAvailable || isMutating}>
-                        {mutation?.action === "update" ? <LoaderCircle size={14} className="spinner" /> : <RotateCcw size={14} />}
-                        {mutation?.action === "update" ? scenarioPackMutationLabel(mutation) : updateAvailable ? "Update" : "Up to date"}
-                      </button>
-                      <button type="button" onClick={() => onUninstall(entry.id)} className="ghost-button ghost-button-compact" disabled={isMutating}>
-                        {mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
-                        {mutation?.action === "uninstall" ? scenarioPackMutationLabel(mutation) : "Delete"}
-                      </button>
-                    </div>
-
-                    {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
-                    {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
-                  </div>
-                );
-              })
-            )}
-            {unlistedInstalledIds.map((pluginId) => {
-              const inspection = inspectionsById[pluginId];
-              const installed = draft.plugins[pluginId];
-              const mutation = scenarioPackMutations[pluginId];
-
-              return (
-                <div key={pluginId} className="entry-card">
-                  <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: "1rem" }}>{inspection?.manifest?.name ?? pluginId}</h4>
-                      <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>Installed, but not listed in the official registry.</p>
-                      <p className="settings-row-secondary settings-mono-cell" style={{ marginTop: "8px" }}>{pluginId}</p>
-                    </div>
-                    <div className="settings-table-actions">
-                      {installed?.version ? <span className="status-chip status-idle">v{installed.version}</span> : null}
-                      <span className={`status-chip ${statusClasses(inspection?.status ?? "not_installed")}`}>
-                        {(inspection?.status ?? "not_installed").replaceAll("_", " ")}
+                    </td>
+                    <td>
+                      <span className={`status-chip ${row.installed ? statusClasses(row.status as PluginInspection["status"]) : "status-idle"}`}>
+                        {row.mutation ? scenarioPackMutationLabel(row.mutation) : row.installed ? row.status.replaceAll("_", " ") : "available"}
                       </span>
-                    </div>
-                  </div>
-
-                  <div className="settings-table-actions" style={{ justifyContent: "flex-end", marginTop: "16px" }}>
-                    <button type="button" onClick={() => onUninstall(pluginId)} className="ghost-button ghost-button-compact" disabled={Boolean(mutation)}>
-                      {mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
-                      {mutation?.action === "uninstall" ? scenarioPackMutationLabel(mutation) : "Delete"}
-                    </button>
-                  </div>
-
-                  {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
-                  {inspection?.error ? <div className="banner banner-danger">{inspection.error}</div> : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="entry-card">
-          <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h4 style={{ margin: 0, fontSize: "1rem" }}>Available</h4>
-              <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{availableEntries.length} available from the official registry</p>
-            </div>
-          </div>
-
-          <div className="entry-grid" style={{ marginTop: "16px" }}>
-            {availableEntries.length === 0 ? (
-              <div className="entry-card">
-                <p className="muted-copy">Everything in the registry is already installed.</p>
-              </div>
-            ) : (
-              availableEntries.map((entry) => {
-                const mutation = scenarioPackMutations[entry.id];
-
-                return (
-                  <div key={entry.id} className="entry-card">
-                    <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: "1rem" }}>{entry.name}</h4>
-                        <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{entry.description ?? "No description provided."}</p>
-                        <div className="settings-table-actions" style={{ marginTop: "10px", justifyContent: "flex-start" }}>
-                          <span className="status-chip status-idle">v{entry.version}</span>
-                          {entry.author ? <span className="status-chip status-idle">{entry.author}</span> : null}
-                          <span className="status-chip status-idle">{entry.scenarioCount ?? "?"} tests</span>
-                          <span className="status-chip status-idle">
-                            {entry.capabilities?.verification ? "Requires verifier" : "No extra dependencies"}
-                          </span>
-                        </div>
+                    </td>
+                    <td>
+                      <div className="settings-table-actions">
+                        {row.installed ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => onUninstall(row.id)}
+                              className="ghost-button ghost-button-compact"
+                              disabled={isMutating}
+                            >
+                              {row.mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
+                              {row.mutation?.action === "uninstall" ? scenarioPackMutationLabel(row.mutation) : "Uninstall"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onInstall(row.id)}
+                            className="primary-button"
+                            disabled={isMutating}
+                          >
+                            {row.mutation?.action === "install" ? <LoaderCircle size={14} className="spinner" /> : <Plus size={14} />}
+                            {row.mutation?.action === "install" ? scenarioPackMutationLabel(row.mutation) : "Install"}
+                          </button>
+                        )}
                       </div>
-                      <button type="button" onClick={() => onInstall(entry.id)} className="primary-button" disabled={Boolean(mutation)}>
-                        {mutation?.action === "install" ? <LoaderCircle size={14} className="spinner" /> : <Plus size={14} />}
-                        {mutation?.action === "install" ? scenarioPackMutationLabel(mutation) : "Install"}
-                      </button>
-                    </div>
-
-                    {mutation ? <div className="banner banner-info">{mutation.message}</div> : null}
-                  </div>
+                    </td>
+                  </tr>
                 );
               })
             )}
-          </div>
-        </div>
+          </tbody>
+        </table>
       </div>
     </Panel>
   );
@@ -4185,156 +4167,127 @@ function VerificationView({
     return Boolean(status && status.verifiers.length > 0);
   });
 
+  const rows = verificationEntries.flatMap(([pluginId, plugin]) => {
+    const status = statuses[pluginId];
+    const inspectionName = status?.pluginName ?? pluginId;
+
+    return Object.entries(plugin.verifiers ?? {}).map(([verifierId, verifier]) => {
+      const runtime = status?.verifiers.find((entry) => entry.id === verifierId);
+      return {
+        pluginId,
+        pluginName: inspectionName,
+        verifierId,
+        verifier,
+        runtime,
+        docker: status?.docker
+      };
+    });
+  });
+
   return (
-    <Panel title="Verification Runtimes" subtitle="Choose how required verifiers run: BenchLocal Cloud, Local Docker, or a custom URL." tone="orange" icon={<Wrench size={16} />}>
-      <div className="entry-grid">
-        {verificationEntries.map(([pluginId, plugin]) => {
-          const verifiers = plugin.verifiers ?? {};
-          const status = statuses[pluginId];
-          const hasRunningVerifier = status?.verifiers.some((entry) => entry.status === "running") ?? false;
-          const hasMissingDependency = status?.verifiers.some((entry) => entry.status === "missing_dependency") ?? false;
-
-          return (
-            <div key={pluginId} className="entry-card">
-              <div className="section-actions" style={{ justifyContent: "space-between" }}>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: "1rem" }}>{pluginId}</h4>
-                  <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.92rem" }}>{Object.keys(verifiers).length} configured verifier runtime(s)</p>
-                </div>
-                <div className="settings-table-actions">
-                  <span className={`status-chip ${
-                    hasRunningVerifier
-                      ? "status-ready"
-                      : hasMissingDependency
-                        ? "status-not-installed"
-                        : "status-idle"
-                  }`}>
-                    {hasRunningVerifier ? "running" : hasMissingDependency ? "dependency missing" : "stopped"}
-                  </span>
-                  {hasRunningVerifier ? (
-                    <button type="button" onClick={() => onStop(pluginId)} className="ghost-button ghost-button-compact"><Square size={14} />Stop</button>
-                  ) : (
-                    <button type="button" onClick={() => onStart(pluginId)} className="ghost-button ghost-button-compact"><Play size={14} />Start</button>
-                  )}
-                </div>
-              </div>
-
-              {status ? (
-                <div className="banner banner-neutral banner-row">
-                  <span>Docker: {status.docker.available ? status.docker.details ?? "available" : "not detected"}</span>
-                  {status.docker.details && !status.docker.available ? <span>{status.docker.details}</span> : null}
-                </div>
-              ) : null}
-
-              <div className="entry-grid" style={{ marginTop: "16px" }}>
-                {Object.entries(verifiers).map(([verifierId, verifier]) => {
-                  const runtime = status?.verifiers.find((entry) => entry.id === verifierId);
-
-                  return (
-                    <div key={verifierId} className="entry-card">
-                      <div className="section-actions" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                          <h5 style={{ margin: 0, fontSize: "0.96rem" }}>{verifierId}</h5>
-                          <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.88rem" }}>
-                            {runtime?.url ?? "No verifier endpoint configured"}
-                          </p>
-                        </div>
-                        <div className="settings-table-actions">
-                          <span className="status-chip status-idle">{verifierModeLabel(verifier.mode)}</span>
-                          {runtime ? (
-                            <span className={`status-chip ${
-                              runtime.status === "running"
-                                ? "status-ready"
-                                : runtime.status === "missing_dependency"
-                                  ? "status-not-installed"
-                                  : runtime.status === "failed"
-                                    ? "status-danger"
-                                    : "status-idle"
-                            }`}>
-                              {runtime.status.replaceAll("_", " ")}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="entry-grid four-col" style={{ marginTop: "16px" }}>
-                        <Field label="Verifier ID" value={verifierId} readOnly onChange={() => undefined} />
-                        <InlineSelectField
-                          label="Mode"
-                          value={verifier.mode}
-                          options={["docker", "cloud", "custom_url"]}
-                          getOptionLabel={(value) => verifierModeLabel(value as BenchLocalVerifierConfig["mode"])}
-                          onChange={(value) =>
-                            onUpdate(pluginId, verifierId, (current) => ({
-                              ...current,
-                              mode: value as BenchLocalVerifierConfig["mode"]
-                            }))
-                          }
-                        />
-                        <ToggleRow
-                          label="Auto Start"
-                          checked={verifier.auto_start}
-                          onChange={(checked) =>
-                            onUpdate(pluginId, verifierId, (current) => ({
-                              ...current,
-                              auto_start: checked
-                            }))
-                          }
-                        />
-                        {verifier.mode === "docker" ? (
-                          <Field
-                            label="Local Port"
-                            value="Assigned automatically by BenchLocal at startup"
-                            readOnly
-                            onChange={() => undefined}
-                          />
-                        ) : null}
-                        <Field
-                          label="Cloud URL"
-                          value={verifier.cloud_url ?? ""}
-                          placeholder="https://verify.example.com"
-                          onChange={(value) =>
-                            onUpdate(pluginId, verifierId, (current) => ({
-                              ...current,
-                              cloud_url: value || undefined
-                            }))
-                          }
-                        />
-                        <Field
-                          label="Custom URL"
-                          value={verifier.custom_url ?? ""}
-                          placeholder="http://127.0.0.1:4010"
-                          onChange={(value) =>
-                            onUpdate(pluginId, verifierId, (current) => ({
-                              ...current,
-                              custom_url: value || undefined
-                            }))
-                          }
-                        />
-                        <Field
-                          label="Docker Image Override"
-                          value={verifier.docker_image ?? ""}
-                          placeholder="benchlocal/bugfind-verifier:latest"
-                          onChange={(value) =>
-                            onUpdate(pluginId, verifierId, (current) => ({
-                              ...current,
-                              docker_image: value || undefined
-                            }))
-                          }
-                        />
-                      </div>
+    <Panel
+      title="Verification Runtimes"
+      subtitle="BenchLocal manages required verifier runtimes automatically through Local Docker."
+      tone="orange"
+      icon={<Wrench size={16} />}
+    >
+      <div className="settings-list-table-wrap">
+        <table className="settings-list-table">
+          <thead>
+            <tr>
+              <th>Scenario Pack</th>
+              <th>Mode</th>
+              <th>Status</th>
+              <th>Endpoint</th>
+              <th>Auto Start</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  <div className="settings-row-secondary">No installed scenario packs currently require a verifier.</div>
+                </td>
+              </tr>
+            ) : (
+              rows.map(({ pluginId, pluginName, verifierId, verifier, runtime, docker }) => (
+                <tr key={`${pluginId}:${verifierId}`}>
+                  <td>
+                    <div className="settings-row-primary settings-nowrap-cell">{pluginName}</div>
+                  </td>
+                  <td>
+                    <InlineSelectField
+                      label=""
+                      value={verifier.mode === "docker" ? verifier.mode : "docker"}
+                      options={[
+                        { value: "docker", label: verifierModeLabel("docker") },
+                        { value: "cloud", label: `${verifierModeLabel("cloud")} (Soon)`, disabled: true },
+                        { value: "custom_url", label: `${verifierModeLabel("custom_url")} (Soon)`, disabled: true }
+                      ]}
+                      onChange={(value) =>
+                        onUpdate(pluginId, verifierId, (current) => ({
+                          ...current,
+                          mode: value as BenchLocalVerifierConfig["mode"]
+                        }))
+                      }
+                    />
+                  </td>
+                  <td>
+                    <span className={`status-chip ${
+                      runtime?.status === "running"
+                        ? "status-ready"
+                        : runtime?.status === "missing_dependency"
+                          ? "status-not-installed"
+                          : runtime?.status === "failed"
+                            ? "status-danger"
+                            : "status-idle"
+                    }`}>
+                      {(runtime?.status ?? "stopped").replaceAll("_", " ")}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="settings-row-secondary">
+                      {runtime?.url ?? "Managed by BenchLocal"}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-        {verificationEntries.length === 0 ? (
-          <div className="entry-card">
-            <p className="muted-copy">No installed scenario packs currently require a verifier.</p>
-          </div>
-        ) : null}
+                    <div className="settings-row-secondary">
+                      Docker: {docker?.available ? docker.details ?? "available" : "not detected"}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="settings-table-checkbox-cell">
+                      <input
+                        type="checkbox"
+                        checked={verifier.auto_start}
+                        onChange={(event) =>
+                          onUpdate(pluginId, verifierId, (current) => ({
+                            ...current,
+                            auto_start: event.target.checked
+                          }))
+                        }
+                      />
+                    </div>
+                  </td>
+                  <td>
+                    <div className="settings-table-actions">
+                      {runtime?.status === "running" ? (
+                        <button type="button" onClick={() => onStop(pluginId)} className="ghost-button ghost-button-compact">
+                          <Square size={14} />
+                          Stop
+                        </button>
+                      ) : (
+                        <button type="button" onClick={() => onStart(pluginId)} className="ghost-button ghost-button-compact">
+                          <Play size={14} />
+                          Start
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </Panel>
   );
@@ -4603,23 +4556,29 @@ function InlineSelectField({
 }: {
   label: string;
   value: string;
-  options: string[];
+  options: Array<string | { value: string; label?: string; disabled?: boolean }>;
   getOptionLabel?: (value: string) => string;
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="field-block">
-      <span className="field-label">{label}</span>
+    <label className={`field-block${label ? "" : " field-block-no-label"}`}>
+      {label ? <span className="field-label">{label}</span> : null}
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="config-input"
       >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {getOptionLabel ? getOptionLabel(option) : option}
-          </option>
-        ))}
+        {options.map((option) => {
+          const value = typeof option === "string" ? option : option.value;
+          const label = typeof option === "string" ? (getOptionLabel ? getOptionLabel(option) : option) : option.label ?? option.value;
+          const disabled = typeof option === "string" ? false : Boolean(option.disabled);
+
+          return (
+            <option key={value} value={value} disabled={disabled}>
+              {label}
+            </option>
+          );
+        })}
       </select>
     </label>
   );

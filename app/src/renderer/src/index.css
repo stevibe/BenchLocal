@@ -2234,6 +2234,10 @@ pre {
   margin-top: 0;
 }
 
+.field-block-no-label .config-input {
+  margin-top: 0;
+}
+
 .config-input {
   width: 100%;
   height: 40px;
@@ -2444,6 +2448,10 @@ select.config-input {
   line-height: 1.45;
 }
 
+.settings-nowrap-cell {
+  white-space: nowrap;
+}
+
 .settings-mono-cell {
   font-family: var(--font-mono);
   font-size: 0.79rem;
@@ -2454,6 +2462,17 @@ select.config-input {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.settings-table-actions-inline {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.settings-table-checkbox-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ghost-button-compact,

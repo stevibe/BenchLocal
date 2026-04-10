@@ -1068,7 +1068,6 @@ function bootstrapVerifierConfig(spec: VerifierSpec, existing?: BenchLocalVerifi
   return {
     mode: existing?.mode ?? spec.defaultMode,
     auto_start: existing?.auto_start ?? true,
-    port: existing?.port,
     custom_url: existing?.custom_url ?? spec.customUrl?.defaultUrl,
     cloud_url: existing?.cloud_url ?? spec.cloud?.baseUrl,
     docker_image: existing?.docker_image ?? spec.docker?.image
