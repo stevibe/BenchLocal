@@ -12,6 +12,7 @@ import {
   LayoutList,
   Logs,
   Pencil,
+  Palette,
   Play,
   PlugZap,
   Plus,
@@ -205,7 +206,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "plugins", label: "Scenario Packs", blurb: "Browse, install, update, and remove official scenario packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
   { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
-  { id: "advanced", label: "Advanced", blurb: "Storage paths and profile options.", icon: <FolderCog size={16} /> }
+  { id: "advanced", label: "Advanced", blurb: "Storage paths and registry options.", icon: <FolderCog size={16} /> }
 ];
 
 function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
@@ -318,10 +319,6 @@ function createTabTitle(pluginId: string, inspections: PluginInspection[]): stri
   return inspections.find((inspection) => inspection.id === pluginId)?.manifest?.name ?? pluginId;
 }
 
-function createDefaultTabModelSelections(models: BenchLocalModelConfig[]): BenchLocalWorkspaceTabModelSelection[] {
-  return models.filter((model) => model.enabled).map((model) => ({ modelId: model.id }));
-}
-
 function normalizeTabModelSelections(
   selections: BenchLocalWorkspaceTabModelSelection[]
 ): BenchLocalWorkspaceTabModelSelection[] {
@@ -359,10 +356,9 @@ function getTableScrollbarThumbWidth(metrics: {
 
 function resolveTabModels(tab: BenchLocalWorkspaceTab | null, models: BenchLocalModelConfig[]): ResolvedTabModel[] {
   const enabledModels = models.filter((model) => model.enabled);
-  const selectionSource = tab?.modelSelections?.length ? tab.modelSelections : createDefaultTabModelSelections(enabledModels);
   const modelMap = new Map(enabledModels.map((model) => [model.id, model]));
 
-  return normalizeTabModelSelections(selectionSource).reduce<ResolvedTabModel[]>((resolved, selection) => {
+  return normalizeTabModelSelections(tab?.modelSelections ?? []).reduce<ResolvedTabModel[]>((resolved, selection) => {
       const model = modelMap.get(selection.modelId);
 
       if (!model) {
@@ -385,10 +381,7 @@ function upsertTabModelAlias(
   modelId: string,
   alias: string
 ): BenchLocalWorkspaceTabModelSelection[] {
-  const enabledModels = models.filter((model) => model.enabled);
-  const normalized = normalizeTabModelSelections(
-    tab.modelSelections.length > 0 ? tab.modelSelections : createDefaultTabModelSelections(enabledModels)
-  );
+  const normalized = normalizeTabModelSelections(tab.modelSelections);
   const nextAlias = alias.trim() || undefined;
   let found = false;
 
@@ -473,6 +466,7 @@ export function App() {
   );
   const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
@@ -500,8 +494,14 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [scenarioPackMutations, setScenarioPackMutations] = useState<Record<string, ScenarioPackMutationState>>({});
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
 
   const providerIds = useMemo(() => Object.keys(draft?.providers ?? {}), [draft]);
+  const themeOptions = useMemo(() => ["system", ...availableThemes.map((theme) => theme.id)], [availableThemes]);
+  const currentThemeLabel = useMemo(
+    () => resolveThemeLabel(draft?.ui.theme ?? "system", availableThemes, systemPrefersDark),
+    [draft?.ui.theme, availableThemes, systemPrefersDark]
+  );
   const readyInspections = useMemo(() => pluginInspections.filter((inspection) => inspection.status === "ready"), [pluginInspections]);
   const activeWorkspace = useMemo<BenchLocalWorkspace | null>(
     () => (workspaceState?.activeWorkspaceId ? workspaceState.workspaces[workspaceState.activeWorkspaceId] ?? null : null),
@@ -877,6 +877,33 @@ export function App() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [workspaceContextMenu]);
+
+  useEffect(() => {
+    if (!themeMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!themeMenuRef.current?.contains(target)) {
+        setThemeMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setThemeMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [themeMenuOpen]);
 
   useEffect(() => {
     const updateOverflow = () => {
@@ -1262,7 +1289,7 @@ export function App() {
         title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
         pluginId: defaultPluginId,
         focusedScenarioId: null,
-        modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
+        modelSelections: [],
         executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
@@ -1329,7 +1356,7 @@ export function App() {
           title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
           pluginId: defaultPluginId,
           focusedScenarioId: null,
-          modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
+          modelSelections: [],
           executionMode: "parallel_by_model",
           createdAt: now,
           updatedAt: now
@@ -1461,7 +1488,7 @@ export function App() {
         title: createTabTitle(pluginId, pluginInspections),
         pluginId,
         focusedScenarioId: null,
-        modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
+        modelSelections: [],
         executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
@@ -1552,7 +1579,7 @@ export function App() {
           title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
           pluginId: defaultPluginId,
           focusedScenarioId: null,
-          modelSelections: createDefaultTabModelSelections(draft?.models ?? []),
+          modelSelections: [],
           executionMode: "parallel_by_model",
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
@@ -1835,6 +1862,47 @@ export function App() {
                     Settings
                   </button>
                 </div>
+              ) : draft ? (
+                <div className="toolbar-cluster">
+                  <div ref={themeMenuRef} className="settings-theme-dropdown">
+                    <button
+                      type="button"
+                      className="ghost-button run-mode-button settings-theme-button"
+                      onClick={() => setThemeMenuOpen((current) => !current)}
+                      aria-haspopup="menu"
+                      aria-expanded={themeMenuOpen}
+                    >
+                      <Palette size={15} />
+                      <span className="run-mode-button-copy">
+                        <span className="run-mode-button-label">Theme</span>
+                        <span className="run-mode-button-value">{currentThemeLabel}</span>
+                      </span>
+                      <ChevronDown size={14} />
+                    </button>
+                    {themeMenuOpen ? (
+                      <div className="run-mode-menu settings-theme-menu" role="menu">
+                        {themeOptions.map((themeId) => (
+                          <button
+                            key={themeId}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={draft.ui.theme === themeId}
+                            className={`run-mode-menu-item${draft.ui.theme === themeId ? " is-active" : ""}`}
+                            onClick={() => {
+                              updateDraft((current) => {
+                                current.ui.theme = themeId;
+                                return current;
+                              });
+                              setThemeMenuOpen(false);
+                            }}
+                          >
+                            {resolveThemeLabel(themeId, availableThemes, systemPrefersDark)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
             </div>
           </header>
@@ -1845,8 +1913,6 @@ export function App() {
               setSettingsTab={setSettingsTab}
               draft={draft}
               loadState={loadState}
-              availableThemes={availableThemes}
-              systemPrefersDark={systemPrefersDark}
               hasUnsavedChanges={hasUnsavedChanges}
               isBusy={isBusy}
               providerIds={providerIds}
@@ -2148,10 +2214,7 @@ export function App() {
 	                            onEditModels={() =>
 	                              setTabModelsModal({
 	                                tabId: activeTab.id,
-	                                selections:
-	                                  activeTab.modelSelections.length > 0
-	                                    ? structuredClone(activeTab.modelSelections)
-	                                    : createDefaultTabModelSelections(draft?.models ?? [])
+	                                selections: structuredClone(activeTab.modelSelections)
 	                              })
 	                            }
 	                            executionMode={activeTab.executionMode}
@@ -2425,6 +2488,7 @@ export function App() {
 
       {tabModelsModal && draft ? (
         <TabModelsModal
+          providers={draft.providers}
           models={draft.models}
           selections={tabModelsModal.selections}
           onClose={() => setTabModelsModal(null)}
@@ -2656,7 +2720,7 @@ function ScenarioPackPickerTrigger({
 
       {open ? (
         <div className="dialog-backdrop">
-          <div className="dialog-shell scenario-pack-picker-shell">
+          <div className="dialog-shell dialog-shell-wide scenario-pack-picker-shell">
             <div className="dialog-header">
               <div>
                 <h3 className="dialog-title">New Tab</h3>
@@ -2714,12 +2778,15 @@ function ScenarioPackPickerTrigger({
                       <p className="section-copy" style={{ marginTop: "10px" }}>
                         {selectedInspection.manifest?.description ?? "No description provided."}
                       </p>
-                      <p className="scenario-pack-author-line">
-                        By {selectedInspection.manifest?.author ?? "Unknown"}
-                      </p>
                     </div>
 
                     <div className="scenario-pack-picker-meta">
+                      <div className="scenario-pack-stat-card">
+                        <span className="scenario-pack-stat-label">Author</span>
+                        <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                          {selectedInspection.manifest?.author ?? "Unknown"}
+                        </span>
+                      </div>
                       <div className="scenario-pack-stat-card">
                         <span className="scenario-pack-stat-label">Tests</span>
                         <span className="scenario-pack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
@@ -3167,7 +3234,13 @@ function BenchmarkSection({
 
           <section className="table-card table-card-document">
             {selectedModels.length === 0 ? (
-              <p className="muted-copy" style={{ padding: "0 16px 16px" }}>No models are selected for this tab. Click Edit Models and choose at least one enabled model.</p>
+              <div className="table-empty-callout">
+                <p className="muted-copy">No models are selected for this tab.</p>
+                <button type="button" onClick={onEditModels} className="ghost-button ghost-button-compact">
+                  <Bot size={14} />
+                  Add Models
+                </button>
+              </div>
             ) : (
               <>
                 <div ref={tableScrollViewportRef} className="table-scroll">
@@ -3308,29 +3381,56 @@ function BenchmarkSection({
 }
 
 function TabModelsModal({
+  providers,
   models,
   selections,
   onClose,
   onChange,
   onSubmit
 }: {
+  providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
   selections: BenchLocalWorkspaceTabModelSelection[];
   onClose: () => void;
   onChange: (selections: BenchLocalWorkspaceTabModelSelection[]) => void;
   onSubmit: () => void;
 }) {
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("all");
   const enabledModels = models.filter((model) => model.enabled);
   const normalizedSelections = normalizeTabModelSelections(selections);
   const selectionMap = new Map(normalizedSelections.map((selection) => [selection.modelId, selection]));
   const availableIds = new Set(enabledModels.map((model) => model.id));
   const orderedSelectedIds = normalizedSelections.map((selection) => selection.modelId).filter((modelId) => availableIds.has(modelId));
   const selectedIdSet = new Set(orderedSelectedIds);
-  const remainingModels = enabledModels.filter((model) => !selectedIdSet.has(model.id));
-  const orderedModels = [
-    ...orderedSelectedIds.map((modelId) => enabledModels.find((model) => model.id === modelId)).filter((model): model is BenchLocalModelConfig => Boolean(model)),
-    ...remainingModels
+  const providerOptions = [
+    { value: "all", label: "All Providers" },
+    ...Array.from(new Set(enabledModels.map((model) => model.provider)))
+      .sort((left, right) => (providers[left]?.name ?? left).localeCompare(providers[right]?.name ?? right))
+      .map((providerId) => ({
+        value: providerId,
+        label: providers[providerId]?.name ?? providerId
+      }))
   ];
+  const groupOptions = [
+    { value: "all", label: "All Groups" },
+    ...Array.from(new Set(enabledModels.map((model) => model.group.trim() || "__ungrouped__")))
+      .sort((left, right) => left.localeCompare(right))
+      .map((group) => ({
+        value: group,
+        label: group === "__ungrouped__" ? "Ungrouped" : group
+      }))
+  ];
+  const filteredAvailableModels = enabledModels.filter((model) => {
+    const normalizedGroup = model.group.trim() || "__ungrouped__";
+    return (
+      (providerFilter === "all" || model.provider === providerFilter) &&
+      (groupFilter === "all" || normalizedGroup === groupFilter)
+    );
+  });
+  const selectedModels = orderedSelectedIds
+    .map((modelId) => enabledModels.find((model) => model.id === modelId))
+    .filter((model): model is BenchLocalModelConfig => Boolean(model));
 
   const toggleModel = (modelId: string, enabled: boolean) => {
     if (enabled) {
@@ -3367,6 +3467,18 @@ function TabModelsModal({
     onChange(next);
   };
 
+  useEffect(() => {
+    if (providerFilter !== "all" && !providerOptions.some((option) => option.value === providerFilter)) {
+      setProviderFilter("all");
+    }
+  }, [providerFilter, providerOptions]);
+
+  useEffect(() => {
+    if (groupFilter !== "all" && !groupOptions.some((option) => option.value === groupFilter)) {
+      setGroupFilter("all");
+    }
+  }, [groupFilter, groupOptions]);
+
   return (
     <Modal
       title="Edit Tab Models"
@@ -3374,62 +3486,122 @@ function TabModelsModal({
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Models"
+      size="wide"
     >
-      <div className="tab-models-list">
-        {orderedModels.map((model) => {
-          const selection = selectionMap.get(model.id);
-          const isSelected = Boolean(selection);
+      <div className="tab-models-layout">
+        <section className="tab-models-column">
+          <div className="tab-models-column-header">
+            <h4 className="tab-models-column-title">Available Models</h4>
+            <span className="status-chip status-idle">{filteredAvailableModels.length}</span>
+          </div>
+          <div className="entry-grid two-col tab-models-filters">
+            <InlineSelectField
+              label="Provider Filter"
+              value={providerFilter}
+              options={providerOptions}
+              onChange={setProviderFilter}
+            />
+            <InlineSelectField
+              label="Group Filter"
+              value={groupFilter}
+              options={groupOptions}
+              onChange={setGroupFilter}
+            />
+          </div>
+          <div className="tab-models-list">
+            {filteredAvailableModels.length === 0 ? (
+              <div className="tab-models-empty">
+                <p className="muted-copy">No models match the current filters.</p>
+              </div>
+            ) : filteredAvailableModels.map((model) => {
+              const isSelected = selectedIdSet.has(model.id);
 
-          return (
-            <div
-              key={model.id}
-              className={`tab-model-row${isSelected ? " is-selected" : ""}`}
-              draggable={isSelected}
-              onDragStart={(event) => {
-                event.dataTransfer.setData("text/plain", model.id);
-                event.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(event) => {
-                if (isSelected) {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                }
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                moveSelection(event.dataTransfer.getData("text/plain"), model.id);
-              }}
-            >
-              <label className="tab-model-toggle">
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={(event) => toggleModel(model.id, event.target.checked)}
-                  className="h-4 w-4 accent-[var(--accent)]"
-                />
-                <span className="tab-model-toggle-copy">
-                  <span className="settings-row-primary">{model.label}</span>
-                  <span className="settings-row-secondary settings-mono-cell">{model.id}</span>
-                </span>
-              </label>
+              return (
+              <div key={model.id} className="tab-model-row">
+                <label className="tab-model-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={(event) => toggleModel(model.id, event.target.checked)}
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                  <span className="tab-model-toggle-copy">
+                    <span className="settings-row-primary">{model.label}</span>
+                    <span className="settings-row-secondary settings-mono-cell">{providers[model.provider]?.name ?? model.provider}</span>
+                    <span className="settings-row-secondary settings-mono-cell">{model.id}</span>
+                  </span>
+                </label>
 
-              <div className="tab-model-row-meta">
-                <span className="status-chip status-idle">{model.group}</span>
-                <input
-                  type="text"
-                  value={selection?.alias ?? ""}
-                  disabled={!isSelected}
-                  placeholder="Optional alias"
-                  onChange={(event) => updateAlias(model.id, event.target.value)}
-                  className="config-input tab-model-alias-input"
-                />
-                <div className={`tab-model-drag-handle${isSelected ? "" : " is-disabled"}`} title="Drag to reorder selected models">
-                  <GripVertical size={16} />
+                <div className="tab-model-row-meta">
+                  <span className="status-chip status-idle">{model.group.trim() || "Ungrouped"}</span>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+            })}
+          </div>
+        </section>
+
+        <section className="tab-models-column">
+          <div className="tab-models-column-header">
+            <h4 className="tab-models-column-title">Selected Models</h4>
+            <span className="status-chip status-preview">{selectedModels.length}</span>
+          </div>
+          <div className="tab-models-list">
+            {selectedModels.length === 0 ? (
+              <div className="tab-models-empty">
+                <p className="muted-copy">Select models from the left to add them to this tab.</p>
+              </div>
+            ) : selectedModels.map((model) => {
+              const selection = selectionMap.get(model.id);
+
+              return (
+                <div
+                  key={model.id}
+                  className="tab-model-row is-selected"
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData("text/plain", model.id);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    moveSelection(event.dataTransfer.getData("text/plain"), model.id);
+                  }}
+                >
+                  <label className="tab-model-toggle">
+                    <input
+                      type="checkbox"
+                      checked
+                      onChange={(event) => toggleModel(model.id, event.target.checked)}
+                      className="h-4 w-4 accent-[var(--accent)]"
+                    />
+                    <span className="tab-model-toggle-copy">
+                      <span className="settings-row-primary">{model.label}</span>
+                      <span className="settings-row-secondary settings-mono-cell">{model.id}</span>
+                    </span>
+                  </label>
+
+                  <div className="tab-model-row-meta">
+                    <input
+                      type="text"
+                      value={selection?.alias ?? ""}
+                      placeholder="Optional alias"
+                      onChange={(event) => updateAlias(model.id, event.target.value)}
+                      className="config-input tab-model-alias-input"
+                    />
+                    <div className="tab-model-drag-handle" title="Drag to reorder selected models">
+                      <GripVertical size={16} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </Modal>
   );
@@ -3589,8 +3761,6 @@ function SettingsScene({
   setSettingsTab,
   draft,
   loadState,
-  availableThemes,
-  systemPrefersDark,
   hasUnsavedChanges,
   isBusy,
   providerIds,
@@ -3617,8 +3787,6 @@ function SettingsScene({
   setSettingsTab: (tab: SettingsTab) => void;
   draft: BenchLocalConfig;
   loadState: LoadState | null;
-  availableThemes: BenchLocalThemeDescriptor[];
-  systemPrefersDark: boolean;
   hasUnsavedChanges: boolean;
   isBusy: boolean;
   providerIds: string[];
@@ -3641,7 +3809,6 @@ function SettingsScene({
   onUninstallScenarioPack: (pluginId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
-  const themeOptions = ["system", ...availableThemes.map((theme) => theme.id)];
   return (
     <section className="settings-scene">
       <aside className="settings-sidebar">
@@ -3810,25 +3977,17 @@ function SettingsScene({
                     current.cache_dir = value;
                     return current;
                   })} />
+                  <div className="helper-copy">
+                    <p>Durable settings live in <strong>config.toml</strong>.</p>
+                  </div>
                 </Panel>
-                <Panel title="Profile" subtitle="Desktop state and app-level preferences." tone="orange" icon={<Settings2 size={16} />}>
-                  <InlineSelectField
-                    label="Theme"
-                    value={draft.ui.theme}
-                    options={themeOptions}
-                    getOptionLabel={(value) => resolveThemeLabel(value, availableThemes, systemPrefersDark)}
-                    onChange={(value) => updateDraft((current) => {
-                      current.ui.theme = value;
-                      return current;
-                    })}
-                  />
+                <Panel title="Registry" subtitle="Official registry source for scenario pack installs." tone="orange" icon={<Settings2 size={16} />}>
                   <Field label="Official Registry URL" value={draft.registry.official_url} onChange={(value) => updateDraft((current) => {
                     current.registry.official_url = value;
                     return current;
                   })} />
                   <div className="helper-copy">
-                    <p>Durable settings live in <strong>config.toml</strong>.</p>
-                    <p style={{ marginTop: "8px" }}>Custom theme JSON files can be added under <strong>~/.benchlocal/themes/</strong>.</p>
+                    <p>Custom theme JSON files can be added under <strong>~/.benchlocal/themes/</strong>.</p>
                   </div>
                 </Panel>
               </section>
@@ -4441,6 +4600,7 @@ function Modal({
   onSubmit,
   submitLabel,
   submitTone = "primary",
+  size = "default",
   leadingActions,
   children
 }: {
@@ -4450,6 +4610,7 @@ function Modal({
   onSubmit: () => void;
   submitLabel: string;
   submitTone?: "primary" | "danger";
+  size?: "default" | "wide";
   leadingActions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -4458,7 +4619,7 @@ function Modal({
 
   return (
     <div className="dialog-backdrop">
-      <div className="dialog-shell">
+      <div className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`}>
         <div className={`dialog-header${hasBody ? "" : " dialog-header-compact"}`}>
           <div>
             <h3 className="dialog-title">{title}</h3>

@@ -1142,6 +1142,24 @@ pre {
   color: var(--accent-strong);
 }
 
+.settings-theme-dropdown {
+  position: relative;
+}
+
+.settings-theme-button {
+  min-width: 190px;
+  justify-content: space-between;
+}
+
+.settings-theme-button .run-mode-button-copy {
+  flex: 1 1 auto;
+}
+
+.settings-theme-menu {
+  left: auto;
+  right: 0;
+}
+
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1764,7 +1782,7 @@ pre {
 }
 
 .scenario-pack-picker-shell {
-  width: min(1340px, calc(100vw - 40px));
+  width: min(1180px, calc(100vw - 40px));
 }
 
 .scenario-pack-picker-body {
@@ -1817,6 +1835,24 @@ pre {
   background: var(--surface-strong);
 }
 
+.scenario-pack-option:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-strong);
+}
+
+.scenario-pack-option.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline-accent) 60%, transparent);
+}
+
+.scenario-pack-option.is-selected .settings-row-primary {
+  color: var(--ink);
+}
+
+.scenario-pack-option.is-selected .settings-row-secondary {
+  color: color-mix(in srgb, var(--ink) 72%, var(--muted));
+}
+
 .scenario-pack-option-main {
   min-width: 0;
   display: grid;
@@ -1833,7 +1869,7 @@ pre {
 
 .scenario-pack-picker-meta {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 180px));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1869,13 +1905,6 @@ pre {
   line-height: 1.2;
 }
 
-.scenario-pack-author-line {
-  margin-top: 10px;
-  font-size: 0.96rem;
-  font-weight: 600;
-  line-height: 1.45;
-  color: var(--muted);
-}
 
 .scenario-pack-picker-badges {
   display: flex;
@@ -1945,6 +1974,10 @@ pre {
   width: min(780px, calc(100vw - 48px));
   border-radius: 24px;
   padding: 22px 24px;
+}
+
+.dialog-shell-wide {
+  width: min(1180px, calc(100vw - 48px));
 }
 
 .history-dialog-shell {
@@ -2313,11 +2346,47 @@ select.config-input {
   line-height: 1.55;
 }
 
+.tab-models-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  min-height: min(60vh, 700px);
+}
+
+.tab-models-column {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.tab-models-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tab-models-column-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.tab-models-filters {
+  gap: 12px;
+}
+
 .tab-models-list {
   display: grid;
   gap: 10px;
-  max-height: min(60vh, 680px);
+  align-content: start;
+  grid-auto-rows: max-content;
+  min-height: 0;
   overflow: auto;
+  padding-right: 4px;
 }
 
 .tab-model-row {
@@ -2351,7 +2420,37 @@ select.config-input {
 .tab-model-row-meta {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
+}
+
+.tab-models-empty {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px dashed var(--border);
+  background: var(--surface);
+}
+
+.table-empty-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+@media (max-width: 1100px) {
+  .tab-models-layout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+  }
+
+  .tab-models-column {
+    grid-template-rows: auto auto auto;
+  }
 }
 
 .tab-model-alias-input {
