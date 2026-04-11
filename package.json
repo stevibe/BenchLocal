@@ -6,10 +6,19 @@
     "app",
     "packages/*"
   ],
+  "devDependencies": {
+    "electron": "37.2.0"
+  },
   "scripts": {
     "dev": "npm run dev --workspace app",
     "dev:devtools": "BENCHLOCAL_OPEN_DEVTOOLS=1 npm run dev --workspace app",
-    "build": "npm run build --workspace @benchlocal/core && npm run build --workspace @benchlocal/sdk && npm run build --workspace @benchlocal/plugin-host && npm run build --workspace app",
+    "build:compile": "npm run build --workspace @benchlocal/core && npm run build --workspace @benchlocal/sdk && npm run build --workspace @benchlocal/plugin-host && npm run build:compile --workspace app",
+    "build": "npm run build:compile && npm run package --workspace app",
+    "build:mac": "npm run build:compile && npm run build:mac --workspace app",
+    "build:dir": "npm run build:compile && npm run build:dir --workspace app",
+    "release:setup:mac": "node scripts/setup-macos-release.mjs",
+    "release:doctor:mac": "node scripts/check-macos-release.mjs",
+    "release:mac": "node scripts/build-macos-release.mjs",
     "typecheck": "npm run typecheck --workspace @benchlocal/core && npm run typecheck --workspace @benchlocal/sdk && npm run typecheck --workspace @benchlocal/plugin-host && npm run typecheck --workspace app"
   }
 }

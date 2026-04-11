@@ -1,11 +1,83 @@
-import { app, BrowserWindow, nativeTheme } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { loadOrCreateConfig } from "@core";
-import { registerIpcHandlers } from "./ipc";
+import { APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers } from "./ipc";
 import { loadAvailableTheme } from "./themes";
 
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
+
+if (process.platform === "darwin") {
+  app.setName("BenchLocal");
+}
+
+function buildApplicationMenu(): void {
+  const appSubmenu: MenuItemConstructorOptions[] = process.platform === "darwin"
+    ? [
+        { role: "about" },
+        { type: "separator" },
+        {
+          label: "Settings",
+          accelerator: "CmdOrCtrl+,",
+          click: () => {
+            BrowserWindow.getFocusedWindow()?.webContents.send(APP_OPEN_SETTINGS_CHANNEL);
+          }
+        },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" }
+      ]
+    : [];
+  const windowSubmenu: MenuItemConstructorOptions[] = process.platform === "darwin"
+    ? [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }]
+    : [{ role: "minimize" }, { role: "zoom" }, { role: "close" }];
+  const template: MenuItemConstructorOptions[] = [
+    ...(process.platform === "darwin"
+      ? [
+          {
+            label: "BenchLocal",
+            submenu: appSubmenu
+          }
+        ]
+      : []),
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" }
+      ]
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
+      ]
+    },
+    {
+      label: "Window",
+      submenu: windowSubmenu
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 async function createMainWindow(): Promise<void> {
   const loadState = await loadOrCreateConfig();
@@ -61,7 +133,12 @@ async function createMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  app.setAboutPanelOptions({
+    applicationName: "BenchLocal",
+    applicationVersion: app.getVersion()
+  });
   registerIpcHandlers();
+  buildApplicationMenu();
   await createMainWindow();
 
   app.on("activate", async () => {

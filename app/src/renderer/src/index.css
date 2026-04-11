@@ -2658,6 +2658,27 @@ select.config-input {
   padding: 12px 14px;
   border-radius: 12px;
   background: var(--neutral-soft);
+  border: 1px solid var(--border);
+}
+
+.dialog-summary-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.dialog-summary-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dialog-summary-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .dialog-header {

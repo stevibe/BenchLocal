@@ -1,12 +1,20 @@
 {
   "name": "benchlocal-app",
+  "productName": "BenchLocal",
   "private": true,
   "version": "0.1.0",
+  "description": "BenchLocal desktop app for running and managing LLM scenario packs.",
+  "author": "Steven Lei",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build:compile": "electron-vite build",
+    "package": "electron-builder",
+    "package:mac": "electron-builder --mac dmg zip",
+    "build": "npm run build:compile && npm run package",
+    "build:dir": "npm run build:compile && electron-builder --dir",
+    "build:mac": "npm run build:compile && npm run package:mac",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -21,11 +29,72 @@
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.20",
-    "electron": "^37.2.0",
+    "electron": "37.2.0",
+    "electron-builder": "^26.0.12",
     "electron-vite": "^3.1.0",
     "postcss": "^8.5.1",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.stevibe.benchlocal",
+    "productName": "BenchLocal",
+    "electronVersion": "37.2.0",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../packages/benchlocal-sdk",
+        "to": "benchlocal-runtime/packages/benchlocal-sdk",
+        "filter": [
+          "dist/**/*",
+          "package.json"
+        ]
+      },
+      {
+        "from": "../packages/benchlocal-core",
+        "to": "benchlocal-runtime/packages/benchlocal-core",
+        "filter": [
+          "dist/**/*",
+          "package.json"
+        ]
+      },
+      {
+        "from": "../node_modules/zod",
+        "to": "benchlocal-runtime/node_modules/zod"
+      },
+      {
+        "from": "../node_modules/smol-toml",
+        "to": "benchlocal-runtime/node_modules/smol-toml"
+      },
+      {
+        "from": "../themes",
+        "to": "themes",
+        "filter": [
+          "*.json"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "type": "distribution",
+      "notarize": true,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "sign": false
+    }
   }
 }

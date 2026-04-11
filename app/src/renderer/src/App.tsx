@@ -906,6 +906,12 @@ export function App() {
   }, [themeMenuOpen]);
 
   useEffect(() => {
+    return window.benchlocal.app.onOpenSettings(() => {
+      setSettingsOpen(true);
+    });
+  }, []);
+
+  useEffect(() => {
     const updateOverflow = () => {
       const element = tabStripRef.current;
 
@@ -2650,7 +2656,21 @@ export function App() {
           submitLabel="Close"
         >
           <div className="dialog-summary">
-            Status: <span className="status-text">{detailModal.status}</span>
+            <div className="dialog-summary-copy">
+              <span className="dialog-summary-label">Status</span>
+              <span className="dialog-summary-value">Validation Result</span>
+            </div>
+            <span
+              className={`status-chip ${
+                detailModal.status === "pass"
+                  ? "status-done"
+                  : detailModal.status === "partial"
+                    ? "status-not-installed"
+                    : "status-danger"
+              }`}
+            >
+              {detailModal.status}
+            </span>
           </div>
           <pre className="dialog-log">{detailModal.rawLog}</pre>
         </Modal>

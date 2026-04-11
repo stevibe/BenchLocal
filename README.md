@@ -31,3 +31,5 @@ Each benchmark plugin owns:
 - benchmark-specific trace formatting
 
 The first design document is in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+Packaging and public macOS release steps are documented in [docs/macos-release.md](./docs/macos-release.md).

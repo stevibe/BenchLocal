@@ -1,3 +1,4 @@
+import { app } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { BenchLocalThemeDefinition, BenchLocalThemeDescriptor } from "@core";
@@ -8,6 +9,11 @@ function getBenchLocalWorkspaceRoot(): string {
 }
 
 function getBuiltInThemesDir(): string {
+  const packagedThemesDir = path.join(process.resourcesPath, "themes");
+  if (app.isPackaged) {
+    return packagedThemesDir;
+  }
+
   return path.join(getBenchLocalWorkspaceRoot(), "themes");
 }
 

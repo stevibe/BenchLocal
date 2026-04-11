@@ -42,6 +42,9 @@ export type ScenarioPackMutationProgress = {
 };
 
 export interface BenchLocalDesktopApi {
+  app: {
+    onOpenSettings(listener: () => void): () => void;
+  };
   config: {
     load(): Promise<ConfigLoadResult>;
     save(config: BenchLocalConfig): Promise<ConfigLoadResult>;

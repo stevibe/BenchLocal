@@ -86,6 +86,22 @@ function getBenchLocalWorkspaceRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 }
 
+async function resolveBenchLocalRuntimeRoot(): Promise<string> {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  const packagedRoot = resourcesPath ? path.join(resourcesPath, "benchlocal-runtime") : undefined;
+
+  if (packagedRoot && (await pathExists(packagedRoot))) {
+    return packagedRoot;
+  }
+
+  const workspaceRoot = getBenchLocalWorkspaceRoot();
+  if (await pathExists(workspaceRoot)) {
+    return workspaceRoot;
+  }
+
+  throw new Error("BenchLocal runtime resources are unavailable for scenario pack installation.");
+}
+
 function sanitizeRuntimeName(input: string): string {
   return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
@@ -603,16 +619,41 @@ async function copyIfPresent(sourcePath: string, targetPath: string): Promise<vo
 }
 
 async function hydrateBenchLocalRuntimeDependencies(rootDir: string): Promise<void> {
-  const workspaceRoot = getBenchLocalWorkspaceRoot();
+  const runtimeRoot = await resolveBenchLocalRuntimeRoot();
   const nodeModulesRoot = path.join(rootDir, "node_modules");
   const scopedRoot = path.join(nodeModulesRoot, "@benchlocal");
 
   await fs.mkdir(scopedRoot, { recursive: true });
 
-  await copyIfPresent(path.join(workspaceRoot, "packages/benchlocal-sdk"), path.join(scopedRoot, "sdk"));
-  await copyIfPresent(path.join(workspaceRoot, "packages/benchlocal-core"), path.join(scopedRoot, "core"));
-  await copyIfPresent(path.join(workspaceRoot, "node_modules/zod"), path.join(nodeModulesRoot, "zod"));
-  await copyIfPresent(path.join(workspaceRoot, "node_modules/smol-toml"), path.join(nodeModulesRoot, "smol-toml"));
+  const requiredCopies = [
+    {
+      source: path.join(runtimeRoot, "packages/benchlocal-sdk"),
+      target: path.join(scopedRoot, "sdk"),
+      label: "@benchlocal/sdk"
+    },
+    {
+      source: path.join(runtimeRoot, "packages/benchlocal-core"),
+      target: path.join(scopedRoot, "core"),
+      label: "@benchlocal/core"
+    },
+    {
+      source: path.join(runtimeRoot, "node_modules/zod"),
+      target: path.join(nodeModulesRoot, "zod"),
+      label: "zod"
+    },
+    {
+      source: path.join(runtimeRoot, "node_modules/smol-toml"),
+      target: path.join(nodeModulesRoot, "smol-toml"),
+      label: "smol-toml"
+    }
+  ];
+
+  for (const item of requiredCopies) {
+    if (!(await pathExists(item.source))) {
+      throw new Error(`BenchLocal runtime dependency is missing from the app bundle: ${item.label}`);
+    }
+    await copyIfPresent(item.source, item.target);
+  }
 }
 
 async function stageScenarioPackArchiveInstall(

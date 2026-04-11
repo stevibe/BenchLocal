@@ -3,3 +3,6 @@ dist
 out
 .vite
 *.tsbuildinfo
+.DS_Store
+.env.release.local
+.env.release.*.local

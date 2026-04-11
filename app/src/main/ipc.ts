@@ -28,6 +28,7 @@ import { listAvailableThemes, loadAvailableTheme } from "./themes";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
+export const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const WORKSPACES_LOAD_CHANNEL = "benchlocal:workspaces:load";
