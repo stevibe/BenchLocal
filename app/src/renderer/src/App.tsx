@@ -191,6 +191,8 @@ const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: str
   { value: "full_parallel", label: "Parallel for All" }
 ];
 
+const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
+
 const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: string }> = [
   { value: "openai_compatible", label: "OpenAI Compatible" },
   { value: "openrouter", label: "OpenRouter" },
@@ -467,7 +469,13 @@ export function App() {
   const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+
+    return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
   const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
@@ -479,6 +487,7 @@ export function App() {
   const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [editingTab, setEditingTab] = useState<{ tabId: string; value: string; width: number } | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
   const [stoppingRuns, setStoppingRuns] = useState<Record<string, true>>({});
   const [runSummaries, setRunSummaries] = useState<Record<string, PluginRunSummary>>({});
@@ -912,6 +921,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(sidebarOpen));
+  }, [sidebarOpen]);
+
+  useEffect(() => {
     const updateOverflow = () => {
       const element = tabStripRef.current;
 
@@ -1137,6 +1154,26 @@ export function App() {
     });
   };
 
+  const handleTabStripWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const strip = tabStripRef.current;
+
+    if (!strip || !tabStripOverflow) {
+      return;
+    }
+
+    const horizontalDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+
+    if (Math.abs(horizontalDelta) < 1) {
+      return;
+    }
+
+    event.preventDefault();
+    strip.scrollBy({
+      left: horizontalDelta,
+      behavior: "auto"
+    });
+  };
+
   const runTab = async (tab: BenchLocalWorkspaceTab) => {
     setError(null);
     setNotice(null);
@@ -1278,7 +1315,6 @@ export function App() {
       const now = new Date().toISOString();
       const workspaceId = `workspace-${crypto.randomUUID()}`;
       const tabId = `tab-${crypto.randomUUID()}`;
-      const defaultPluginId = readyInspections[0]?.id ?? pluginInspections[0]?.id ?? null;
 
       current.workspaceOrder.push(workspaceId);
       current.activeWorkspaceId = workspaceId;
@@ -1292,8 +1328,8 @@ export function App() {
       };
       current.tabs[tabId] = {
         id: tabId,
-        title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
-        pluginId: defaultPluginId,
+        title: "New Tab",
+        pluginId: null,
         focusedScenarioId: null,
         modelSelections: [],
         executionMode: "parallel_by_model",
@@ -1345,7 +1381,6 @@ export function App() {
         const now = new Date().toISOString();
         const nextWorkspaceId = `workspace-${crypto.randomUUID()}`;
         const nextTabId = `tab-${crypto.randomUUID()}`;
-        const defaultPluginId = readyInspections[0]?.id ?? pluginInspections[0]?.id ?? null;
 
         current.workspaceOrder = [nextWorkspaceId];
         current.activeWorkspaceId = nextWorkspaceId;
@@ -1359,8 +1394,8 @@ export function App() {
         };
         current.tabs[nextTabId] = {
           id: nextTabId,
-          title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
-          pluginId: defaultPluginId,
+          title: "New Tab",
+          pluginId: null,
           focusedScenarioId: null,
           modelSelections: [],
           executionMode: "parallel_by_model",
@@ -1507,6 +1542,24 @@ export function App() {
     setTabMenuOpen(false);
   };
 
+  const assignScenarioPackToTab = (tabId: string, pluginId: string) => {
+    updateWorkspaceState((current) => {
+      const tab = current.tabs[tabId];
+
+      if (!tab) {
+        return current;
+      }
+
+      tab.title = createTabTitle(pluginId, pluginInspections);
+      tab.pluginId = pluginId;
+      tab.focusedScenarioId = null;
+      tab.updatedAt = new Date().toISOString();
+
+      return current;
+    });
+    setTabMenuOpen(false);
+  };
+
   const activateTab = (tabId: string) => {
     if (!activeWorkspace) {
       return;
@@ -1523,6 +1576,41 @@ export function App() {
       workspace.updatedAt = new Date().toISOString();
       return current;
     });
+  };
+
+  const startEditingTab = (tabId: string, currentTitle: string) => {
+    const width = tabChipRefs.current.get(tabId)?.offsetWidth ?? 180;
+    setEditingTab({
+      tabId,
+      value: currentTitle,
+      width
+    });
+  };
+
+  const commitEditingTab = () => {
+    if (!editingTab) {
+      return;
+    }
+
+    const nextTitle = editingTab.value.trim() || "New Tab";
+
+    updateWorkspaceState((current) => {
+      const tab = current.tabs[editingTab.tabId];
+
+      if (!tab) {
+        return current;
+      }
+
+      tab.title = nextTitle;
+      tab.updatedAt = new Date().toISOString();
+      return current;
+    });
+
+    setEditingTab(null);
+  };
+
+  const cancelEditingTab = () => {
+    setEditingTab(null);
   };
 
   const reorderTab = (draggedId: string, targetId: string) => {
@@ -1579,11 +1667,10 @@ export function App() {
 
       if (workspace.tabIds.length === 0) {
         const replacementTabId = `tab-${crypto.randomUUID()}`;
-        const defaultPluginId = readyInspections[0]?.id ?? pluginInspections[0]?.id ?? null;
         current.tabs[replacementTabId] = {
           id: replacementTabId,
-          title: defaultPluginId ? createTabTitle(defaultPluginId, pluginInspections) : "New Tab",
-          pluginId: defaultPluginId,
+          title: "New Tab",
+          pluginId: null,
           focusedScenarioId: null,
           modelSelections: [],
           executionMode: "parallel_by_model",
@@ -1844,8 +1931,7 @@ export function App() {
 
             <div className="topbar-main">
 	              <div className="app-brand">
-	                <p className="eyebrow">BenchLocal</p>
-	                <h1>LLM Scenario Pack Suite</h1>
+	                <h1>BenchLocal</h1>
 	              </div>
 
               {!settingsOpen ? (
@@ -1854,7 +1940,14 @@ export function App() {
 	                    inspections={readyInspections}
 	                    open={tabMenuOpen}
 	                    setOpen={setTabMenuOpen}
-	                    onCreateTab={createTab}
+	                    onCreateTab={(pluginId) => {
+                        if (activeTab && !activeTab.pluginId) {
+                          assignScenarioPackToTab(activeTab.id, pluginId);
+                          return;
+                        }
+
+                        createTab(pluginId);
+                      }}
 	                    disabled={!activeWorkspace}
 	                  />
 	                  <button
@@ -1879,10 +1972,7 @@ export function App() {
                       aria-expanded={themeMenuOpen}
                     >
                       <Palette size={15} />
-                      <span className="run-mode-button-copy">
-                        <span className="run-mode-button-label">Theme</span>
-                        <span className="run-mode-button-value">{currentThemeLabel}</span>
-                      </span>
+                      <span className="settings-theme-button-label">Theme: {currentThemeLabel}</span>
                       <ChevronDown size={14} />
                     </button>
                     {themeMenuOpen ? (
@@ -2076,7 +2166,7 @@ export function App() {
 	                {draft ? (
 	                  activeWorkspace ? (
 	                    <div className="tabbed-workspace">
-	                      <div ref={tabStripShellRef} className="tab-strip-shell">
+	                      <div ref={tabStripShellRef} className="tab-strip-shell" onWheel={handleTabStripWheel}>
                           {activeTabMask ? (
                             <span
                               className="tab-strip-active-mask"
@@ -2091,6 +2181,7 @@ export function App() {
 	                            const inspection = pluginInspections.find((candidate) => candidate.id === tab.pluginId);
                               const isTabRunning = Boolean(activeRuns[tab.id]);
                               const showWarning = !isTabRunning && inspection && inspection.status !== "ready";
+                              const isEditingTab = editingTab?.tabId === tab.id;
 
 		                            return (
 		                              <button
@@ -2103,7 +2194,7 @@ export function App() {
                                           tabChipRefs.current.delete(tab.id);
                                         }
                                       }}
-                                      draggable
+                                      draggable={!isEditingTab}
                                       onDragStart={(event) => {
                                         event.dataTransfer.setData("text/plain", tab.id);
                                         event.dataTransfer.effectAllowed = "move";
@@ -2120,10 +2211,53 @@ export function App() {
                                         reorderTab(sourceTabId, tab.id);
                                         setDraggedTabId(null);
                                       }}
-		                                onClick={() => activateTab(tab.id)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        startEditingTab(tab.id, tab.title);
+                                      }}
+		                                onClick={() => {
+                                        if (isEditingTab) {
+                                          return;
+                                        }
+
+                                        activateTab(tab.id);
+                                      }}
 		                                className={`tab-chip${activeTab?.id === tab.id ? " is-active" : ""}${draggedTabId === tab.id ? " is-dragging" : ""}`}
+                                      style={isEditingTab ? { width: `${editingTab.width}px` } : undefined}
 		                              >
-	                                <span className="tab-chip-title">{tab.title}</span>
+                                  {isEditingTab ? (
+                                    <input
+                                      type="text"
+                                      value={editingTab.value}
+                                      onChange={(event) =>
+                                        setEditingTab((current) =>
+                                          current && current.tabId === tab.id
+                                            ? { ...current, value: event.target.value }
+                                            : current
+                                        )
+                                      }
+                                      onClick={(event) => event.stopPropagation()}
+                                      onDoubleClick={(event) => event.stopPropagation()}
+                                      onBlur={commitEditingTab}
+                                      onFocus={(event) => event.currentTarget.select()}
+                                      onKeyDown={(event) => {
+                                        event.stopPropagation();
+
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          commitEditingTab();
+                                        } else if (event.key === "Escape") {
+                                          event.preventDefault();
+                                          cancelEditingTab();
+                                        }
+                                      }}
+                                      autoFocus
+                                      className="tab-chip-title-input"
+                                    />
+                                  ) : (
+	                                  <span className="tab-chip-title">{tab.title}</span>
+                                  )}
                                     {isTabRunning ? (
                                       <span className="tab-chip-spinner" title="Scenario pack running">
                                         <span className="spinner" />
@@ -2140,6 +2274,9 @@ export function App() {
 	                                  className="tab-chip-close"
 	                                  onClick={(event) => {
 	                                    event.stopPropagation();
+                                      if (isEditingTab) {
+                                        cancelEditingTab();
+                                      }
                                       setConfirmDialog({
                                         title: "Close Tab",
                                         subtitle: `Close "${tab.title}"? The scenario pack tab will be removed from this workspace.`,
@@ -2259,7 +2396,12 @@ export function App() {
 	                            onOpenDetail={setDetailModal}
 	                          />
 	                        ) : (
-	                          <EmptyWorkspace />
+	                          <EmptyWorkspace
+                              hasInstalledScenarioPacks={readyInspections.length > 0}
+                              onSelectScenarioPack={
+                                activeTab ? () => setTabMenuOpen(true) : undefined
+                              }
+                            />
 	                        )}
 	                      </div>
 	                    </div>
@@ -2679,18 +2821,22 @@ export function App() {
   );
 }
 
-function ScenarioPackPickerTrigger({
+function ScenarioPackPickerDialog({
   inspections,
   open,
   setOpen,
-  onCreateTab,
-  disabled
+  onSelectScenarioPack,
+  title = "New Tab",
+  subtitle = "Pick a scenario pack to open in this workspace.",
+  actionLabel = "Open Scenario Pack"
 }: {
   inspections: PluginInspection[];
   open: boolean;
   setOpen: (open: boolean) => void;
-  onCreateTab: (pluginId: string) => void;
-  disabled?: boolean;
+  onSelectScenarioPack: (pluginId: string) => void;
+  title?: string;
+  subtitle?: string;
+  actionLabel?: string;
 }) {
   const [query, setQuery] = useState("");
   const filteredInspections = inspections.filter((inspection) => {
@@ -2726,6 +2872,147 @@ function ScenarioPackPickerTrigger({
     });
   }, [open, filteredInspections]);
 
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-shell dialog-shell-wide scenario-pack-picker-shell">
+        <div className="dialog-header">
+          <div>
+            <h3 className="dialog-title">{title}</h3>
+            <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p>
+          </div>
+          <button type="button" onClick={() => setOpen(false)} className="dialog-close-button" aria-label="Close dialog">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="scenario-pack-picker-body">
+          <div className="scenario-pack-picker-list">
+            <label className="field-block">
+              <span className="field-label">Search</span>
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search scenario packs"
+                className="config-input"
+              />
+            </label>
+
+            <div className="scenario-pack-picker-options">
+              {filteredInspections.map((inspection) => (
+                <button
+                  key={inspection.id}
+                  type="button"
+                  className={`scenario-pack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
+                  onClick={() => setSelectedId(inspection.id)}
+                >
+                  <div className="scenario-pack-option-main">
+                    <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
+                    <div className="settings-row-secondary settings-mono-cell">{inspection.id}</div>
+                  </div>
+                  <span className={`status-chip ${statusClasses(inspection.status)}`}>
+                    {inspection.status.replaceAll("_", " ")}
+                  </span>
+                </button>
+              ))}
+              {filteredInspections.length === 0 ? (
+                <div className="sidebar-empty">No scenario packs match your search.</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="scenario-pack-picker-detail">
+            {selectedInspection ? (
+              <>
+                <div>
+                  <p className="eyebrow">Scenario Pack</p>
+                  <h3 className="panel-title" style={{ marginTop: "8px" }}>
+                    {selectedInspection.manifest?.name ?? selectedInspection.id}
+                  </h3>
+                  <p className="section-copy" style={{ marginTop: "10px" }}>
+                    {selectedInspection.manifest?.description ?? "No description provided."}
+                  </p>
+                </div>
+
+                <div className="scenario-pack-picker-meta">
+                  <div className="scenario-pack-stat-card">
+                    <span className="scenario-pack-stat-label">Author</span>
+                    <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                      {selectedInspection.manifest?.author ?? "Unknown"}
+                    </span>
+                  </div>
+                  <div className="scenario-pack-stat-card">
+                    <span className="scenario-pack-stat-label">Tests</span>
+                    <span className="scenario-pack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
+                  </div>
+                  <div className="scenario-pack-stat-card">
+                    <span className="scenario-pack-stat-label">Version</span>
+                    <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                      {selectedInspection.manifest?.version ?? "n/a"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="scenario-pack-picker-badges">
+                  <span className={`status-chip ${statusClasses(selectedInspection.status)}`}>
+                    {selectedInspection.status.replaceAll("_", " ")}
+                  </span>
+                  <span className="status-chip status-idle">
+                    {selectedInspection.manifest?.capabilities.tools ? "Supports tools" : "No tools"}
+                  </span>
+                  <span className="status-chip status-idle">
+                    {selectedInspection.manifest?.capabilities.verification ? "Requires verifier" : "No extra dependencies"}
+                  </span>
+                </div>
+
+                <div className="scenario-pack-picker-footer">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => {
+                      onSelectScenarioPack(selectedInspection.id);
+                      setOpen(false);
+                    }}
+                    disabled={selectedInspection.status !== "ready"}
+                  >
+                    <Plus size={14} />
+                    {actionLabel}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="entry-card" style={{ marginTop: "40px" }}>
+                <p className="eyebrow">No Installed Scenario Packs</p>
+                <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a scenario pack from Settings</h3>
+                <p className="section-copy" style={{ marginTop: "10px" }}>
+                  BenchLocal now starts with zero installed scenario packs. Open Settings, go to Scenario Packs, and install one from the official registry.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScenarioPackPickerTrigger({
+  inspections,
+  open,
+  setOpen,
+  onCreateTab,
+  disabled
+}: {
+  inspections: PluginInspection[];
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  onCreateTab: (pluginId: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <>
       <button
@@ -2738,128 +3025,12 @@ function ScenarioPackPickerTrigger({
         <span>New Tab</span>
       </button>
 
-      {open ? (
-        <div className="dialog-backdrop">
-          <div className="dialog-shell dialog-shell-wide scenario-pack-picker-shell">
-            <div className="dialog-header">
-              <div>
-                <h3 className="dialog-title">New Tab</h3>
-                <p className="section-copy" style={{ marginTop: "12px" }}>Pick a scenario pack to open in this workspace.</p>
-              </div>
-              <button type="button" onClick={() => setOpen(false)} className="dialog-close-button" aria-label="Close dialog">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="scenario-pack-picker-body">
-              <div className="scenario-pack-picker-list">
-                <label className="field-block">
-                  <span className="field-label">Search</span>
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search scenario packs"
-                    className="config-input"
-                  />
-                </label>
-
-                <div className="scenario-pack-picker-options">
-                  {filteredInspections.map((inspection) => (
-                    <button
-                      key={inspection.id}
-                      type="button"
-                      className={`scenario-pack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
-                      onClick={() => setSelectedId(inspection.id)}
-                    >
-                      <div className="scenario-pack-option-main">
-                        <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
-                        <div className="settings-row-secondary settings-mono-cell">{inspection.id}</div>
-                      </div>
-                      <span className={`status-chip ${statusClasses(inspection.status)}`}>
-                        {inspection.status.replaceAll("_", " ")}
-                      </span>
-                    </button>
-                  ))}
-                  {filteredInspections.length === 0 ? (
-                    <div className="sidebar-empty">No scenario packs match your search.</div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="scenario-pack-picker-detail">
-                {selectedInspection ? (
-                  <>
-                    <div>
-                      <p className="eyebrow">Scenario Pack</p>
-                      <h3 className="panel-title" style={{ marginTop: "8px" }}>
-                        {selectedInspection.manifest?.name ?? selectedInspection.id}
-                      </h3>
-                      <p className="section-copy" style={{ marginTop: "10px" }}>
-                        {selectedInspection.manifest?.description ?? "No description provided."}
-                      </p>
-                    </div>
-
-                    <div className="scenario-pack-picker-meta">
-                      <div className="scenario-pack-stat-card">
-                        <span className="scenario-pack-stat-label">Author</span>
-                        <span className="scenario-pack-stat-value scenario-pack-meta-value">
-                          {selectedInspection.manifest?.author ?? "Unknown"}
-                        </span>
-                      </div>
-                      <div className="scenario-pack-stat-card">
-                        <span className="scenario-pack-stat-label">Tests</span>
-                        <span className="scenario-pack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
-                      </div>
-                      <div className="scenario-pack-stat-card">
-                        <span className="scenario-pack-stat-label">Version</span>
-                        <span className="scenario-pack-stat-value scenario-pack-meta-value">
-                          {selectedInspection.manifest?.version ?? "n/a"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="scenario-pack-picker-badges">
-                      <span className={`status-chip ${statusClasses(selectedInspection.status)}`}>
-                        {selectedInspection.status.replaceAll("_", " ")}
-                      </span>
-                      <span className="status-chip status-idle">
-                        {selectedInspection.manifest?.capabilities.tools ? "Supports tools" : "No tools"}
-                      </span>
-                      <span className="status-chip status-idle">
-                        {selectedInspection.manifest?.capabilities.verification ? "Requires verifier" : "No extra dependencies"}
-                      </span>
-                    </div>
-
-                    <div className="scenario-pack-picker-footer">
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => {
-                          onCreateTab(selectedInspection.id);
-                          setOpen(false);
-                        }}
-                        disabled={selectedInspection.status !== "ready"}
-                      >
-                        <Plus size={14} />
-                        Open Scenario Pack
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="entry-card" style={{ marginTop: "40px" }}>
-                    <p className="eyebrow">No Installed Scenario Packs</p>
-                    <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a scenario pack from Settings</h3>
-                    <p className="section-copy" style={{ marginTop: "10px" }}>
-                      BenchLocal now starts with zero installed scenario packs. Open Settings, go to Scenario Packs, and install one from the official registry.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ScenarioPackPickerDialog
+        inspections={inspections}
+        open={open}
+        setOpen={setOpen}
+        onSelectScenarioPack={onCreateTab}
+      />
     </>
   );
 }
@@ -3255,8 +3426,14 @@ function BenchmarkSection({
           <section className="table-card table-card-document">
             {selectedModels.length === 0 ? (
               <div className="table-empty-callout">
-                <p className="muted-copy">No models are selected for this tab.</p>
-                <button type="button" onClick={onEditModels} className="ghost-button ghost-button-compact">
+                <div className="table-empty-callout-icon">
+                  <Bot size={22} />
+                </div>
+                <div className="table-empty-callout-copy">
+                  <h3 className="table-empty-callout-title">No models selected</h3>
+                  <p className="muted-copy">Add one or more models to start running this scenario pack.</p>
+                </div>
+                <button type="button" onClick={onEditModels} className="ghost-button">
                   <Bot size={14} />
                   Add Models
                 </button>
@@ -3417,6 +3594,7 @@ function TabModelsModal({
 }) {
   const [providerFilter, setProviderFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const enabledModels = models.filter((model) => model.enabled);
   const normalizedSelections = normalizeTabModelSelections(selections);
   const selectionMap = new Map(normalizedSelections.map((selection) => [selection.modelId, selection]));
@@ -3443,9 +3621,21 @@ function TabModelsModal({
   ];
   const filteredAvailableModels = enabledModels.filter((model) => {
     const normalizedGroup = model.group.trim() || "__ungrouped__";
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const haystack = [
+      model.label,
+      model.id,
+      model.group,
+      providers[model.provider]?.name ?? model.provider
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
     return (
       (providerFilter === "all" || model.provider === providerFilter) &&
-      (groupFilter === "all" || normalizedGroup === groupFilter)
+      (groupFilter === "all" || normalizedGroup === groupFilter) &&
+      (!normalizedQuery || haystack.includes(normalizedQuery))
     );
   });
   const selectedModels = orderedSelectedIds
@@ -3502,7 +3692,6 @@ function TabModelsModal({
   return (
     <Modal
       title="Edit Tab Models"
-      subtitle="Choose the models for this scenario pack tab, rename them for display, and drag selected rows to change the execution order."
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Models"
@@ -3526,6 +3715,13 @@ function TabModelsModal({
               value={groupFilter}
               options={groupOptions}
               onChange={setGroupFilter}
+            />
+            <Field
+              label=""
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search models"
+              className="tab-models-search"
             />
           </div>
           <div className="tab-models-list">
@@ -3627,15 +3823,30 @@ function TabModelsModal({
   );
 }
 
-function EmptyWorkspace() {
+function EmptyWorkspace({
+  hasInstalledScenarioPacks,
+  onSelectScenarioPack
+}: {
+  hasInstalledScenarioPacks: boolean;
+  onSelectScenarioPack?: () => void;
+}) {
   return (
     <section className="empty-workspace">
-      <div className="empty-workspace-card">
+      <div className="empty-workspace-card benchmark-empty-card">
+        <div className="benchmark-empty-icon">
+          <FolderOpen size={22} />
+        </div>
         <p className="eyebrow">No Active Scenario Pack</p>
         <h3 className="panel-title">Select a scenario pack to open its workspace</h3>
         <p className="section-copy" style={{ marginTop: "12px", maxWidth: "52ch" }}>
           Install official scenario packs from Settings, then use the pack picker in the toolbar to open them here. BenchLocal keeps providers, models, and shared parameters in one place while each scenario pack owns its scenarios and scoring.
         </p>
+        {hasInstalledScenarioPacks && onSelectScenarioPack ? (
+          <button type="button" onClick={onSelectScenarioPack} className="primary-button" style={{ marginTop: "18px" }}>
+            <FolderOpen size={16} />
+            Select Scenario Pack
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -4636,10 +4847,62 @@ function Modal({
 }) {
   const hasBody = Boolean(children);
   const hasSubtitle = Boolean(subtitle?.trim());
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      const dialog = dialogRef.current;
+
+      if (!dialog) {
+        return;
+      }
+
+      if (activeElement instanceof HTMLElement && dialog.contains(activeElement)) {
+        return;
+      }
+
+      submitButtonRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing) {
+        return;
+      }
+
+      const target = event.target;
+
+      if (target instanceof HTMLElement && (target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+
+      event.preventDefault();
+      onSubmit();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, onSubmit]);
 
   return (
     <div className="dialog-backdrop">
-      <div className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`}>
+      <div ref={dialogRef} className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`} tabIndex={-1}>
         <div className={`dialog-header${hasBody ? "" : " dialog-header-compact"}`}>
           <div>
             <h3 className="dialog-title">{title}</h3>
@@ -4654,7 +4917,14 @@ function Modal({
 
         <div className={`modal-actions${hasBody ? "" : " modal-actions-compact"}`}>
           <div className="modal-actions-leading">{leadingActions}</div>
-          <button type="button" onClick={onSubmit} className={submitTone === "danger" ? "button-danger" : "primary-button"}>{submitLabel}</button>
+          <button
+            ref={submitButtonRef}
+            type="button"
+            onClick={onSubmit}
+            className={submitTone === "danger" ? "button-danger" : "primary-button"}
+          >
+            {submitLabel}
+          </button>
         </div>
       </div>
     </div>
@@ -4667,18 +4937,20 @@ function Field({
   onChange,
   placeholder,
   type = "text",
-  readOnly = false
+  readOnly = false,
+  className = ""
 }: {
-  label: string;
+  label?: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   type?: string;
   readOnly?: boolean;
+  className?: string;
 }) {
   return (
-    <label className="field-block">
-      <span className="field-label">{label}</span>
+    <label className={`field-block${label ? "" : " field-block-no-label"}${className ? ` ${className}` : ""}`}>
+      {label ? <span className="field-label">{label}</span> : null}
       <input
         type={type}
         value={value}

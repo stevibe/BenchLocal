@@ -88,13 +88,13 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(WORKSPACES_LOAD_CHANNEL, async () => {
-    const { config } = await loadOrCreateConfig();
-    return loadOrCreateWorkspaceState(getWorkspaceStatePath(), config.default_plugin);
+    await loadOrCreateConfig();
+    return loadOrCreateWorkspaceState(getWorkspaceStatePath());
   });
 
   ipcMain.handle(WORKSPACES_SAVE_CHANNEL, async (_event, state: BenchLocalWorkspaceState) => {
-    const { config } = await loadOrCreateConfig();
-    const saved = await saveWorkspaceStateFile(state, getWorkspaceStatePath(), config.default_plugin);
+    await loadOrCreateConfig();
+    const saved = await saveWorkspaceStateFile(state, getWorkspaceStatePath());
 
     return {
       path: getWorkspaceStatePath(),

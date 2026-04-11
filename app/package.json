@@ -12,7 +12,8 @@
     "build:compile": "electron-vite build",
     "package": "electron-builder",
     "package:mac": "electron-builder --mac dmg zip",
-    "build": "npm run build:compile && npm run package",
+    "build": "npm run build:compile",
+    "pack": "npm run build:compile && npm run package",
     "build:dir": "npm run build:compile && electron-builder --dir",
     "build:mac": "npm run build:compile && npm run package:mac",
     "typecheck": "tsc -p tsconfig.json --noEmit"

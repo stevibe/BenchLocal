@@ -46,7 +46,7 @@
   --context-menu-bg: #ffffff;
   --context-menu-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
   --context-menu-hover: #f3f3f3;
-  --workspace-footer-fade: linear-gradient(180deg, rgba(237, 240, 245, 0), rgba(237, 240, 245, 0.92) 30%);
+  --workspace-footer-fade: #f3f3f3;
   --workspace-canvas-bg: #ffffff;
   --table-header-bg: #f8f8f8;
   --tab-border: #c8c8c8;
@@ -173,7 +173,7 @@ pre {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 74px;
+  min-height: 66px;
   padding: 14px 18px 14px var(--traffic-light-clearance);
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
@@ -217,7 +217,7 @@ pre {
 }
 
 .app-brand h1 {
-  font-size: 1.15rem;
+  font-size: 1.3rem;
 }
 
 .workspace-title {
@@ -554,7 +554,7 @@ pre {
   justify-content: center;
   padding-top: 10px;
   padding-bottom: 4px;
-  background: var(--workspace-footer-fade);
+  background: var(--sidebar-shell-bg);
 }
 
 .sidebar-footer-button {
@@ -898,6 +898,20 @@ pre {
   letter-spacing: -0.01em;
 }
 
+.tab-chip-title-input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
 .tab-chip-warning {
   width: 18px;
   height: 18px;
@@ -1147,12 +1161,17 @@ pre {
 }
 
 .settings-theme-button {
-  min-width: 190px;
+  min-width: 0;
   justify-content: space-between;
 }
 
-.settings-theme-button .run-mode-button-copy {
+.settings-theme-button-label {
   flex: 1 1 auto;
+  text-align: left;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
 }
 
 .settings-theme-menu {
@@ -2379,6 +2398,10 @@ select.config-input {
   gap: 12px;
 }
 
+.tab-models-search {
+  grid-column: 1 / -1;
+}
+
 .tab-models-list {
   display: grid;
   gap: 10px;
@@ -2435,11 +2458,43 @@ select.config-input {
 }
 
 .table-empty-callout {
-  display: flex;
+  min-height: 220px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 28px 24px 32px;
+  text-align: center;
+}
+
+.table-empty-callout-icon {
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 16px 16px;
+  justify-content: center;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--accent);
+}
+
+.table-empty-callout-copy {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.table-empty-callout-title {
+  margin: 0;
+  font-size: 1.28rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.table-empty-callout .muted-copy {
+  margin: 0;
+  max-width: 36ch;
 }
 
 @media (max-width: 1100px) {

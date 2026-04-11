@@ -48,7 +48,7 @@
     "--context-menu-bg": "#252526",
     "--context-menu-shadow": "0 12px 28px rgba(0, 0, 0, 0.32)",
     "--context-menu-hover": "#2a2d2e",
-    "--workspace-footer-fade": "linear-gradient(180deg, rgba(30, 30, 30, 0), rgba(30, 30, 30, 1) 30%)",
+    "--workspace-footer-fade": "#1e1e1e",
     "--workspace-canvas-bg": "#1e1e1e",
     "--table-header-bg": "#252526",
     "--tab-border": "#3c3c3c",

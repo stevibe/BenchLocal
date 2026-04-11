@@ -59,10 +59,7 @@ function buildApplicationMenu(): void {
     {
       label: "View",
       submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
+        ...(isDev ? [{ role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" }, { type: "separator" }] : []),
         { role: "resetZoom" },
         { role: "zoomIn" },
         { role: "zoomOut" },
@@ -100,7 +97,7 @@ async function createMainWindow(): Promise<void> {
       process.platform === "darwin"
         ? {
             x: 18,
-            y: 29
+            y: 25
           }
         : undefined,
     webPreferences: {
@@ -113,6 +110,18 @@ async function createMainWindow(): Promise<void> {
   window.webContents.on("console-message", (_event, level, message) => {
     console.log(`[renderer:${level}] ${message}`);
   });
+
+  if (!isDev) {
+    window.webContents.on("before-input-event", (event, input) => {
+      const isReloadShortcut =
+        (input.key.toLowerCase() === "r" && (input.meta || input.control)) ||
+        input.key === "F5";
+
+      if (isReloadShortcut) {
+        event.preventDefault();
+      }
+    });
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     await window.loadURL(process.env.VITE_DEV_SERVER_URL);
