@@ -13,22 +13,22 @@ It unifies the shared runtime across:
 - ReasonMath-15
 - StructOutput-15
 
-The six existing benchmark repos remain standalone open-source Next.js apps. BenchLocal does not replace them. Instead, it treats each benchmark as an installable plugin with a common execution protocol.
+The six existing benchmark repos remain standalone open-source Next.js apps. BenchLocal does not replace them. Instead, it treats each benchmark as an installable Bench Pack with a common execution protocol.
 
 ## Goals
 
 - Provide one desktop app for configuring providers, models, and generation parameters.
 - Persist shared settings in one predictable user-owned config location.
-- Install benchmark plugins by cloning their repos locally.
+- Install Bench Packs by cloning their repos locally.
 - Run any benchmark through one common UI and result viewer.
-- Support plugin-specific dependencies such as Docker verifier sidecars.
+- Support Bench Pack-specific dependencies such as Docker verifier sidecars.
 - Preserve standalone operation for every benchmark repo.
 
 ## Non-Goals
 
 - BenchLocal is not a cloud SaaS control plane.
 - BenchLocal does not remove standalone web apps from the benchmark repos.
-- BenchLocal does not let plugins own provider configuration in desktop mode.
+- BenchLocal does not let Bench Packs own provider configuration in desktop mode.
 - BenchLocal does not embed six separate web servers as the primary architecture.
 
 ## Key Decisions
@@ -43,7 +43,7 @@ Proposed layout:
 ~/.benchlocal/
   config.toml
   state.json
-  plugins/
+  benchpacks/
   runs/
   logs/
   cache/
@@ -55,13 +55,13 @@ Use `config.toml` for durable user configuration:
 - models
 - default generation params
 - concurrency limits
-- plugin registry
+- Bench Pack registry
 - sidecar defaults
 - UI preferences
 
 Use `state.json` for ephemeral UI state:
 
-- last selected plugin
+- last selected Bench Pack
 - last selected models
 - window layout
 - recent view filters
@@ -80,11 +80,11 @@ BenchLocal must own the shared concerns that are currently duplicated in the six
 - result persistence
 - trace browsing UI
 
-If plugins continue owning these concerns, BenchLocal becomes just a launcher rather than a unified product.
+If Bench Packs continue owning these concerns, BenchLocal becomes just a launcher rather than a unified product.
 
-### 3. Plugins Own Benchmark Logic
+### 3. Bench Packs Own Benchmark Logic
 
-Each plugin owns:
+Each Bench Pack owns:
 
 - scenarios
 - prompt contracts
@@ -106,7 +106,7 @@ Each repo should support two modes:
   - runs its own web app
 - BenchLocal mode
   - receives normalized config from BenchLocal
-  - exposes a plugin entrypoint
+  - exposes a Bench Pack entrypoint
 
 The benchmark logic should be shared between these two modes.
 
@@ -116,18 +116,18 @@ BenchLocal is an Electron desktop app with:
 
 - main process
   - config manager
-  - plugin manager
+  - Bench Pack manager
   - sidecar manager
   - run manager
   - secret resolution
 - renderer process
   - settings UI
-  - plugin library
+  - Bench Pack library
   - benchmark run screen
   - trace viewer
   - results comparison UI
-- plugin host
-  - isolated Node execution context for installed plugins
+- Bench Pack host
+  - isolated Node execution context for installed benchpacks
 
 Do not make BenchLocal a shell around six running Next.js servers. The Next.js apps remain for standalone mode only.
 
@@ -141,9 +141,9 @@ Suggested structure:
 
 ```toml
 schema_version = 1
-default_plugin = "toolcall-15"
+default_benchpack = "toolcall-15"
 run_storage_dir = "~/.benchlocal/runs"
-plugin_storage_dir = "~/.benchlocal/plugins"
+benchpack_storage_dir = "~/.benchlocal/benchpacks"
 
 [ui]
 theme = "system"
@@ -183,27 +183,25 @@ model = "qwen3.5:4b"
 group = "primary"
 enabled = true
 
-[plugins.toolcall-15]
+[benchpacks.toolcall-15]
 enabled = true
 source = "github"
 repo = "stevibe/ToolCall-15"
 
-[plugins.bugfind-15]
+[benchpacks.bugfind-15]
 enabled = true
 source = "github"
 repo = "stevibe/BugFind-15"
 
-[plugins.bugfind-15.sidecars.verifier]
-port = 4010
+[benchpacks.bugfind-15.verifiers.verifier]
 auto_start = true
 
-[plugins.structoutput-15]
+[benchpacks.structoutput-15]
 enabled = true
 source = "github"
 repo = "stevibe/StructOutput-15"
 
-[plugins.structoutput-15.sidecars.verifier]
-port = 4011
+[benchpacks.structoutput-15.verifiers.verifier]
 auto_start = true
 ```
 
@@ -250,13 +248,13 @@ Required settings screens:
 - request timeout
 - concurrency limits
 
-### Plugins
+### Bench Packs
 
-- install plugin
-- update plugin
-- remove plugin
-- show plugin version
-- show plugin capabilities
+- install Bench Pack
+- update Bench Pack
+- remove Bench Pack
+- show Bench Pack version
+- show Bench Pack capabilities
 - show sidecar requirements
 
 ### Sidecars
@@ -275,9 +273,9 @@ Required settings screens:
 - reset cached state
 - export and import config
 
-## Plugin Architecture
+## Bench Pack Architecture
 
-Each benchmark repo should expose a plugin entrypoint and a plugin manifest.
+Each Bench Pack repo should expose a Bench Pack entrypoint and a Bench Pack manifest.
 
 Example manifest:
 
@@ -309,14 +307,14 @@ Example manifest:
 Suggested runtime contract:
 
 ```ts
-export interface BenchPlugin {
-  manifest: PluginManifest;
+export interface BenchPackRuntime {
+  manifest: BenchPackManifest;
   listScenarios(): Promise<ScenarioMeta[]>;
-  prepare(ctx: HostContext): Promise<PreparedPlugin>;
+  prepare(ctx: HostContext): Promise<PreparedBenchPack>;
   scoreModelResults(results: ScenarioResult[]): BenchmarkScore;
 }
 
-export interface PreparedPlugin {
+export interface PreparedBenchPack {
   runScenario(input: ScenarioRunInput, emit: ProgressEmitter): Promise<ScenarioResult>;
   dispose(): Promise<void>;
 }
@@ -349,7 +347,7 @@ export interface ScenarioResult {
 
 ## Sidecar Model
 
-Some plugins need external verification dependencies:
+Some Bench Packs need external verification dependencies:
 
 - BugFind-15 requires a Docker-backed verifier service.
 - StructOutput-15 requires a validator container.
@@ -370,7 +368,7 @@ Standalone repos can keep their existing scripts such as:
 - `npm run verify:sandbox:serve`
 - `npm run verify:sandbox:stop`
 
-But BenchLocal should call the equivalent plugin-defined lifecycle internally.
+But BenchLocal should call the equivalent Bench Pack-defined lifecycle internally.
 
 ## Current Shared Seams In Existing Repos
 
@@ -390,17 +388,17 @@ These duplicated areas should be moved into shared BenchLocal host code and a sh
 - `BenchLocal/packages/benchlocal-core`
   - shared types and event schema
 - `BenchLocal/packages/benchlocal-sdk`
-  - plugin authoring helpers
-- `BenchLocal/packages/plugin-host`
-  - isolated execution runtime for plugins
+  - Bench Pack authoring helpers
+- `BenchLocal/packages/benchpack-host`
+  - isolated execution runtime for Bench Packs
 
-The six plugin repos can later depend on `benchlocal-sdk`.
+The six Bench Pack repos can later depend on `benchlocal-sdk`.
 
 ## Migration Strategy
 
 ### Phase 1. Define The Protocol
 
-- finalize plugin manifest schema
+- finalize Bench Pack manifest schema
 - finalize runtime interfaces
 - finalize config schema
 - finalize sidecar lifecycle contract
@@ -408,18 +406,18 @@ The six plugin repos can later depend on `benchlocal-sdk`.
 ### Phase 2. Build BenchLocal Core
 
 - config loader for `~/.benchlocal/config.toml`
-- plugin install registry
+- Bench Pack install registry
 - provider and model registry
 - run manager
 - sidecar manager
 
-### Phase 3. Convert The Simplest Plugin
+### Phase 3. Convert The Simplest Bench Pack
 
 Convert `DataExtract-15` first because it has no sidecar and no tool loop.
 
 Success criteria:
 
-- plugin loads in BenchLocal
+- Bench Pack loads in BenchLocal
 - provider config comes from BenchLocal
 - benchmark runs successfully
 - standalone Next.js mode still works
@@ -431,7 +429,7 @@ Convert `BugFind-15` next.
 Success criteria:
 
 - BenchLocal can build and start the verifier
-- plugin can receive verifier endpoint from host
+- Bench Pack can receive verifier endpoint from host
 - standalone mode still works
 
 ### Phase 5. Convert Tool Loop Support
@@ -440,9 +438,9 @@ Convert `ToolCall-15`.
 
 Success criteria:
 
-- plugin can expose tool-execution benchmark logic cleanly through the protocol
+- Bench Pack can expose tool-execution benchmark logic cleanly through the protocol
 
-### Phase 6. Convert Remaining Plugins
+### Phase 6. Convert Remaining Bench Packs
 
 - InstructFollow-15
 - ReasonMath-15
@@ -458,13 +456,13 @@ Success criteria:
 
 ## Risks
 
-### Plugin Isolation
+### Bench Pack Isolation
 
-Running arbitrary plugin code from cloned repos inside the desktop app is a trust boundary. BenchLocal should execute plugins in a controlled Node host process, not directly inside the renderer.
+Running arbitrary Bench Pack code from cloned repos inside the desktop app is a trust boundary. BenchLocal should execute benchpacks in a controlled Node host process, not directly inside the renderer.
 
 ### Version Drift
 
-If the standalone app and BenchLocal plugin mode diverge too much, maintenance cost will rise. The benchmark core must be shared between both modes.
+If the standalone app and BenchLocal Bench Pack mode diverge too much, maintenance cost will rise. The benchmark core must be shared between both modes.
 
 ### Sidecar Port Collisions
 
@@ -472,12 +470,12 @@ BenchLocal should own port assignment and health checks to prevent collisions su
 
 ### Duplicate UI Logic
 
-If each plugin keeps shipping custom UI for desktop mode, BenchLocal loses the benefit of a unified interface. Plugin-specific UI should be optional and limited.
+If each Bench Pack keeps shipping custom UI for desktop mode, BenchLocal loses the benefit of a unified interface. Bench Pack-specific UI should be optional and limited.
 
 ## Immediate Next Steps
 
 1. Create `Bench Protocol v1` as a separate spec document.
 2. Define the exact `config.toml` schema.
-3. Define the plugin manifest schema.
+3. Define the Bench Pack manifest schema.
 4. Define the sidecar lifecycle contract.
 5. Start the first implementation against `DataExtract-15`.

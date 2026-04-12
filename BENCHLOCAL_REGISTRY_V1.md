@@ -1,8 +1,8 @@
 # BenchLocal Registry V1
 
-`benchlocal-registry` should be the single source of truth for official scenario packs.
+`benchlocal-registry` should be the single source of truth for official Bench Packs.
 
-BenchLocal the desktop app should not hardcode official plugins in user config. Instead:
+BenchLocal the desktop app should not hardcode official Bench Packs in user config. Instead:
 
 - `benchlocal-registry` publishes the official index
 - BenchLocal reads that index
@@ -10,8 +10,8 @@ BenchLocal the desktop app should not hardcode official plugins in user config. 
 
 ## Goals
 
-- define one canonical list of official scenario packs
-- let BenchLocal distinguish official vs local/dev plugins
+- define one canonical list of official Bench Packs
+- let BenchLocal distinguish official vs local/dev Bench Packs
 - support version and channel metadata without coupling it to user config
 - prepare for future checksum or signature verification
 
@@ -23,7 +23,7 @@ Registry file:
 {
   "schemaVersion": 1,
   "generatedAt": "2026-04-09T00:00:00.000Z",
-  "plugins": [
+  "benchpacks": [
     {
       "id": "dataextract-15",
       "name": "DataExtract-15",
@@ -62,9 +62,9 @@ Top level:
 
 - `schemaVersion`
 - `generatedAt`
-- `plugins`
+- `benchpacks`
 
-Per plugin:
+Per Bench Pack:
 
 - `id`
 - `name`
@@ -77,7 +77,7 @@ Per plugin:
 
 ## Install Model
 
-Registry metadata should describe how BenchLocal installs an official plugin, but not where the user installed it locally.
+Registry metadata should describe how BenchLocal installs an official Bench Pack, but not where the user installed it locally.
 
 Registry:
 
@@ -102,12 +102,12 @@ BenchLocal should eventually move to:
 url = "https://raw.githubusercontent.com/<org>/benchlocal-registry/main/registry.json"
 channel = "stable"
 
-[plugins.dataextract-15]
+[benchpacks.dataextract-15]
 enabled = true
 source = "registry"
 channel = "stable"
 
-[plugins.structoutput-15]
+[benchpacks.structoutput-15]
 enabled = true
 source = "local"
 path = "/path/to/StructOutput-15"
@@ -115,8 +115,8 @@ path = "/path/to/StructOutput-15"
 
 Meaning:
 
-- official plugins can come from the registry
-- local development plugins can still be loaded directly from disk
+- official Bench Packs can come from the registry
+- local development benchpacks can still be loaded directly from disk
 - BenchLocal can merge registry metadata with local overrides
 
 ## Trust Model
@@ -131,9 +131,9 @@ It should not yet imply full sandboxing or cryptographic verification. Those can
 
 ## Future Extensions
 
-- checksums for plugin bundles
+- checksums for Bench Pack bundles
 - signatures
 - release notes per channel
 - minimum BenchLocal app version
-- plugin capability compatibility matrix
+- Bench Pack capability compatibility matrix
 - sidecar image metadata for host-managed Docker startup

@@ -5,8 +5,9 @@ import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-a
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
-const PLUGIN_RUN_EVENT_CHANNEL = "benchlocal:plugins:run-event";
-const PLUGIN_MUTATION_PROGRESS_CHANNEL = "benchlocal:plugins:mutation-progress";
+const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
+const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
+const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-progress";
 const DETACHED_LOGS_STATE_CHANNEL = "benchlocal:logs:state";
 const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
 
@@ -25,6 +26,10 @@ const api: BenchLocalDesktopApi = {
     load: () => ipcRenderer.invoke("benchlocal:config:load"),
     save: (config: BenchLocalConfig) => ipcRenderer.invoke("benchlocal:config:save", config)
   },
+  models: {
+    discover: (input: { provider: BenchLocalConfig["providers"][string] }) =>
+      ipcRenderer.invoke(MODELS_DISCOVER_CHANNEL, input)
+  },
   themes: {
     list: () => ipcRenderer.invoke(THEMES_LIST_CHANNEL),
     load: (input: { themeId: string }) => ipcRenderer.invoke(THEMES_LOAD_CHANNEL, input)
@@ -36,39 +41,40 @@ const api: BenchLocalDesktopApi = {
       ipcRenderer.invoke("benchlocal:workspaces:export", input),
     import: () => ipcRenderer.invoke("benchlocal:workspaces:import")
   },
-  plugins: {
-    list: () => ipcRenderer.invoke("benchlocal:plugins:list"),
-    registry: () => ipcRenderer.invoke("benchlocal:plugins:registry"),
-    install: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:install", input),
-    update: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:update", input),
-    uninstall: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:uninstall", input),
+  benchPacks: {
+    list: () => ipcRenderer.invoke("benchlocal:benchpacks:list"),
+    registry: () => ipcRenderer.invoke("benchlocal:benchpacks:registry"),
+    install: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:install", input),
+    installFromUrl: (input: { url: string }) => ipcRenderer.invoke("benchlocal:benchpacks:install-from-url", input),
+    update: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:update", input),
+    uninstall: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:uninstall", input),
     onMutationProgress: (listener) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => {
         listener(payload);
       };
 
-      ipcRenderer.on(PLUGIN_MUTATION_PROGRESS_CHANNEL, wrapped);
-      return () => ipcRenderer.removeListener(PLUGIN_MUTATION_PROGRESS_CHANNEL, wrapped);
+      ipcRenderer.on(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, wrapped);
     },
-    activeRuns: () => ipcRenderer.invoke("benchlocal:plugins:active-runs"),
-    run: (input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; generation?: GenerationRequest }) =>
-      ipcRenderer.invoke("benchlocal:plugins:run", input),
-    stop: (input: { tabId: string }) => ipcRenderer.invoke("benchlocal:plugins:stop", input),
-    history: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:history", input),
-    loadHistory: (input: { pluginId: string; runId: string }) => ipcRenderer.invoke("benchlocal:plugins:history-load", input),
+    activeRuns: () => ipcRenderer.invoke("benchlocal:benchpacks:active-runs"),
+    run: (input: { tabId: string; benchPackId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; generation?: GenerationRequest }) =>
+      ipcRenderer.invoke("benchlocal:benchpacks:run", input),
+    stop: (input: { tabId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:stop", input),
+    history: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history", input),
+    loadHistory: (input: { benchPackId: string; runId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history-load", input),
     onRunEvent: (listener: (payload: { tabId: string; event: ProgressEvent }) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: { tabId: string; event: ProgressEvent }) => {
         listener(payload);
       };
 
-      ipcRenderer.on(PLUGIN_RUN_EVENT_CHANNEL, wrapped);
-      return () => ipcRenderer.removeListener(PLUGIN_RUN_EVENT_CHANNEL, wrapped);
+      ipcRenderer.on(BENCH_PACK_RUN_EVENT_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(BENCH_PACK_RUN_EVENT_CHANNEL, wrapped);
     }
   },
   verifiers: {
     list: () => ipcRenderer.invoke("benchlocal:verifiers:list"),
-    start: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:verifiers:start", input),
-    stop: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:verifiers:stop", input)
+    start: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:start", input),
+    stop: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:stop", input)
   },
   logs: {
     openDetachedWindow: () => ipcRenderer.invoke("benchlocal:logs:open-detached"),

@@ -1,6 +1,6 @@
 import type { BenchLocalExecutionMode } from "./workspaces.js";
 
-export type PluginId = string;
+export type BenchPackId = string;
 export type ScenarioId = string;
 
 export type VerifierMode = "cloud" | "docker" | "custom_url";
@@ -18,7 +18,7 @@ export interface VerifierSpec {
   docker?: {
     image?: string;
     buildContext?: string;
-    containerPort: number;
+    listenPort: number;
     healthcheckPath?: string;
   };
   customUrl?: {
@@ -29,10 +29,10 @@ export interface VerifierSpec {
 
 export type SidecarSpec = VerifierSpec;
 
-export interface PluginManifest {
+export interface BenchPackManifest {
   schemaVersion: 1;
   protocolVersion: 1;
-  id: PluginId;
+  id: BenchPackId;
   name: string;
   author?: string;
   version: string;
@@ -58,8 +58,8 @@ export interface PluginManifest {
   sidecars?: SidecarSpec[];
 }
 
-export interface ScenarioPackRegistryEntry {
-  id: PluginId;
+export interface BenchPackRegistryEntry {
+  id: BenchPackId;
   name: string;
   author?: string;
   description?: string;
@@ -85,12 +85,12 @@ export interface ScenarioPackRegistryEntry {
   };
 }
 
-export interface ScenarioPackRegistry {
+export interface BenchPackRegistry {
   schemaVersion: 1;
-  packs: ScenarioPackRegistryEntry[];
+  packs: BenchPackRegistryEntry[];
 }
 
-export type PluginInspectionStatus =
+export type BenchPackInspectionStatus =
   | "ready"
   | "not_installed"
   | "manifest_missing"
@@ -98,22 +98,22 @@ export type PluginInspectionStatus =
   | "invalid_manifest"
   | "load_error";
 
-export interface PluginInspection {
+export interface BenchPackInspection {
   id: string;
   source: string;
   rootDir?: string;
-  status: PluginInspectionStatus;
+  status: BenchPackInspectionStatus;
   error?: string;
-  manifest?: PluginManifest;
+  manifest?: BenchPackManifest;
   scenarioCount?: number;
   scenarios?: ScenarioMeta[];
 }
 
-export interface PluginRunSummary {
+export interface BenchPackRunSummary {
   runId: string;
   runDir: string;
-  pluginId: string;
-  pluginName: string;
+  benchPackId: string;
+  benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
   startedAt: string;
   completedAt: string;
@@ -126,11 +126,11 @@ export interface PluginRunSummary {
   scores: Record<string, BenchmarkScore>;
 }
 
-export interface PluginRunHistoryEntry {
+export interface BenchPackRunHistoryEntry {
   runId: string;
   runDir: string;
-  pluginId: string;
-  pluginName: string;
+  benchPackId: string;
+  benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
   startedAt: string;
   completedAt: string;
@@ -194,7 +194,7 @@ export type SidecarEndpoint = VerifierEndpoint;
 
 export interface HostContext {
   protocolVersion: 1;
-  plugin: {
+  benchPack: {
     id: string;
     version: string;
     installDir: string;
@@ -221,7 +221,7 @@ export interface GenerationRequest {
 
 export interface ScenarioRunInput {
   runId: string;
-  pluginId: string;
+  benchPackId: string;
   scenario: ScenarioMeta;
   model: RegisteredModel;
   generation: GenerationRequest;
@@ -344,14 +344,14 @@ export type ProgressEvent =
 
 export type ProgressEmitter = (event: ProgressEvent) => Promise<void> | void;
 
-export interface BenchPlugin {
-  manifest: PluginManifest;
+export interface BenchPackRuntime {
+  manifest: BenchPackManifest;
   listScenarios(): Promise<ScenarioMeta[]>;
-  prepare(context: HostContext): Promise<PreparedPlugin>;
+  prepare(context: HostContext): Promise<PreparedBenchPack>;
   scoreModelResults(results: ScenarioResult[]): BenchmarkScore;
 }
 
-export interface PreparedPlugin {
+export interface PreparedBenchPack {
   runScenario(input: ScenarioRunInput, emit: ProgressEmitter): Promise<ScenarioResult>;
   dispose(): Promise<void>;
 }

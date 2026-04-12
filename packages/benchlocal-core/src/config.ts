@@ -42,11 +42,12 @@ export type BenchLocalVerifierConfig = {
 
 export type BenchLocalSidecarConfig = BenchLocalVerifierConfig;
 
-export type BenchLocalPluginConfig = {
+export type BenchLocalBenchPackConfig = {
   enabled: boolean;
-  source: "registry" | "github" | "local" | "git";
+  source: "registry" | "archive" | "github" | "local" | "git";
   repo?: string;
   path?: string;
+  url?: string;
   ref?: string;
   version?: string;
   auto_update?: boolean;
@@ -60,9 +61,9 @@ export type BenchLocalRegistryConfig = {
 
 export type BenchLocalConfig = {
   schema_version: 1;
-  default_plugin: string;
+  default_benchpack: string;
   run_storage_dir: string;
-  plugin_storage_dir: string;
+  benchpack_storage_dir: string;
   log_storage_dir: string;
   cache_dir: string;
   registry: BenchLocalRegistryConfig;
@@ -71,7 +72,7 @@ export type BenchLocalConfig = {
   };
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
-  plugins: Record<string, BenchLocalPluginConfig>;
+  benchpacks: Record<string, BenchLocalBenchPackConfig>;
 };
 
 export type LoadedBenchLocalConfig = {
@@ -108,12 +109,13 @@ const VerifierSchema = z.object({
   docker_image: z.string().trim().min(1).optional()
 });
 
-const PluginSchema = z
+const BenchPackSchema = z
   .object({
     enabled: z.boolean().default(true),
-    source: z.enum(["registry", "github", "local", "git"]).default("registry"),
+    source: z.enum(["registry", "archive", "github", "local", "git"]).default("registry"),
     repo: z.string().trim().min(1).optional(),
     path: z.string().trim().min(1).optional(),
+    url: z.string().trim().min(1).optional(),
     ref: z.string().trim().min(1).optional(),
     version: z.string().trim().min(1).optional(),
     auto_update: z.boolean().optional(),
@@ -124,23 +126,30 @@ const PluginSchema = z
     if (value.source === "github" && !value.repo) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "GitHub plugins require a repo value."
+        message: "GitHub Bench Packs require a repo value."
       });
     }
 
     if (value.source === "local" && !value.path) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Local plugins require a path value."
+        message: "Local Bench Packs require a path value."
+      });
+    }
+
+    if (value.source === "archive" && !value.url) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Archive Bench Packs require a url value."
       });
     }
   });
 
 const ConfigSchema = z.object({
   schema_version: z.literal(1).default(1),
-  default_plugin: z.string().trim().default(""),
+  default_benchpack: z.string().trim().default(""),
   run_storage_dir: z.string().trim().min(1),
-  plugin_storage_dir: z.string().trim().min(1),
+  benchpack_storage_dir: z.string().trim().min(1),
   log_storage_dir: z.string().trim().min(1),
   cache_dir: z.string().trim().min(1),
   registry: z
@@ -156,10 +165,10 @@ const ConfigSchema = z.object({
     })
     .default({
       theme: "system"
-    }),
+  }),
   providers: z.record(z.string(), ProviderSchema).default({}),
   models: z.array(ModelSchema).default([]),
-  plugins: z.record(z.string(), PluginSchema).default({})
+  benchpacks: z.record(z.string(), BenchPackSchema).default({})
 });
 
 export function getBenchLocalHome(): string {
@@ -180,42 +189,6 @@ export function expandHomePath(input: string): string {
 
 export function getConfigPath(): string {
   return path.join(getBenchLocalHome(), "config.toml");
-}
-
-function createDefaultProviders(): Record<string, BenchLocalProviderConfig> {
-  return {
-    openrouter: {
-      kind: "openrouter",
-      name: "OpenRouter",
-      enabled: true,
-      base_url: "https://openrouter.ai/api/v1",
-      api_key_env: "OPENROUTER_API_KEY"
-    },
-    ollama: {
-      kind: "ollama",
-      name: "Ollama",
-      enabled: true,
-      base_url: "http://127.0.0.1:11434/v1"
-    },
-    llamacpp: {
-      kind: "llamacpp",
-      name: "llama.cpp",
-      enabled: false,
-      base_url: "http://127.0.0.1:8080/v1"
-    },
-    mlx: {
-      kind: "mlx",
-      name: "MLX",
-      enabled: false,
-      base_url: "http://127.0.0.1:8082/v1"
-    },
-    lmstudio: {
-      kind: "lmstudio",
-      name: "LM Studio",
-      enabled: false,
-      base_url: "http://127.0.0.1:1234/v1"
-    }
-  };
 }
 
 function inferProviderKind(providerId: string): BenchLocalProviderKind {
@@ -264,9 +237,9 @@ export function createDefaultConfig(): BenchLocalConfig {
 
   return {
     schema_version: 1,
-    default_plugin: "",
+    default_benchpack: "",
     run_storage_dir: path.join(home, "runs"),
-    plugin_storage_dir: path.join(home, "plugins"),
+    benchpack_storage_dir: path.join(home, "benchpacks"),
     log_storage_dir: path.join(home, "logs"),
     cache_dir: path.join(home, "cache"),
     registry: {
@@ -275,26 +248,9 @@ export function createDefaultConfig(): BenchLocalConfig {
     ui: {
       theme: "system"
     },
-    providers: createDefaultProviders(),
-    models: [
-      {
-        id: "openrouter:openai/gpt-4.1",
-        provider: "openrouter",
-        model: "openai/gpt-4.1",
-        label: "GPT-4.1 via OpenRouter",
-        group: "primary",
-        enabled: true
-      },
-      {
-        id: "ollama:qwen3.5:4b",
-        provider: "ollama",
-        model: "qwen3.5:4b",
-        label: "Qwen3.5 4B via Ollama",
-        group: "primary",
-        enabled: false
-      }
-    ],
-    plugins: {}
+    providers: {},
+    models: [],
+    benchpacks: {}
   };
 }
 
@@ -314,13 +270,36 @@ function assertValidHttpUrl(value: string, field: string): void {
 
 function normalizeConfig(raw: unknown): BenchLocalConfig {
   const defaults = createDefaultConfig();
-  const parsed = ConfigSchema.parse(raw ?? {});
-  const mergedProviders = {
-    ...defaults.providers,
-    ...parsed.providers
-  };
+  const rawRecord = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const parsed = ConfigSchema.parse({
+    ...rawRecord,
+    default_benchpack:
+      typeof rawRecord.default_benchpack === "string"
+        ? rawRecord.default_benchpack
+        : typeof rawRecord.default_bench_pack === "string"
+          ? rawRecord.default_bench_pack
+        : typeof rawRecord.default_plugin === "string"
+          ? rawRecord.default_plugin
+          : undefined,
+    benchpack_storage_dir:
+      typeof rawRecord.benchpack_storage_dir === "string"
+        ? rawRecord.benchpack_storage_dir
+        : typeof rawRecord.bench_pack_storage_dir === "string"
+          ? rawRecord.bench_pack_storage_dir
+        : typeof rawRecord.plugin_storage_dir === "string"
+          ? rawRecord.plugin_storage_dir
+          : undefined,
+    benchpacks:
+      rawRecord.benchpacks && typeof rawRecord.benchpacks === "object"
+        ? rawRecord.benchpacks
+        : rawRecord.bench_packs && typeof rawRecord.bench_packs === "object"
+          ? rawRecord.bench_packs
+        : rawRecord.plugins && typeof rawRecord.plugins === "object"
+          ? rawRecord.plugins
+          : undefined
+  });
   const normalizedProviders = Object.fromEntries(
-    Object.entries(mergedProviders).map(([providerId, provider]) => {
+    Object.entries(parsed.providers).map(([providerId, provider]) => {
       const kind = provider.kind ?? inferProviderKind(providerId);
 
       return [
@@ -346,12 +325,12 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
       ...parsed.ui
     },
     providers: normalizedProviders,
-    plugins: Object.fromEntries(
-      Object.entries(parsed.plugins).map(([pluginId, plugin]) => [
-        pluginId,
+    benchpacks: Object.fromEntries(
+      Object.entries(parsed.benchpacks).map(([benchPackId, benchPack]) => [
+        benchPackId,
         {
-          ...plugin,
-          verifiers: plugin.verifiers ?? plugin.sidecars
+          ...benchPack,
+          verifiers: benchPack.verifiers ?? benchPack.sidecars
         }
       ])
     )
@@ -375,14 +354,14 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
     seenModelIds.add(model.id);
   }
 
-  for (const [pluginId, plugin] of Object.entries(config.plugins)) {
-    for (const [verifierId, verifier] of Object.entries(plugin.verifiers ?? {})) {
+  for (const [benchPackId, benchPack] of Object.entries(config.benchpacks)) {
+    for (const [verifierId, verifier] of Object.entries(benchPack.verifiers ?? {})) {
       if (verifier.custom_url) {
-        assertValidHttpUrl(verifier.custom_url, `plugins.${pluginId}.verifiers.${verifierId}.custom_url`);
+        assertValidHttpUrl(verifier.custom_url, `benchpacks.${benchPackId}.verifiers.${verifierId}.custom_url`);
       }
 
       if (verifier.cloud_url) {
-        assertValidHttpUrl(verifier.cloud_url, `plugins.${pluginId}.verifiers.${verifierId}.cloud_url`);
+        assertValidHttpUrl(verifier.cloud_url, `benchpacks.${benchPackId}.verifiers.${verifierId}.cloud_url`);
       }
     }
   }
@@ -394,7 +373,7 @@ async function ensureHomeAndStorageDirs(config: BenchLocalConfig): Promise<void>
   const dirs = [
     getBenchLocalHome(),
     expandHomePath(config.run_storage_dir),
-    expandHomePath(config.plugin_storage_dir),
+    expandHomePath(config.benchpack_storage_dir),
     expandHomePath(config.log_storage_dir),
     expandHomePath(config.cache_dir)
   ];

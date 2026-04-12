@@ -1,7 +1,7 @@
 import {
   createHostHelpers,
-  defineBenchPlugin,
-  definePluginManifest,
+  defineBenchPack,
+  defineBenchPackManifest,
   requireScoredResults,
   type ProgressEmitter,
   type ScenarioResult,
@@ -12,15 +12,18 @@ const SCENARIOS = [
   {
     id: "EX-01",
     title: "Example Scenario",
-    description: "Replace this with real benchmark metadata."
+    description: "Replace this with real benchmark metadata.",
+    successCase: "Describe what a correct answer should do.",
+    failureCase: "Describe the common miss that should fail."
   }
 ] as const;
 
-export const manifest = definePluginManifest({
-  id: "example-plugin",
-  name: "Example Plugin",
+export const manifest = defineBenchPackManifest({
+  id: "example-benchpack",
+  name: "Example Bench Pack",
+  author: "Your Name",
   version: "0.1.0",
-  description: "Minimal BenchLocal plugin template.",
+  description: "Minimal BenchLocal Bench Pack template.",
   entry: "./dist/benchlocal/index.js",
   samplingDefaults: {
     temperature: 0
@@ -29,16 +32,34 @@ export const manifest = definePluginManifest({
     tools: false,
     multiTurn: false,
     streamingProgress: true,
-    sidecars: false,
+    verification: false,
     standaloneWebApp: false
   }
 });
 
-export default defineBenchPlugin({
+export default defineBenchPack({
   manifest,
 
   async listScenarios() {
-    return [...SCENARIOS];
+    return SCENARIOS.map((scenario) => ({
+      id: scenario.id,
+      title: scenario.title,
+      description: scenario.description,
+      detailCards: [
+        {
+          title: "What this tests",
+          content: scenario.description
+        },
+        {
+          title: "Success case",
+          content: scenario.successCase
+        },
+        {
+          title: "Failure case",
+          content: scenario.failureCase
+        }
+      ]
+    }));
   },
 
   async prepare(context) {

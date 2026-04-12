@@ -21,7 +21,7 @@ It should remain stable, readable, and migration-friendly.
 ~/.benchlocal/
   config.toml
   state.json
-  plugins/
+  benchpacks/
   runs/
   logs/
   cache/
@@ -38,9 +38,9 @@ It should remain stable, readable, and migration-friendly.
 
 ```toml
 schema_version = 1
-default_plugin = "toolcall-15"
+default_benchpack = "toolcall-15"
 run_storage_dir = "~/.benchlocal/runs"
-plugin_storage_dir = "~/.benchlocal/plugins"
+benchpack_storage_dir = "~/.benchlocal/benchpacks"
 log_storage_dir = "~/.benchlocal/logs"
 cache_dir = "~/.benchlocal/cache"
 
@@ -76,19 +76,17 @@ label = "GPT-4.1 via OpenRouter"
 group = "primary"
 enabled = true
 
-[plugins.toolcall-15]
+[benchpacks.toolcall-15]
 enabled = true
 source = "github"
 repo = "stevibe/ToolCall-15"
 
-[plugins.bugfind-15]
+[benchpacks.bugfind-15]
 enabled = true
 source = "github"
 repo = "stevibe/BugFind-15"
 
-[plugins.bugfind-15.sidecars.verifier]
-kind = "docker-http"
-port = 4010
+[benchpacks.bugfind-15.verifiers.verifier]
 auto_start = true
 ```
 
@@ -100,18 +98,18 @@ auto_start = true
 - required: yes
 - initial value: `1`
 
-### `default_plugin`
+### `default_benchpack`
 
 - type: string
 - required: no
-- meaning: plugin selected by default on launch
+- meaning: Bench Pack selected by default on launch
 
 ### `run_storage_dir`
 
 - type: string
 - required: yes
 
-### `plugin_storage_dir`
+### `benchpack_storage_dir`
 
 - type: string
 - required: yes
@@ -213,9 +211,9 @@ group = "primary"
 enabled = true
 ```
 
-## `[plugins.<plugin-id>]`
+## `[benchpacks.<benchpack-id>]`
 
-Plugin registry entries.
+Bench Pack registry entries.
 
 Supported fields:
 
@@ -235,13 +233,13 @@ Rules:
 Example:
 
 ```toml
-[plugins.structoutput-15]
+[benchpacks.structoutput-15]
 enabled = true
 source = "local"
 path = "/Users/example/dev/StructOutput-15"
 ```
 
-## `[plugins.<plugin-id>.sidecars.<sidecar-id>]`
+## `[benchpacks.<benchpack-id>.verifiers.<verifier-id>]`
 
 Host-managed sidecar config.
 
@@ -254,13 +252,13 @@ Supported fields:
 Example:
 
 ```toml
-[plugins.structoutput-15.sidecars.verifier]
+[benchpacks.structoutput-15.sidecars.verifier]
 kind = "docker-http"
 port = 4011
 auto_start = true
 ```
 
-BenchLocal should validate this against the plugin manifest.
+BenchLocal should validate this against the Bench Pack manifest.
 
 ## Secrets Policy
 
@@ -268,7 +266,7 @@ Current policy:
 
 - allow direct local API key storage in `config.toml`
 - allow environment variable fallback via `api_key_env`
-- do not duplicate provider secrets inside plugin repos
+- do not duplicate provider secrets inside Bench Pack repos
 
 BenchLocal should expose this in the settings UI clearly:
 
@@ -285,7 +283,7 @@ Required UI sections:
 - Providers
 - Models
 - Generation
-- Plugins
+- Bench Packs
 - Sidecars
 - Advanced
 
@@ -304,7 +302,7 @@ BenchLocal should reject invalid config on load if:
 - any configured model ID is duplicated
 - a model references a missing provider
 - a provider `base_url` is malformed
-- a plugin entry is missing its required source fields
+- a Bench Pack entry is missing its required source fields
 - a sidecar entry conflicts with manifest requirements
 
 BenchLocal should surface these as actionable settings errors in the UI.
@@ -332,7 +330,7 @@ Ephemeral UI state belongs in:
 Examples:
 
 - selected tab
-- last used plugin
+- last used Bench Pack
 - open trace viewer item
 - last window bounds
 
@@ -342,6 +340,6 @@ This file should be safe to delete without losing benchmark configuration.
 
 After this schema is accepted, the next implementation documents should be:
 
-1. plugin manifest JSON schema
+1. Bench Pack manifest JSON schema
 2. SDK TypeScript package layout
 3. BenchLocal settings UI wireframe and data model

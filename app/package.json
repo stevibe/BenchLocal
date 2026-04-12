@@ -3,8 +3,8 @@
   "productName": "BenchLocal",
   "private": true,
   "version": "0.1.0",
-  "description": "BenchLocal desktop app for running and managing LLM scenario packs.",
-  "author": "Steven Lei",
+  "description": "BenchLocal desktop app for running and managing LLM Bench Packs.",
+  "author": "stevibe",
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {

@@ -19,7 +19,7 @@ export type BenchLocalWorkspaceTabModelSelection = {
 export type BenchLocalWorkspaceTab = {
   id: string;
   title: string;
-  pluginId: string | null;
+  benchPackId: string | null;
   focusedScenarioId: string | null;
   modelSelections: BenchLocalWorkspaceTabModelSelection[];
   samplingOverrides?: GenerationRequest;
@@ -54,7 +54,7 @@ export type LoadedBenchLocalWorkspaceState = {
 const WorkspaceTabSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  pluginId: z.string().trim().min(1).nullable(),
+  benchPackId: z.string().trim().min(1).nullable().default(null),
   focusedScenarioId: z.string().trim().min(1).nullable(),
   modelSelections: z
     .array(
@@ -113,11 +113,11 @@ export function getWorkspaceStatePath(): string {
   return path.join(getBenchLocalHome(), "state.json");
 }
 
-export function createDefaultWorkspaceState(defaultPlugin = ""): BenchLocalWorkspaceState {
+export function createDefaultWorkspaceState(defaultBenchPack = ""): BenchLocalWorkspaceState {
   const now = new Date().toISOString();
   const workspaceId = `workspace-${randomUUID()}`;
   const tabId = `tab-${randomUUID()}`;
-  const hasDefaultPlugin = Boolean(defaultPlugin.trim());
+  const hasDefaultBenchPack = Boolean(defaultBenchPack.trim());
 
   return {
     schema_version: 1,
@@ -136,8 +136,8 @@ export function createDefaultWorkspaceState(defaultPlugin = ""): BenchLocalWorks
     tabs: {
       [tabId]: {
         id: tabId,
-        title: hasDefaultPlugin ? defaultPlugin : "New Tab",
-        pluginId: hasDefaultPlugin ? defaultPlugin : null,
+        title: hasDefaultBenchPack ? defaultBenchPack : "New Tab",
+        benchPackId: hasDefaultBenchPack ? defaultBenchPack : null,
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
@@ -149,9 +149,31 @@ export function createDefaultWorkspaceState(defaultPlugin = ""): BenchLocalWorks
   };
 }
 
-function normalizeWorkspaceState(raw: unknown, defaultPlugin = ""): BenchLocalWorkspaceState {
-  const defaults = createDefaultWorkspaceState(defaultPlugin);
-  const parsed = WorkspaceStateSchema.parse(raw ?? {});
+function normalizeWorkspaceState(raw: unknown, defaultBenchPack = ""): BenchLocalWorkspaceState {
+  const defaults = createDefaultWorkspaceState(defaultBenchPack);
+  const rawRecord = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const rawTabs = rawRecord.tabs && typeof rawRecord.tabs === "object" ? (rawRecord.tabs as Record<string, unknown>) : {};
+  const parsed = WorkspaceStateSchema.parse({
+    ...rawRecord,
+    tabs: Object.fromEntries(
+      Object.entries(rawTabs).map(([tabId, value]) => {
+        if (typeof value !== "object" || value === null) {
+          return [tabId, value];
+        }
+
+        const tabRecord = value as Record<string, unknown>;
+        return [
+          tabId,
+          {
+            ...tabRecord,
+            benchPackId:
+              tabRecord.benchPackId ??
+              (typeof tabRecord.pluginId === "string" || tabRecord.pluginId === null ? tabRecord.pluginId : null)
+          }
+        ];
+      })
+    )
+  });
 
   const workspaces = { ...parsed.workspaces };
   const tabs = { ...parsed.tabs };
@@ -199,20 +221,20 @@ function normalizeWorkspaceState(raw: unknown, defaultPlugin = ""): BenchLocalWo
 
 export async function loadWorkspaceStateFile(
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = ""
+  defaultBenchPack = ""
 ): Promise<BenchLocalWorkspaceState> {
   const raw = await fs.readFile(statePath, "utf8");
-  return normalizeWorkspaceState(JSON.parse(raw), defaultPlugin);
+  return normalizeWorkspaceState(JSON.parse(raw), defaultBenchPack);
 }
 
 export async function loadOrCreateWorkspaceState(
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = ""
+  defaultBenchPack = ""
 ): Promise<LoadedBenchLocalWorkspaceState> {
   await fs.mkdir(path.dirname(statePath), { recursive: true });
 
   try {
-    const state = await loadWorkspaceStateFile(statePath, defaultPlugin);
+    const state = await loadWorkspaceStateFile(statePath, defaultBenchPack);
     return {
       path: statePath,
       created: false,
@@ -226,8 +248,8 @@ export async function loadOrCreateWorkspaceState(
     }
   }
 
-  const state = createDefaultWorkspaceState(defaultPlugin);
-  await saveWorkspaceStateFile(state, statePath, defaultPlugin);
+  const state = createDefaultWorkspaceState(defaultBenchPack);
+  await saveWorkspaceStateFile(state, statePath, defaultBenchPack);
 
   return {
     path: statePath,
@@ -239,9 +261,9 @@ export async function loadOrCreateWorkspaceState(
 export async function saveWorkspaceStateFile(
   state: BenchLocalWorkspaceState,
   statePath = getWorkspaceStatePath(),
-  defaultPlugin = ""
+  defaultBenchPack = ""
 ): Promise<BenchLocalWorkspaceState> {
-  const normalized = normalizeWorkspaceState(state, defaultPlugin);
+  const normalized = normalizeWorkspaceState(state, defaultBenchPack);
   await fs.mkdir(path.dirname(statePath), { recursive: true });
 
   const tempPath = `${statePath}.tmp`;

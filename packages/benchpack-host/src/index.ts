@@ -2,25 +2,26 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type {
+  BenchPackRegistry,
+  BenchPackRegistryEntry,
   BenchmarkScore,
   BenchLocalConfig,
   BenchLocalExecutionMode,
-  BenchLocalPluginConfig,
+  BenchLocalBenchPackConfig,
   BenchLocalVerifierConfig,
   GenerationRequest,
   HostContext,
-  PluginRunHistoryEntry,
-  PluginRunSummary,
+  BenchPackRunHistoryEntry,
+  BenchPackRunSummary,
   ProgressEvent,
   RegisteredModel,
   ScenarioMeta,
   ScenarioResult,
-  ScenarioPackRegistry,
-  ScenarioPackRegistryEntry,
   VerifierEndpoint,
   VerifierMode,
   VerifierSpec
@@ -29,14 +30,14 @@ import {
   expandHomePath,
   getConfigPath,
   saveConfigFile,
-  type PluginInspection,
-  type PluginManifest
+  type BenchPackInspection,
+  type BenchPackManifest
 } from "@benchlocal/core";
 
-export type PluginHostStatus = "idle" | "loading" | "ready" | "error";
+export type BenchPackHostStatus = "idle" | "loading" | "ready" | "error";
 
-export type LoadedPluginHandle = {
-  pluginId: string;
+export type LoadedBenchPackHandle = {
+  benchPackId: string;
   entryPath: string;
 };
 
@@ -47,7 +48,7 @@ async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
   return JSON.parse(raw) as TValue;
 }
 
-function isScenarioPackRegistryEntry(value: unknown): value is ScenarioPackRegistryEntry {
+function isBenchPackRegistryEntry(value: unknown): value is BenchPackRegistryEntry {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -65,13 +66,13 @@ function isScenarioPackRegistryEntry(value: unknown): value is ScenarioPackRegis
   );
 }
 
-function isScenarioPackRegistry(value: unknown): value is ScenarioPackRegistry {
+function isBenchPackRegistry(value: unknown): value is BenchPackRegistry {
   if (typeof value !== "object" || value === null) {
     return false;
   }
 
   const candidate = value as Record<string, unknown>;
-  return candidate.schemaVersion === 1 && Array.isArray(candidate.packs) && candidate.packs.every(isScenarioPackRegistryEntry);
+  return candidate.schemaVersion === 1 && Array.isArray(candidate.packs) && candidate.packs.every(isBenchPackRegistryEntry);
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -100,35 +101,35 @@ async function resolveBenchLocalRuntimeRoot(): Promise<string> {
     return workspaceRoot;
   }
 
-  throw new Error("BenchLocal runtime resources are unavailable for scenario pack installation.");
+  throw new Error("BenchLocal runtime resources are unavailable for Bench Pack installation.");
 }
 
 function sanitizeRuntimeName(input: string): string {
   return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
 
-function getVerifierContainerName(pluginId: string, verifierId: string): string {
-  return `benchlocal-${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(verifierId)}`;
+function getVerifierContainerName(benchPackId: string, verifierId: string): string {
+  return `benchlocal-${sanitizeRuntimeName(benchPackId)}-${sanitizeRuntimeName(verifierId)}`;
 }
 
 function getGitHubArchiveUrl(repo: string, tag: string): string {
   return `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
 }
 
-function getScenarioPackBaseDir(config: BenchLocalConfig, pluginId: string): string {
-  return path.join(expandHomePath(config.plugin_storage_dir), pluginId);
+function getBenchPackBaseDir(config: BenchLocalConfig, benchPackId: string): string {
+  return path.join(expandHomePath(config.benchpack_storage_dir), benchPackId);
 }
 
-function getScenarioPackVersionsDir(baseDir: string): string {
+function getBenchPackVersionsDir(baseDir: string): string {
   return path.join(baseDir, "versions");
 }
 
-function getScenarioPackCurrentPointerPath(baseDir: string): string {
+function getBenchPackCurrentPointerPath(baseDir: string): string {
   return path.join(baseDir, "current.json");
 }
 
-async function readScenarioPackCurrentVersion(baseDir: string): Promise<string | null> {
-  const pointerPath = getScenarioPackCurrentPointerPath(baseDir);
+async function readBenchPackCurrentVersion(baseDir: string): Promise<string | null> {
+  const pointerPath = getBenchPackCurrentPointerPath(baseDir);
 
   if (!(await pathExists(pointerPath))) {
     return null;
@@ -138,8 +139,8 @@ async function readScenarioPackCurrentVersion(baseDir: string): Promise<string |
   return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version.trim() : null;
 }
 
-async function writeScenarioPackCurrentVersion(baseDir: string, version: string): Promise<void> {
-  const pointerPath = getScenarioPackCurrentPointerPath(baseDir);
+async function writeBenchPackCurrentVersion(baseDir: string, version: string): Promise<void> {
+  const pointerPath = getBenchPackCurrentPointerPath(baseDir);
   const tempPath = `${pointerPath}.tmp-${randomUUID().slice(0, 8)}`;
   await fs.writeFile(
     tempPath,
@@ -156,11 +157,11 @@ async function writeScenarioPackCurrentVersion(baseDir: string, version: string)
   await fs.rename(tempPath, pointerPath);
 }
 
-async function removeScenarioPackCurrentVersion(baseDir: string): Promise<void> {
-  await fs.rm(getScenarioPackCurrentPointerPath(baseDir), { force: true });
+async function removeBenchPackCurrentVersion(baseDir: string): Promise<void> {
+  await fs.rm(getBenchPackCurrentPointerPath(baseDir), { force: true });
 }
 
-async function cleanupScenarioPackStaging(baseDir: string): Promise<void> {
+async function cleanupBenchPackStaging(baseDir: string): Promise<void> {
   if (!(await pathExists(baseDir))) {
     return;
   }
@@ -173,7 +174,7 @@ async function cleanupScenarioPackStaging(baseDir: string): Promise<void> {
   );
 }
 
-function sanitizeScenarioPackVersion(input: string): string {
+function sanitizeBenchPackVersion(input: string): string {
   return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || randomUUID().slice(0, 8);
 }
 
@@ -235,7 +236,7 @@ async function inspectDockerContainer(containerName: string): Promise<{
 
 async function inspectDockerPortBinding(
   containerName: string,
-  containerPort: number
+  listenPort: number
 ): Promise<{
   exists: boolean;
   running: boolean;
@@ -251,7 +252,7 @@ async function inspectDockerPortBinding(
     }>;
     const details = parsed[0];
     const running = Boolean(details?.State?.Running);
-    const portRecord = details?.NetworkSettings?.Ports?.[`${containerPort}/tcp`];
+    const portRecord = details?.NetworkSettings?.Ports?.[`${listenPort}/tcp`];
     const hostPortRaw = Array.isArray(portRecord) ? portRecord[0]?.HostPort : undefined;
     const hostPort = hostPortRaw ? Number(hostPortRaw) : undefined;
 
@@ -318,7 +319,7 @@ async function startDockerVerifierContainer(
   containerName: string,
   image: string,
   hostPort: number,
-  containerPort: number,
+  listenPort: number,
   options?: {
     pullImage?: boolean;
   }
@@ -333,7 +334,7 @@ async function startDockerVerifierContainer(
     "--name",
     containerName,
     "-p",
-    `${hostPort}:${containerPort}`,
+    `${hostPort}:${listenPort}`,
     image
   ]);
 }
@@ -342,24 +343,24 @@ async function buildDockerVerifierImage(tag: string, contextPath: string): Promi
   await runDockerCommand(["build", "-t", tag, contextPath]);
 }
 
-async function resolveInstalledScenarioPackRoot(config: BenchLocalConfig, pluginId: string): Promise<string | undefined> {
-  const baseDir = getScenarioPackBaseDir(config, pluginId);
+async function resolveInstalledBenchPackRoot(config: BenchLocalConfig, benchPackId: string): Promise<string | undefined> {
+  const baseDir = getBenchPackBaseDir(config, benchPackId);
 
   if (!(await pathExists(baseDir))) {
     return undefined;
   }
 
-  const currentVersion = await readScenarioPackCurrentVersion(baseDir);
+  const currentVersion = await readBenchPackCurrentVersion(baseDir);
 
   if (currentVersion) {
-    const versionDir = path.join(getScenarioPackVersionsDir(baseDir), currentVersion);
+    const versionDir = path.join(getBenchPackVersionsDir(baseDir), currentVersion);
 
     if (await pathExists(versionDir)) {
       return versionDir;
     }
   }
 
-  const legacyManifestPath = path.join(baseDir, "benchlocal.plugin.json");
+  const legacyManifestPath = path.join(baseDir, "benchlocal.pack.json");
   if (await pathExists(legacyManifestPath)) {
     return baseDir;
   }
@@ -367,19 +368,19 @@ async function resolveInstalledScenarioPackRoot(config: BenchLocalConfig, plugin
   return undefined;
 }
 
-async function resolveConfiguredPluginRoot(config: BenchLocalConfig, pluginId: string, plugin: BenchLocalPluginConfig): Promise<string | undefined> {
-  if (plugin.source === "local") {
-    return plugin.path ? expandHomePath(plugin.path) : undefined;
+async function resolveConfiguredBenchPackRoot(config: BenchLocalConfig, benchPackId: string, benchPack: BenchLocalBenchPackConfig): Promise<string | undefined> {
+  if (benchPack.source === "local") {
+    return benchPack.path ? expandHomePath(benchPack.path) : undefined;
   }
 
-  if (plugin.source === "registry" || plugin.source === "github" || plugin.source === "git") {
-    return resolveInstalledScenarioPackRoot(config, pluginId);
+  if (benchPack.source === "registry" || benchPack.source === "github" || benchPack.source === "git") {
+    return resolveInstalledBenchPackRoot(config, benchPackId);
   }
 
   return undefined;
 }
 
-function isPluginManifest(value: unknown): value is PluginManifest {
+function isBenchPackManifest(value: unknown): value is BenchPackManifest {
   if (typeof value !== "object" || value === null) {
     return false;
   }
@@ -399,19 +400,19 @@ function isPluginManifest(value: unknown): value is PluginManifest {
   );
 }
 
-async function readPluginManifest(rootDir: string): Promise<PluginManifest> {
-  const manifestPath = path.join(rootDir, "benchlocal.plugin.json");
+async function readBenchPackManifest(rootDir: string): Promise<BenchPackManifest> {
+  const manifestPath = path.join(rootDir, "benchlocal.pack.json");
   const raw = await fs.readFile(manifestPath, "utf8");
   const parsed = JSON.parse(raw) as unknown;
 
-  if (!isPluginManifest(parsed)) {
-    throw new Error("Invalid benchlocal.plugin.json manifest.");
+  if (!isBenchPackManifest(parsed)) {
+    throw new Error("Invalid benchlocal.pack.json manifest.");
   }
 
   return parsed;
 }
 
-function normalizePluginModule(module: Record<string, unknown>): Record<string, unknown> {
+function normalizeBenchPackModule(module: Record<string, unknown>): Record<string, unknown> {
   let current: Record<string, unknown> = module;
 
   while (
@@ -433,51 +434,51 @@ async function importFreshModule(entryPath: string): Promise<Record<string, unkn
   return (await import(url.href)) as Record<string, unknown>;
 }
 
-async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginConfig: BenchLocalPluginConfig): Promise<PluginInspection> {
-  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+async function inspectBenchPack(benchPackId: string, config: BenchLocalConfig, benchPackConfig: BenchLocalBenchPackConfig): Promise<BenchPackInspection> {
+  const rootDir = await resolveConfiguredBenchPackRoot(config, benchPackId, benchPackConfig);
 
   if (!rootDir) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       status: "not_installed",
-      error: "Plugin root could not be resolved from config."
+      error: "Bench Pack root could not be resolved from config."
     };
   }
 
   if (!(await pathExists(rootDir))) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "not_installed",
-      error: "Plugin install directory does not exist."
+      error: "Bench Pack install directory does not exist."
     };
   }
 
-  const manifestPath = path.join(rootDir, "benchlocal.plugin.json");
+  const manifestPath = path.join(rootDir, "benchlocal.pack.json");
 
   if (!(await pathExists(manifestPath))) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "manifest_missing",
-      error: "benchlocal.plugin.json is missing."
+      error: "benchlocal.pack.json is missing."
     };
   }
 
-  let manifest: PluginManifest;
+  let manifest: BenchPackManifest;
 
   try {
-    manifest = await readPluginManifest(rootDir);
+    manifest = await readBenchPackManifest(rootDir);
   } catch (error) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "invalid_manifest",
-      error: error instanceof Error ? error.message : "Failed to parse plugin manifest."
+      error: error instanceof Error ? error.message : "Failed to parse Bench Pack manifest."
     };
   }
 
@@ -485,36 +486,36 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
 
   if (!(await pathExists(entryPath))) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "entry_missing",
       manifest,
-      error: `Plugin entry is missing: ${entryPath}`
+      error: `Bench Pack entry is missing: ${entryPath}`
     };
   }
 
   try {
-    const loaded = normalizePluginModule(await importFreshModule(entryPath));
+    const loaded = normalizeBenchPackModule(await importFreshModule(entryPath));
     const listScenarios = loaded.listScenarios;
-    const runtimeManifest = isPluginManifest(loaded.manifest) ? loaded.manifest : manifest;
+    const runtimeManifest = isBenchPackManifest(loaded.manifest) ? loaded.manifest : manifest;
 
     if (typeof listScenarios !== "function") {
       return {
-        id: pluginId,
-        source: pluginConfig.source,
+        id: benchPackId,
+        source: benchPackConfig.source,
         rootDir,
         status: "load_error",
         manifest: runtimeManifest,
-        error: "Plugin entry does not export a listScenarios function."
+        error: "Bench Pack entry does not export a listScenarios function."
       };
     }
 
-    const scenarios = await (listScenarios as () => Promise<PluginInspection["scenarios"]>)();
+    const scenarios = await (listScenarios as () => Promise<BenchPackInspection["scenarios"]>)();
 
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "ready",
       manifest: runtimeManifest,
@@ -523,23 +524,23 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
     };
   } catch (error) {
     return {
-      id: pluginId,
-      source: pluginConfig.source,
+      id: benchPackId,
+      source: benchPackConfig.source,
       rootDir,
       status: "load_error",
       manifest,
-      error: error instanceof Error ? error.message : "Failed to load plugin entry."
+      error: error instanceof Error ? error.message : "Failed to load bench pack entry."
     };
   }
 }
 
-export async function inspectConfiguredPlugins(config: BenchLocalConfig): Promise<PluginInspection[]> {
+export async function inspectConfiguredBenchPacks(config: BenchLocalConfig): Promise<BenchPackInspection[]> {
   return Promise.all(
-    Object.entries(config.plugins).map(async ([pluginId, pluginConfig]) => inspectPlugin(pluginId, config, pluginConfig))
+    Object.entries(config.benchpacks).map(async ([benchPackId, benchPackConfig]) => inspectBenchPack(benchPackId, config, benchPackConfig))
   );
 }
 
-export async function loadScenarioPackRegistry(config: BenchLocalConfig): Promise<ScenarioPackRegistryEntry[]> {
+export async function loadBenchPackRegistry(config: BenchLocalConfig): Promise<BenchPackRegistryEntry[]> {
   const response = await fetch(config.registry.official_url, {
     method: "GET",
     headers: {
@@ -548,20 +549,20 @@ export async function loadScenarioPackRegistry(config: BenchLocalConfig): Promis
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch scenario pack registry (${response.status}).`);
+    throw new Error(`Failed to fetch Bench Pack registry (${response.status}).`);
   }
 
   const parsed = (await response.json()) as unknown;
 
-  if (!isScenarioPackRegistry(parsed)) {
-    throw new Error("Scenario pack registry payload is invalid.");
+  if (!isBenchPackRegistry(parsed)) {
+    throw new Error("Bench Pack registry payload is invalid.");
   }
 
   return parsed.packs.slice().sort((left, right) => left.name.localeCompare(right.name));
 }
 
-type ScenarioPackInstallAction = "install" | "update" | "uninstall";
-type ScenarioPackInstallPhase =
+type BenchPackInstallAction = "install" | "update" | "uninstall";
+type BenchPackInstallPhase =
   | "resolving"
   | "downloading"
   | "extracting"
@@ -571,40 +572,40 @@ type ScenarioPackInstallPhase =
   | "removing"
   | "complete";
 
-export type ScenarioPackInstallProgress = {
-  pluginId: string;
-  action: ScenarioPackInstallAction;
-  phase: ScenarioPackInstallPhase;
+export type BenchPackInstallProgress = {
+  benchPackId: string;
+  action: BenchPackInstallAction;
+  phase: BenchPackInstallPhase;
   message: string;
 };
 
-type InstallProgressReporter = (progress: ScenarioPackInstallProgress) => void | Promise<void>;
+type InstallProgressReporter = (progress: BenchPackInstallProgress) => void | Promise<void>;
 
 async function reportInstallProgress(
   reporter: InstallProgressReporter | undefined,
-  progress: ScenarioPackInstallProgress
+  progress: BenchPackInstallProgress
 ): Promise<void> {
   await reporter?.(progress);
 }
 
-async function downloadScenarioPackArchive(
+async function downloadBenchPackArchive(
   archiveUrl: string,
   archivePath: string,
   reporter: InstallProgressReporter | undefined,
-  pluginId: string,
-  action: ScenarioPackInstallAction
+  benchPackId: string,
+  action: BenchPackInstallAction
 ): Promise<void> {
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action,
     phase: "downloading",
-    message: "Downloading scenario pack artifact."
+    message: "Downloading Bench Pack artifact."
   });
 
   const response = await fetch(archiveUrl);
 
   if (!response.ok) {
-    throw new Error(`Failed to download scenario pack archive (${response.status}).`);
+    throw new Error(`Failed to download Bench Pack archive (${response.status}).`);
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
@@ -658,34 +659,28 @@ async function hydrateBenchLocalRuntimeDependencies(rootDir: string): Promise<vo
   }
 }
 
-async function stageScenarioPackArchiveInstall(
-  baseDir: string,
-  pluginId: string,
+async function stageBenchPackArchiveInstall(
   version: string,
   archiveUrl: string,
   reporter?: InstallProgressReporter,
-  action: ScenarioPackInstallAction = "install"
-): Promise<string> {
-  await fs.mkdir(baseDir, { recursive: true });
-  await fs.mkdir(getScenarioPackVersionsDir(baseDir), { recursive: true });
-  await cleanupScenarioPackStaging(baseDir);
-
-  const stagingRoot = path.join(baseDir, `.staging-${randomUUID().slice(0, 8)}`);
+  action: BenchPackInstallAction = "install",
+  progressBenchPackId = "benchpack"
+): Promise<{ stagingRoot: string; stagedDir: string; manifest: BenchPackManifest }> {
+  const stagingRoot = path.join(os.tmpdir(), `benchlocal-benchpack-${randomUUID().slice(0, 8)}`);
   const archivePath = path.join(stagingRoot, "package.tar.gz");
   const extractDir = path.join(stagingRoot, "extract");
-  const versionKey = `${sanitizeScenarioPackVersion(version)}-${randomUUID().slice(0, 8)}`;
+  const versionKey = `${sanitizeBenchPackVersion(version)}-${randomUUID().slice(0, 8)}`;
   const versionStageDir = path.join(stagingRoot, versionKey);
-  const finalVersionDir = path.join(getScenarioPackVersionsDir(baseDir), versionKey);
 
   await fs.mkdir(stagingRoot, { recursive: true });
 
   try {
-    await downloadScenarioPackArchive(archiveUrl, archivePath, reporter, pluginId, action);
+    await downloadBenchPackArchive(archiveUrl, archivePath, reporter, progressBenchPackId, action);
     await reportInstallProgress(reporter, {
-      pluginId,
+      benchPackId: progressBenchPackId,
       action,
       phase: "extracting",
-      message: "Extracting scenario pack artifact."
+      message: "Extracting Bench Pack artifact."
     });
     await fs.mkdir(extractDir, { recursive: true });
     await runTarCommand(["-xzf", archivePath, "-C", extractDir]);
@@ -698,171 +693,269 @@ async function stageScenarioPackArchiveInstall(
 
     await fs.cp(topLevelDir, versionStageDir, { recursive: true });
     await reportInstallProgress(reporter, {
-      pluginId,
+      benchPackId: progressBenchPackId,
       action,
       phase: "hydrating",
-      message: "Preparing scenario pack runtime."
+      message: "Preparing Bench Pack runtime."
     });
     await hydrateBenchLocalRuntimeDependencies(versionStageDir);
     await reportInstallProgress(reporter, {
-      pluginId,
+      benchPackId: progressBenchPackId,
       action,
       phase: "validating",
-      message: "Validating scenario pack."
+      message: "Validating Bench Pack."
     });
 
-    const manifest = await readPluginManifest(versionStageDir);
+    const manifest = await readBenchPackManifest(versionStageDir);
     const entryPath = path.resolve(versionStageDir, manifest.entry);
 
     if (!(await pathExists(entryPath))) {
-      throw new Error(`Scenario pack entry is missing: ${entryPath}`);
+      throw new Error(`Bench Pack entry is missing: ${entryPath}`);
     }
 
-    await fs.rename(versionStageDir, finalVersionDir);
-    return finalVersionDir;
+    return {
+      stagingRoot,
+      stagedDir: versionStageDir,
+      manifest
+    };
   } catch (error) {
     await fs.rm(stagingRoot, { recursive: true, force: true });
     throw error;
-  } finally {
+  }
+}
+
+async function commitStagedBenchPackInstall(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  version: string,
+  stagedDir: string,
+  stagingRoot?: string
+): Promise<string> {
+  const baseDir = getBenchPackBaseDir(config, benchPackId);
+  await fs.mkdir(baseDir, { recursive: true });
+  await fs.mkdir(getBenchPackVersionsDir(baseDir), { recursive: true });
+  await cleanupBenchPackStaging(baseDir);
+  const versionKey = `${sanitizeBenchPackVersion(version)}-${randomUUID().slice(0, 8)}`;
+  const finalVersionDir = path.join(getBenchPackVersionsDir(baseDir), versionKey);
+
+  await fs.rename(stagedDir, finalVersionDir);
+  if (stagingRoot) {
     await fs.rm(stagingRoot, { recursive: true, force: true });
   }
+  return finalVersionDir;
 }
 
-export async function installScenarioPackFromRegistry(
+export async function installBenchPackFromRegistry(
   config: BenchLocalConfig,
-  pluginId: string,
+  benchPackId: string,
   reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "install",
     phase: "resolving",
-    message: "Resolving scenario pack from registry."
+    message: "Resolving Bench Pack from registry."
   });
-  const registry = await loadScenarioPackRegistry(config);
-  const entry = registry.find((candidate) => candidate.id === pluginId);
+  const registry = await loadBenchPackRegistry(config);
+  const entry = registry.find((candidate) => candidate.id === benchPackId);
 
   if (!entry) {
-    throw new Error(`Scenario pack "${pluginId}" was not found in the official registry.`);
+    throw new Error(`Bench Pack "${benchPackId}" was not found in the official registry.`);
   }
 
-  const baseDir = getScenarioPackBaseDir(config, pluginId);
   const archiveUrl =
     entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
-  const rootDir = await stageScenarioPackArchiveInstall(baseDir, pluginId, entry.version, archiveUrl, reporter, "install");
-  const manifest = await readPluginManifest(rootDir);
+  const baseDir = getBenchPackBaseDir(config, benchPackId);
+  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "install", benchPackId);
+  const rootDir = await commitStagedBenchPackInstall(config, benchPackId, entry.version, staged.stagedDir, staged.stagingRoot);
+  const manifest = staged.manifest;
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "install",
     phase: "activating",
-    message: "Activating scenario pack."
+    message: "Activating Bench Pack."
   });
-  await writeScenarioPackCurrentVersion(baseDir, path.basename(rootDir));
+  await writeBenchPackCurrentVersion(baseDir, path.basename(rootDir));
   const nextConfig: BenchLocalConfig = structuredClone(config);
-  const existing = nextConfig.plugins[pluginId];
-  nextConfig.plugins[pluginId] = bootstrapPluginConfigFromManifest(manifest, entry, existing);
+  const existing = nextConfig.benchpacks[benchPackId];
+  nextConfig.benchpacks[benchPackId] = bootstrapBenchPackConfigFromManifest(manifest, entry, existing);
 
-  if (!nextConfig.default_plugin) {
-    nextConfig.default_plugin = pluginId;
+  if (!nextConfig.default_benchpack) {
+    nextConfig.default_benchpack = benchPackId;
   }
 
   await saveConfigFile(nextConfig, getConfigPath());
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "install",
     phase: "complete",
-    message: "Scenario pack installed."
+    message: "Bench Pack installed."
   });
   return nextConfig;
 }
 
-export async function updateScenarioPackFromRegistry(
+export async function updateBenchPackFromRegistry(
   config: BenchLocalConfig,
-  pluginId: string,
+  benchPackId: string,
   reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
-  if (!config.plugins[pluginId]) {
-    throw new Error(`Scenario pack "${pluginId}" is not installed.`);
+  if (!config.benchpacks[benchPackId]) {
+    throw new Error(`Bench Pack "${benchPackId}" is not installed.`);
   }
 
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "update",
     phase: "resolving",
-    message: "Resolving scenario pack update."
+    message: "Resolving Bench Pack update."
   });
-  const registry = await loadScenarioPackRegistry(config);
-  const entry = registry.find((candidate) => candidate.id === pluginId);
+  const registry = await loadBenchPackRegistry(config);
+  const entry = registry.find((candidate) => candidate.id === benchPackId);
 
   if (!entry) {
-    throw new Error(`Scenario pack "${pluginId}" was not found in the official registry.`);
+    throw new Error(`Bench Pack "${benchPackId}" was not found in the official registry.`);
   }
 
-  const baseDir = getScenarioPackBaseDir(config, pluginId);
   const archiveUrl =
     entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
-  const rootDir = await stageScenarioPackArchiveInstall(baseDir, pluginId, entry.version, archiveUrl, reporter, "update");
-  const manifest = await readPluginManifest(rootDir);
+  const baseDir = getBenchPackBaseDir(config, benchPackId);
+  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "update", benchPackId);
+  const rootDir = await commitStagedBenchPackInstall(config, benchPackId, entry.version, staged.stagedDir, staged.stagingRoot);
+  const manifest = staged.manifest;
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "update",
     phase: "activating",
-    message: "Activating updated scenario pack."
+    message: "Activating updated Bench Pack."
   });
-  await writeScenarioPackCurrentVersion(baseDir, path.basename(rootDir));
+  await writeBenchPackCurrentVersion(baseDir, path.basename(rootDir));
 
   const nextConfig: BenchLocalConfig = structuredClone(config);
-  const existing = nextConfig.plugins[pluginId];
-  nextConfig.plugins[pluginId] = bootstrapPluginConfigFromManifest(manifest, entry, existing);
+  const existing = nextConfig.benchpacks[benchPackId];
+  nextConfig.benchpacks[benchPackId] = bootstrapBenchPackConfigFromManifest(manifest, entry, existing);
   await saveConfigFile(nextConfig, getConfigPath());
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "update",
     phase: "complete",
-    message: "Scenario pack updated."
+    message: "Bench Pack updated."
   });
   return nextConfig;
 }
 
-export async function uninstallScenarioPack(
+export async function installBenchPackFromUrl(
   config: BenchLocalConfig,
-  pluginId: string,
+  archiveUrl: string,
   reporter?: InstallProgressReporter
 ): Promise<BenchLocalConfig> {
-  const rootDir = getScenarioPackBaseDir(config, pluginId);
+  const normalizedUrl = archiveUrl.trim();
+
+  if (!normalizedUrl) {
+    throw new Error("Bench Pack URL is required.");
+  }
+
+  try {
+    const parsed = new URL(normalizedUrl);
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error("Bench Pack URL must use http:// or https://.");
+    }
+  } catch {
+    throw new Error("Bench Pack URL must be a valid http:// or https:// URL.");
+  }
+
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId: "third-party",
+    action: "install",
+    phase: "resolving",
+    message: "Resolving Bench Pack from URL."
+  });
+
+  const staged = await stageBenchPackArchiveInstall("url", normalizedUrl, reporter, "install", "third-party");
+  const manifest = staged.manifest;
+  const benchPackId = manifest.id;
+  const rootDir = await commitStagedBenchPackInstall(config, benchPackId, manifest.version, staged.stagedDir, staged.stagingRoot);
+
+  await reportInstallProgress(reporter, {
+    benchPackId,
+    action: "install",
+    phase: "activating",
+    message: "Activating Bench Pack."
+  });
+  await writeBenchPackCurrentVersion(getBenchPackBaseDir(config, benchPackId), path.basename(rootDir));
+
+  const nextConfig: BenchLocalConfig = structuredClone(config);
+  const existing = nextConfig.benchpacks[benchPackId];
+  nextConfig.benchpacks[benchPackId] = {
+    enabled: existing?.enabled ?? true,
+    source: "archive",
+    url: normalizedUrl,
+    version: manifest.version,
+    auto_update: existing?.auto_update,
+    verifiers:
+      getManifestVerifiers(manifest).length > 0
+        ? Object.fromEntries(
+            getManifestVerifiers(manifest).map((spec) => [
+              spec.id,
+              bootstrapVerifierConfig(spec, existing?.verifiers?.[spec.id] ?? existing?.sidecars?.[spec.id])
+            ])
+          )
+        : undefined
+  };
+
+  if (!nextConfig.default_benchpack) {
+    nextConfig.default_benchpack = benchPackId;
+  }
+
+  await saveConfigFile(nextConfig, getConfigPath());
+  await reportInstallProgress(reporter, {
+    benchPackId,
+    action: "install",
+    phase: "complete",
+    message: "Bench Pack installed."
+  });
+  return nextConfig;
+}
+
+export async function uninstallBenchPack(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  reporter?: InstallProgressReporter
+): Promise<BenchLocalConfig> {
+  const rootDir = getBenchPackBaseDir(config, benchPackId);
+  await reportInstallProgress(reporter, {
+    benchPackId,
     action: "uninstall",
     phase: "removing",
-    message: "Removing scenario pack."
+    message: "Removing Bench Pack."
   });
 
   const nextConfig: BenchLocalConfig = structuredClone(config);
-  delete nextConfig.plugins[pluginId];
+  delete nextConfig.benchpacks[benchPackId];
 
-  if (nextConfig.default_plugin === pluginId) {
-    nextConfig.default_plugin = Object.keys(nextConfig.plugins)[0] ?? "";
+  if (nextConfig.default_benchpack === benchPackId) {
+    nextConfig.default_benchpack = Object.keys(nextConfig.benchpacks)[0] ?? "";
   }
 
   await saveConfigFile(nextConfig, getConfigPath());
-  await removeScenarioPackCurrentVersion(rootDir);
+  await removeBenchPackCurrentVersion(rootDir);
   await fs.rm(rootDir, { recursive: true, force: true });
   await reportInstallProgress(reporter, {
-    pluginId,
+    benchPackId,
     action: "uninstall",
     phase: "complete",
-    message: "Scenario pack removed."
+    message: "Bench Pack removed."
   });
   return nextConfig;
 }
 
-type LoadedBenchPlugin = {
-  manifest: PluginManifest;
+type LoadedBenchPackRuntime = {
+  manifest: BenchPackManifest;
   listScenarios: () => Promise<ScenarioMeta[]>;
   prepare: (context: HostContext) => Promise<{
     runScenario: (input: {
       runId: string;
-      pluginId: string;
+      benchPackId: string;
       scenario: ScenarioMeta;
       model: RegisteredModel;
       abortSignal?: AbortSignal;
@@ -880,8 +973,8 @@ type LoadedBenchPlugin = {
   scoreModelResults: (results: ScenarioResult[]) => BenchmarkScore;
 };
 
-function normalizeLoadedPlugin(module: Record<string, unknown>): LoadedBenchPlugin {
-  const normalized = normalizePluginModule(module) as Record<string, unknown>;
+function normalizeLoadedBenchPack(module: Record<string, unknown>): LoadedBenchPackRuntime {
+  const normalized = normalizeBenchPackModule(module) as Record<string, unknown>;
 
   if (
     typeof normalized.listScenarios !== "function" ||
@@ -889,44 +982,44 @@ function normalizeLoadedPlugin(module: Record<string, unknown>): LoadedBenchPlug
     typeof normalized.scoreModelResults !== "function" ||
     !normalized.manifest
   ) {
-    throw new Error("Plugin entry does not implement the BenchLocal runtime surface.");
+    throw new Error("Bench Pack entry does not implement the BenchLocal runtime surface.");
   }
 
-  return normalized as unknown as LoadedBenchPlugin;
+  return normalized as unknown as LoadedBenchPackRuntime;
 }
 
-async function loadConfiguredPlugin(config: BenchLocalConfig, pluginId: string): Promise<{
+async function loadConfiguredBenchPack(config: BenchLocalConfig, benchPackId: string): Promise<{
   rootDir: string;
-  manifest: PluginManifest;
-  plugin: LoadedBenchPlugin;
+  manifest: BenchPackManifest;
+  benchPack: LoadedBenchPackRuntime;
 }> {
-  const pluginConfig = config.plugins[pluginId];
+  const benchPackConfig = config.benchpacks[benchPackId];
 
-  if (!pluginConfig) {
-    throw new Error(`Unknown plugin "${pluginId}" in BenchLocal config.`);
+  if (!benchPackConfig) {
+    throw new Error(`Unknown Bench Pack "${benchPackId}" in BenchLocal config.`);
   }
 
-  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+  const rootDir = await resolveConfiguredBenchPackRoot(config, benchPackId, benchPackConfig);
 
   if (!rootDir || !(await pathExists(rootDir))) {
-    throw new Error(`Plugin "${pluginId}" is not installed at a resolvable path.`);
+    throw new Error(`Bench Pack "${benchPackId}" is not installed at a resolvable path.`);
   }
 
-  const manifest = await readPluginManifest(rootDir);
+  const manifest = await readBenchPackManifest(rootDir);
   const entryPath = path.resolve(rootDir, manifest.entry);
 
   if (!(await pathExists(entryPath))) {
-    throw new Error(`Plugin entry is missing: ${entryPath}`);
+    throw new Error(`Bench Pack entry is missing: ${entryPath}`);
   }
 
   const imported = await importFreshModule(entryPath);
-  const plugin = normalizeLoadedPlugin(imported);
-  const runtimeManifest = isPluginManifest(plugin.manifest) ? plugin.manifest : manifest;
+  const benchPack = normalizeLoadedBenchPack(imported);
+  const runtimeManifest = isBenchPackManifest(benchPack.manifest) ? benchPack.manifest : manifest;
 
   return {
     rootDir,
     manifest: runtimeManifest,
-    plugin
+    benchPack
   };
 }
 
@@ -938,9 +1031,9 @@ type RunArtifacts = {
   hostLogPath: string;
 };
 
-async function createRunArtifacts(config: BenchLocalConfig, pluginId: string): Promise<RunArtifacts> {
-  const runId = `${pluginId}-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`;
-  const runDir = path.join(expandHomePath(config.run_storage_dir), pluginId, runId);
+async function createRunArtifacts(config: BenchLocalConfig, benchPackId: string): Promise<RunArtifacts> {
+  const runId = `${benchPackId}-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`;
+  const runDir = path.join(expandHomePath(config.run_storage_dir), benchPackId, runId);
 
   await fs.mkdir(runDir, { recursive: true });
 
@@ -953,8 +1046,8 @@ async function createRunArtifacts(config: BenchLocalConfig, pluginId: string): P
   };
 }
 
-function getPluginRunRoot(config: BenchLocalConfig, pluginId: string): string {
-  return path.join(expandHomePath(config.run_storage_dir), pluginId);
+function getBenchPackRunRoot(config: BenchLocalConfig, benchPackId: string): string {
+  return path.join(expandHomePath(config.run_storage_dir), benchPackId);
 }
 
 async function appendJsonLine(targetPath: string, value: unknown): Promise<void> {
@@ -997,8 +1090,8 @@ function compactGenerationRequest(input?: GenerationRequest): GenerationRequest 
   ) as GenerationRequest;
 }
 
-function resolveScenarioPackGeneration(
-  manifest: PluginManifest,
+function resolveBenchPackGeneration(
+  manifest: BenchPackManifest,
   overrides?: GenerationRequest
 ): GenerationRequest {
   return compactGenerationRequest({
@@ -1009,12 +1102,12 @@ function resolveScenarioPackGeneration(
 
 async function createHostContext(
   config: BenchLocalConfig,
-  pluginId: string,
+  benchPackId: string,
   rootDir: string,
-  manifest: PluginManifest,
+  manifest: BenchPackManifest,
   artifacts: RunArtifacts
 ): Promise<HostContext> {
-  const pluginConfig = config.plugins[pluginId];
+  const benchPackConfig = config.benchpacks[benchPackId];
   const providers = Object.entries(config.providers).map(([id, provider]) => ({
     id,
     kind: provider.kind,
@@ -1048,16 +1141,16 @@ async function createHostContext(
     })
   );
 
-  const verifiers = await resolveVerifierEndpoints(pluginId, pluginConfig, manifest);
+  const verifiers = await resolveVerifierEndpoints(benchPackId, benchPackConfig, manifest);
 
   return {
     protocolVersion: 1,
-    plugin: {
-      id: pluginId,
+    benchPack: {
+      id: benchPackId,
       version: manifest.version,
       installDir: rootDir,
-      dataDir: path.join(expandHomePath(config.cache_dir), "plugin-data", pluginId),
-      cacheDir: path.join(expandHomePath(config.cache_dir), "plugins", pluginId),
+      dataDir: path.join(expandHomePath(config.cache_dir), "benchpack-data", benchPackId),
+      cacheDir: path.join(expandHomePath(config.cache_dir), "benchpacks", benchPackId),
       runsDir: artifacts.runDir
     },
     providers,
@@ -1067,19 +1160,19 @@ async function createHostContext(
     sidecars: verifiers,
     logger: {
       debug(message, meta) {
-        console.debug(`[plugin:${pluginId}] ${message}`, meta ?? "");
+        console.debug(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
         void appendTextLine(artifacts.hostLogPath, `[debug] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
       },
       info(message, meta) {
-        console.info(`[plugin:${pluginId}] ${message}`, meta ?? "");
+        console.info(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
         void appendTextLine(artifacts.hostLogPath, `[info] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
       },
       warn(message, meta) {
-        console.warn(`[plugin:${pluginId}] ${message}`, meta ?? "");
+        console.warn(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
         void appendTextLine(artifacts.hostLogPath, `[warn] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
       },
       error(message, meta) {
-        console.error(`[plugin:${pluginId}] ${message}`, meta ?? "");
+        console.error(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
         void appendTextLine(artifacts.hostLogPath, `[error] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
       }
     }
@@ -1124,7 +1217,7 @@ async function waitForVerifierReady(
   return false;
 }
 
-function getManifestVerifiers(manifest: PluginManifest): VerifierSpec[] {
+function getManifestVerifiers(manifest: BenchPackManifest): VerifierSpec[] {
   return manifest.verifiers ?? manifest.sidecars ?? [];
 }
 
@@ -1138,11 +1231,11 @@ function bootstrapVerifierConfig(spec: VerifierSpec, existing?: BenchLocalVerifi
   };
 }
 
-function bootstrapPluginConfigFromManifest(
-  manifest: PluginManifest,
-  entry: ScenarioPackRegistryEntry,
-  existing?: BenchLocalPluginConfig
-): BenchLocalPluginConfig {
+function bootstrapBenchPackConfigFromManifest(
+  manifest: BenchPackManifest,
+  entry: BenchPackRegistryEntry,
+  existing?: BenchLocalBenchPackConfig
+): BenchLocalBenchPackConfig {
   const verifierSpecs = getManifestVerifiers(manifest);
   const verifiers =
     verifierSpecs.length > 0
@@ -1191,7 +1284,7 @@ function getVerifierUrl(spec: VerifierSpec, config?: BenchLocalVerifierConfig): 
 }
 
 async function resolveDockerVerifierEndpoint(
-  pluginId: string,
+  benchPackId: string,
   spec: VerifierSpec,
   config?: BenchLocalVerifierConfig
 ): Promise<VerifierEndpoint> {
@@ -1208,14 +1301,14 @@ async function resolveDockerVerifierEndpoint(
     };
   }
 
-  const containerName = getVerifierContainerName(pluginId, spec.id);
-  const containerPort = spec.docker?.containerPort;
+  const containerName = getVerifierContainerName(benchPackId, spec.id);
+  const listenPort = spec.docker?.listenPort;
   const container: {
     exists: boolean;
     running: boolean;
     hostPort?: number;
-  } = containerPort
-    ? await inspectDockerPortBinding(containerName, containerPort)
+  } = listenPort
+    ? await inspectDockerPortBinding(containerName, listenPort)
     : await inspectDockerContainer(containerName);
   const port = container.hostPort;
   const url = port ? `http://127.0.0.1:${port}` : undefined;
@@ -1242,18 +1335,18 @@ async function resolveDockerVerifierEndpoint(
 }
 
 async function resolveVerifierEndpoints(
-  pluginId: string,
-  pluginConfig: BenchLocalPluginConfig | undefined,
-  manifest: PluginManifest
+  benchPackId: string,
+  benchPackConfig: BenchLocalBenchPackConfig | undefined,
+  manifest: BenchPackManifest
 ): Promise<VerifierEndpoint[]> {
   const verifierSpecs = getManifestVerifiers(manifest);
 
   return Promise.all(
     verifierSpecs.map(async (spec) => {
-      const configured = pluginConfig?.verifiers?.[spec.id] ?? pluginConfig?.sidecars?.[spec.id];
+      const configured = benchPackConfig?.verifiers?.[spec.id] ?? benchPackConfig?.sidecars?.[spec.id];
 
       if ((configured?.mode ?? spec.defaultMode) === "docker") {
-        return resolveDockerVerifierEndpoint(pluginId, spec, configured);
+        return resolveDockerVerifierEndpoint(benchPackId, spec, configured);
       }
 
       const resolved = getVerifierUrl(spec, configured);
@@ -1275,9 +1368,9 @@ async function resolveVerifierEndpoints(
   );
 }
 
-export type ConfiguredPluginVerifierStatus = {
-  pluginId: string;
-  pluginName: string;
+export type ConfiguredBenchPackVerifierStatus = {
+  benchPackId: string;
+  benchPackName: string;
   verifiers: VerifierEndpoint[];
   docker: {
     available: boolean;
@@ -1285,60 +1378,60 @@ export type ConfiguredPluginVerifierStatus = {
   };
 };
 
-async function loadConfiguredPluginRuntime(
+async function loadConfiguredBenchPackRuntime(
   config: BenchLocalConfig,
-  pluginId: string
+  benchPackId: string
 ): Promise<{
   rootDir: string;
-  pluginConfig: BenchLocalPluginConfig;
-  manifest: PluginManifest;
+  benchPackConfig: BenchLocalBenchPackConfig;
+  manifest: BenchPackManifest;
 }> {
-  const pluginConfig = config.plugins[pluginId];
+  const benchPackConfig = config.benchpacks[benchPackId];
 
-  if (!pluginConfig) {
-    throw new Error(`Unknown plugin "${pluginId}" in BenchLocal config.`);
+  if (!benchPackConfig) {
+    throw new Error(`Unknown Bench Pack "${benchPackId}" in BenchLocal config.`);
   }
 
-  const rootDir = await resolveConfiguredPluginRoot(config, pluginId, pluginConfig);
+  const rootDir = await resolveConfiguredBenchPackRoot(config, benchPackId, benchPackConfig);
 
   if (!rootDir || !(await pathExists(rootDir))) {
-    throw new Error(`Plugin "${pluginId}" is not installed at a resolvable path.`);
+    throw new Error(`Bench Pack "${benchPackId}" is not installed at a resolvable path.`);
   }
 
-  const manifest = await readPluginManifest(rootDir);
+  const manifest = await readBenchPackManifest(rootDir);
   return {
     rootDir,
-    pluginConfig,
+    benchPackConfig,
     manifest
   };
 }
 
-export async function getConfiguredPluginVerifierStatus(
+export async function getConfiguredBenchPackVerifierStatus(
   config: BenchLocalConfig,
-  pluginId: string
-): Promise<ConfiguredPluginVerifierStatus> {
-  const { pluginConfig, manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  benchPackId: string
+): Promise<ConfiguredBenchPackVerifierStatus> {
+  const { benchPackConfig, manifest } = await loadConfiguredBenchPackRuntime(config, benchPackId);
   const docker = await detectDockerAvailability();
-  const verifiers = await resolveVerifierEndpoints(pluginId, pluginConfig, manifest);
+  const verifiers = await resolveVerifierEndpoints(benchPackId, benchPackConfig, manifest);
 
   return {
-    pluginId,
-    pluginName: manifest.name,
+    benchPackId,
+    benchPackName: manifest.name,
     verifiers,
     docker
   };
 }
 
-export async function startConfiguredPluginVerifiers(
+export async function startConfiguredBenchPackVerifiers(
   config: BenchLocalConfig,
-  pluginId: string
-): Promise<ConfiguredPluginVerifierStatus> {
-  const { rootDir, pluginConfig, manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  benchPackId: string
+): Promise<ConfiguredBenchPackVerifierStatus> {
+  const { rootDir, benchPackConfig, manifest } = await loadConfiguredBenchPackRuntime(config, benchPackId);
   const verifierSpecs = getManifestVerifiers(manifest);
   const docker = await detectDockerAvailability();
 
   for (const spec of verifierSpecs) {
-    const runtime = pluginConfig.verifiers?.[spec.id] ?? pluginConfig.sidecars?.[spec.id];
+    const runtime = benchPackConfig.verifiers?.[spec.id] ?? benchPackConfig.sidecars?.[spec.id];
     const mode = runtime?.mode ?? spec.defaultMode;
 
     if (mode !== "docker" || !runtime?.auto_start) {
@@ -1350,11 +1443,11 @@ export async function startConfiguredPluginVerifiers(
     }
 
     let image = runtime.docker_image ?? spec.docker?.image;
-    const containerPort = spec.docker?.containerPort;
+    const listenPort = spec.docker?.listenPort;
     let pullImage = true;
 
     if (!image && spec.docker?.buildContext) {
-      image = `benchlocal/${sanitizeRuntimeName(pluginId)}-${sanitizeRuntimeName(spec.id)}:local`;
+      image = `benchlocal/${sanitizeRuntimeName(benchPackId)}-${sanitizeRuntimeName(spec.id)}:local`;
       pullImage = false;
 
       if (!(await inspectDockerImage(image))) {
@@ -1362,17 +1455,17 @@ export async function startConfiguredPluginVerifiers(
       }
     }
 
-    if (!image || !containerPort) {
+    if (!image || !listenPort) {
       continue;
     }
 
     const hostPort = await allocateLocalPort();
 
     await startDockerVerifierContainer(
-      getVerifierContainerName(pluginId, spec.id),
+      getVerifierContainerName(benchPackId, spec.id),
       image,
       hostPort,
-      containerPort,
+      listenPort,
       {
         pullImage
       }
@@ -1384,28 +1477,28 @@ export async function startConfiguredPluginVerifiers(
     );
   }
 
-  return getConfiguredPluginVerifierStatus(config, pluginId);
+  return getConfiguredBenchPackVerifierStatus(config, benchPackId);
 }
 
-export async function stopConfiguredPluginVerifiers(
+export async function stopConfiguredBenchPackVerifiers(
   config: BenchLocalConfig,
-  pluginId: string
-): Promise<ConfiguredPluginVerifierStatus> {
-  const { manifest } = await loadConfiguredPluginRuntime(config, pluginId);
+  benchPackId: string
+): Promise<ConfiguredBenchPackVerifierStatus> {
+  const { manifest } = await loadConfiguredBenchPackRuntime(config, benchPackId);
   const verifierSpecs = getManifestVerifiers(manifest);
 
   await Promise.all(
-    verifierSpecs.map((spec) => stopDockerVerifierContainer(getVerifierContainerName(pluginId, spec.id)))
+    verifierSpecs.map((spec) => stopDockerVerifierContainer(getVerifierContainerName(benchPackId, spec.id)))
   );
 
-  return getConfiguredPluginVerifierStatus(config, pluginId);
+  return getConfiguredBenchPackVerifierStatus(config, benchPackId);
 }
 
 async function executeSerialMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
-  prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
-  pluginId: string,
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
   generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
@@ -1427,7 +1520,7 @@ async function executeSerialMode(
       const result = await prepared.runScenario(
         {
           runId,
-          pluginId,
+          benchPackId,
           scenario,
           model,
           abortSignal,
@@ -1450,8 +1543,8 @@ async function executeSerialMode(
 async function executeParallelModelsMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
-  prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
-  pluginId: string,
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
   generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
@@ -1473,7 +1566,7 @@ async function executeParallelModelsMode(
         const result = await prepared.runScenario(
           {
           runId,
-          pluginId,
+          benchPackId,
           scenario,
           model,
           abortSignal,
@@ -1501,8 +1594,8 @@ async function executeParallelModelsMode(
 async function executeParallelScenariosMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
-  prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
-  pluginId: string,
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
   generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
@@ -1524,7 +1617,7 @@ async function executeParallelScenariosMode(
         const result = await prepared.runScenario(
           {
           runId,
-          pluginId,
+          benchPackId,
           scenario,
           model,
           abortSignal,
@@ -1548,8 +1641,8 @@ async function executeParallelScenariosMode(
 async function executeFullParallelMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
-  prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
-  pluginId: string,
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
   generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
@@ -1572,7 +1665,7 @@ async function executeFullParallelMode(
           const result = await prepared.runScenario(
             {
             runId,
-            pluginId,
+            benchPackId,
             scenario,
             model,
             abortSignal,
@@ -1598,9 +1691,9 @@ async function executeFullParallelMode(
   );
 }
 
-export async function runConfiguredPluginBenchmark(
+export async function runConfiguredBenchPack(
   config: BenchLocalConfig,
-  pluginId: string,
+  benchPackId: string,
   options?: {
     modelIds?: string[];
     executionMode?: BenchLocalExecutionMode;
@@ -1608,11 +1701,11 @@ export async function runConfiguredPluginBenchmark(
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
   }
-): Promise<PluginRunSummary> {
-  const artifacts = await createRunArtifacts(config, pluginId);
-  const { rootDir, manifest, plugin } = await loadConfiguredPlugin(config, pluginId);
-  await startConfiguredPluginVerifiers(config, pluginId);
-  const hostContext = await createHostContext(config, pluginId, rootDir, manifest, artifacts);
+): Promise<BenchPackRunSummary> {
+  const artifacts = await createRunArtifacts(config, benchPackId);
+  const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId);
+  await startConfiguredBenchPackVerifiers(config, benchPackId);
+  const hostContext = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
   const enabledModels = hostContext.models.filter((model) => model.enabled);
   const selectedModels =
     options?.modelIds && options.modelIds.length > 0
@@ -1625,13 +1718,13 @@ export async function runConfiguredPluginBenchmark(
     throw new Error("No enabled models are configured in BenchLocal.");
   }
 
-  const scenarios = await plugin.listScenarios();
-  const prepared = await plugin.prepare(hostContext);
+  const scenarios = await benchPack.listScenarios();
+  const prepared = await benchPack.prepare(hostContext);
   const events: ProgressEvent[] = [];
   const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
   const startedAt = new Date().toISOString();
   const executionMode = options?.executionMode ?? "parallel_by_model";
-  const generation = resolveScenarioPackGeneration(manifest, options?.generation);
+  const generation = resolveBenchPackGeneration(manifest, options?.generation);
   let runErrorMessage: string | undefined;
   let cancelled = false;
 
@@ -1652,17 +1745,17 @@ export async function runConfiguredPluginBenchmark(
       throwIfAborted(options?.abortSignal);
       switch (executionMode) {
         case "serial":
-          await executeSerialMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeSerialMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "parallel_by_test_case":
-          await executeParallelScenariosMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeParallelScenariosMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "full_parallel":
-          await executeFullParallelMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "parallel_by_model":
         default:
-          await executeParallelModelsMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
       }
     } catch (error) {
@@ -1678,7 +1771,7 @@ export async function runConfiguredPluginBenchmark(
   }
 
   const scores = Object.fromEntries(
-    Object.entries(resultsByModel).map(([modelId, results]) => [modelId, plugin.scoreModelResults(results)])
+    Object.entries(resultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
   );
 
   if (!runErrorMessage) {
@@ -1688,11 +1781,11 @@ export async function runConfiguredPluginBenchmark(
     });
   }
 
-  const summary: PluginRunSummary = {
+  const summary: BenchPackRunSummary = {
     runId: artifacts.runId,
     runDir: artifacts.runDir,
-    pluginId,
-    pluginName: manifest.name,
+    benchPackId,
+    benchPackName: manifest.name,
     executionMode,
     startedAt,
     completedAt: new Date().toISOString(),
@@ -1721,18 +1814,18 @@ export async function runConfiguredPluginBenchmark(
   return summary;
 }
 
-export async function listRunHistoryForPlugin(
+export async function listRunHistoryForBenchPack(
   config: BenchLocalConfig,
-  pluginId: string
-): Promise<PluginRunHistoryEntry[]> {
-  const runRoot = getPluginRunRoot(config, pluginId);
+  benchPackId: string
+): Promise<BenchPackRunHistoryEntry[]> {
+  const runRoot = getBenchPackRunRoot(config, benchPackId);
 
   if (!(await pathExists(runRoot))) {
     return [];
   }
 
   const entries = await fs.readdir(runRoot, { withFileTypes: true });
-  const summaries: Array<PluginRunHistoryEntry | null> = await Promise.all(
+  const summaries: Array<BenchPackRunHistoryEntry | null> = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory())
       .map(async (entry) => {
@@ -1742,12 +1835,12 @@ export async function listRunHistoryForPlugin(
           return null;
         }
 
-        const summary = await readJsonFile<PluginRunSummary>(summaryPath);
+        const summary = await readJsonFile<BenchPackRunSummary>(summaryPath);
         return {
           runId: summary.runId,
           runDir: summary.runDir,
-          pluginId: summary.pluginId,
-          pluginName: summary.pluginName,
+          benchPackId: summary.benchPackId,
+          benchPackName: summary.benchPackName,
           executionMode: summary.executionMode,
           startedAt: summary.startedAt,
           completedAt: summary.completedAt,
@@ -1755,42 +1848,42 @@ export async function listRunHistoryForPlugin(
           scenarioCount: summary.scenarioCount,
           cancelled: summary.cancelled,
           error: summary.error
-        } satisfies PluginRunHistoryEntry;
+        } satisfies BenchPackRunHistoryEntry;
       })
   );
 
   return summaries
-    .filter((entry): entry is PluginRunHistoryEntry => entry !== null)
+    .filter((entry): entry is BenchPackRunHistoryEntry => entry !== null)
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
 }
 
-export async function loadRunSummaryForPlugin(
+export async function loadRunSummaryForBenchPack(
   config: BenchLocalConfig,
-  pluginId: string,
+  benchPackId: string,
   runId: string
-): Promise<PluginRunSummary> {
-  const summaryPath = path.join(getPluginRunRoot(config, pluginId), runId, "summary.json");
+): Promise<BenchPackRunSummary> {
+  const summaryPath = path.join(getBenchPackRunRoot(config, benchPackId), runId, "summary.json");
 
   if (!(await pathExists(summaryPath))) {
-    throw new Error(`Run history "${runId}" was not found for plugin "${pluginId}".`);
+    throw new Error(`Run history "${runId}" was not found for Bench Pack "${benchPackId}".`);
   }
 
-  return readJsonFile<PluginRunSummary>(summaryPath);
+  return readJsonFile<BenchPackRunSummary>(summaryPath);
 }
 
-export function createPluginHost() {
-  let status: PluginHostStatus = "idle";
+export function createBenchPackHost() {
+  let status: BenchPackHostStatus = "idle";
 
   return {
-    getStatus(): PluginHostStatus {
+    getStatus(): BenchPackHostStatus {
       return status;
     },
-    async loadPlugin(entryPath: string, pluginId: string): Promise<LoadedPluginHandle> {
+    async loadBenchPack(entryPath: string, benchPackId: string): Promise<LoadedBenchPackHandle> {
       status = "loading";
       status = "ready";
 
       return {
-        pluginId,
+        benchPackId,
         entryPath
       };
     }

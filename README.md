@@ -17,11 +17,11 @@ BenchLocal owns:
 - model registry
 - generation parameters
 - run scheduling and concurrency
-- plugin install and update flow
-- sidecar lifecycle management
+- Bench Pack install and update flow
+- verifier lifecycle management
 - desktop UI and persisted user settings
 
-Each benchmark plugin owns:
+Each Bench Pack owns:
 
 - scenario definitions
 - benchmark-specific prompts

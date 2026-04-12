@@ -2,7 +2,7 @@
 
 ## Objective
 
-Build BenchLocal as an Electron desktop host for benchmark plugins while preserving standalone operation for:
+Build BenchLocal as an Electron desktop host for Bench Packs while preserving standalone operation for:
 
 - ToolCall-15
 - BugFind-15
@@ -14,10 +14,10 @@ Build BenchLocal as an Electron desktop host for benchmark plugins while preserv
 This plan is sequenced to reduce risk:
 
 1. prove the shared host config model
-2. prove plugin loading
-3. prove one simple benchmark plugin
-4. prove one verifier-backed plugin
-5. expand to the full six-plugin system
+2. prove Bench Pack loading
+3. prove one simple Bench Pack
+4. prove one verifier-backed Bench Pack
+5. expand to the full six-Bench Pack system
 
 ## Scope Boundaries
 
@@ -26,8 +26,8 @@ BenchLocal v0 should include:
 - desktop shell
 - settings UI
 - config persistence
-- plugin registry
-- local plugin loading
+- Bench Pack registry
+- local Bench Pack loading
 - benchmark execution
 - result persistence
 - sidecar lifecycle for Docker HTTP validators
@@ -36,8 +36,8 @@ BenchLocal v0 does not need:
 
 - cloud sync
 - online marketplace
-- sandboxed untrusted plugin execution
-- custom plugin-authored renderer UI
+- sandboxed untrusted Bench Pack execution
+- custom Bench Pack-authored renderer UI
 
 ## Proposed Repository Layout
 
@@ -59,7 +59,7 @@ BenchLocal/
   packages/
     benchlocal-core/
     benchlocal-sdk/
-    plugin-host/
+    benchpack-host/
 ```
 
 ## Package Responsibilities
@@ -90,22 +90,22 @@ Contains:
 
 ### `packages/benchlocal-sdk`
 
-Plugin authoring helpers.
+Bench Pack authoring helpers.
 
 Contains:
 
-- TypeScript interfaces for plugins
+- TypeScript interfaces for Bench Packs
 - manifest helpers
 - result helpers
 - optional adapters for standalone `.env` mode
 
-### `packages/plugin-host`
+### `packages/benchpack-host`
 
-Node process that loads and executes plugins.
+Node process that loads and executes Bench Packs.
 
 Contains:
 
-- plugin loader
+- Bench Pack loader
 - manifest validator
 - isolated execution wrapper
 - IPC bridge back to Electron main process
@@ -122,7 +122,7 @@ BenchLocal can launch, load `~/.benchlocal/config.toml`, and render a settings U
 
 - Electron app boots locally
 - config file auto-created if missing
-- UI screens for Providers, Models, Generation, Plugins
+- UI screens for Providers, Models, Generation, Bench Packs
 - save and reload cycle works
 
 ### Work Items
@@ -140,41 +140,41 @@ BenchLocal can launch, load `~/.benchlocal/config.toml`, and render a settings U
 - invalid config is surfaced clearly
 - app restart preserves changes
 
-## Milestone 2. Plugin Registry And Local Install
+## Milestone 2. Bench Pack Registry And Local Install
 
 ### Goal
 
-BenchLocal can register and inspect plugins from local paths.
+BenchLocal can register and inspect benchpacks from local paths.
 
 ### Deliverables
 
-- plugin registry loader
-- plugin manifest validator
-- plugin list UI
-- local-path plugin add flow
+- Bench Pack registry loader
+- Bench Pack manifest validator
+- Bench Pack list UI
+- local-path Bench Pack add flow
 
 ### Work Items
 
 - build manifest validation
-- build plugin install record in config
+- build Bench Pack install record in config
 - implement local path add dialog
-- inspect plugin metadata and scenarios
+- inspect Bench Pack metadata and scenarios
 
 ### Exit Criteria
 
-- local `DataExtract-15` can be added as a plugin reference
+- local `DataExtract-15` can be added as a Bench Pack reference
 - manifest loads and displays in UI
 
-## Milestone 3. Plugin Host And Run Engine
+## Milestone 3. Bench Pack Host And Run Engine
 
 ### Goal
 
-BenchLocal can execute one plugin and stream progress to the UI.
+BenchLocal can execute one Bench Pack and stream progress to the UI.
 
 ### Deliverables
 
-- plugin host child process
-- plugin loading by manifest entrypoint
+- Bench Pack host child process
+- Bench Pack loading by manifest entrypoint
 - progress event IPC
 - run manager
 - run result persistence
@@ -188,15 +188,15 @@ BenchLocal can execute one plugin and stream progress to the UI.
 
 ### Exit Criteria
 
-- BenchLocal can run one scenario for one model in one plugin
+- BenchLocal can run one scenario for one model in one Bench Pack
 - progress updates reach UI
 - result is stored to disk
 
-## Milestone 4. First Real Plugin Conversion
+## Milestone 4. First Real Bench Pack Conversion
 
 ### Goal
 
-Convert `DataExtract-15` as the first production plugin.
+Convert `DataExtract-15` as the first production Bench Pack.
 
 ### Why First
 
@@ -210,7 +210,7 @@ It is the lowest-risk proof of the protocol.
 
 ### Deliverables
 
-- `benchlocal.plugin.json` in `DataExtract-15`
+- `benchlocal.pack.json` in `DataExtract-15`
 - `src/benchlocal/index.ts`
 - shared core between standalone and BenchLocal mode
 
@@ -230,7 +230,7 @@ Convert `BugFind-15` and prove Docker-sidecar management.
 - sidecar manager in Electron main process
 - port allocation logic
 - healthcheck UI
-- plugin receives verifier URL through host context
+- Bench Pack receives verifier URL through host context
 
 ### Exit Criteria
 
@@ -246,7 +246,7 @@ Convert `ToolCall-15`.
 
 ### Deliverables
 
-- plugin core supports tool call traces
+- Bench Pack core supports tool call traces
 - result viewer supports tool call and tool result artifacts
 
 ### Exit Criteria
@@ -254,7 +254,7 @@ Convert `ToolCall-15`.
 - full ToolCall benchmark runs through BenchLocal
 - trace viewer can inspect tool activity
 
-## Milestone 7. Remaining Plugins
+## Milestone 7. Remaining Bench Packs
 
 Convert:
 
@@ -292,7 +292,7 @@ Recommendation:
 
 Reason:
 
-- plugin host, SDK, and UI should version together at first
+- Bench Pack host, SDK, and UI should version together at first
 
 ### 2. UI Stack
 
@@ -346,8 +346,8 @@ Suggested structure:
 
 `run.json`
 
-- plugin ID
-- plugin version
+- Bench Pack ID
+- Bench Pack version
 - models used
 - generation params
 - timestamps
@@ -378,12 +378,12 @@ Suggested structure:
 
 - define shared TypeScript types
 - implement config parser
-- implement plugin manifest loader
-- implement plugin host IPC
+- implement Bench Pack manifest loader
+- implement Bench Pack host IPC
 
-### Task Group C. First Plugin Migration
+### Task Group C. First Bench Pack Migration
 
-- adapt `DataExtract-15` into plugin mode
+- adapt `DataExtract-15` into Bench Pack mode
 - preserve standalone `.env` mode
 
 ### Task Group D. Verifier Support
@@ -393,7 +393,7 @@ Suggested structure:
 
 ## Risk Register
 
-### Risk: Plugin And Standalone Code Drift
+### Risk: Bench Pack And Standalone Code Drift
 
 Mitigation:
 
@@ -424,20 +424,20 @@ Mitigation:
 1. scaffold BenchLocal workspace
 2. implement config management
 3. implement settings UI
-4. implement plugin registry
-5. implement plugin host
+4. implement Bench Pack registry
+5. implement Bench Pack host
 6. migrate DataExtract-15
 7. implement sidecar manager
 8. migrate BugFind-15
 9. migrate ToolCall-15
-10. migrate the remaining three plugins
+10. migrate the remaining three benchpacks
 
 ## Definition Of Done For BenchLocal v0
 
 BenchLocal v0 is done when:
 
 - the desktop app edits and persists shared config
-- at least one simple plugin and one sidecar-backed plugin run successfully
+- at least one simple Bench Pack and one verifier-backed Bench Pack run successfully
 - results persist to disk
 - the six benchmark repos remain standalone-compatible
 - BenchLocal is clearly the shared host for providers, models, and generation parameters

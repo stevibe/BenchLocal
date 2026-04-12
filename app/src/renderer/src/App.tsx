@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CircleAlert,
+  Check,
   Bot,
   ChevronDown,
   ChevronLeft,
@@ -23,12 +24,12 @@ import {
   Settings2,
   Sidebar,
   SlidersHorizontal,
-  LoaderCircle,
   Trash2,
   Wrench,
   X
 } from "lucide-react";
 import type {
+  BenchPackRegistryEntry,
   BenchLocalConfig,
   BenchLocalExecutionMode,
   BenchLocalModelConfig,
@@ -44,17 +45,21 @@ import type {
   GenerationRequest,
   ProgressEvent,
   ScenarioResult,
-  PluginInspection,
-  PluginRunHistoryEntry,
-  PluginRunSummary,
-  ScenarioPackRegistryEntry
+  BenchPackInspection,
+  BenchPackRunHistoryEntry,
+  BenchPackRunSummary
 } from "@core";
-import type { DetachedLogsState, PluginVerifierStatus, ScenarioPackMutationProgress } from "@/shared/desktop-api";
+import type {
+  BenchPackMutationProgress,
+  BenchLocalDiscoveredModel,
+  DetachedLogsState,
+  BenchPackVerifierStatus
+} from "@/shared/desktop-api";
 
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
 
-type SettingsTab = "providers" | "models" | "plugins" | "verification" | "advanced";
+type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
 
 type LoadState = {
   path: string;
@@ -103,8 +108,18 @@ type ModelModalState =
       form: ModelFormState;
     };
 
+type ModelBrowserModalState = {
+  providerId: string;
+  providerName: string;
+  entries: BenchLocalDiscoveredModel[];
+  query: string;
+  selectedModelId: string | null;
+  loading: boolean;
+  error: string | null;
+};
+
 type DetailModalState = {
-  pluginId: string;
+  benchPackId: string;
   modelId: string;
   scenarioId: string;
   summary: string;
@@ -128,8 +143,8 @@ type SamplingFormState = {
 
 type SamplingModalState = {
   tabId: string;
-  pluginId: string;
-  pluginName: string;
+  benchPackId: string;
+  benchPackName: string;
   defaults: GenerationRequest;
   form: SamplingFormState;
 };
@@ -142,9 +157,9 @@ type ModelAliasModalState = {
 };
 
 type HistoryModalState = {
-  pluginId: string;
-  pluginName: string;
-  entries: PluginRunHistoryEntry[];
+  benchPackId: string;
+  benchPackName: string;
+  entries: BenchPackRunHistoryEntry[];
 };
 
 type WorkspaceModalState =
@@ -184,7 +199,7 @@ type LiveRunState = {
 };
 
 type ActiveRunEntry = {
-  pluginId: string;
+  benchPackId: string;
 };
 
 type LoadedHistoryEntry = {
@@ -192,7 +207,8 @@ type LoadedHistoryEntry = {
   startedAt: string;
 };
 
-type ScenarioPackMutationState = ScenarioPackMutationProgress;
+type BenchPackMutationState = BenchPackMutationProgress;
+const THIRD_PARTY_INSTALL_MUTATION_ID = "__third_party_install__";
 
 function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
   if (themeId === "system") {
@@ -222,8 +238,8 @@ const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: strin
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
   { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
-  { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
-  { id: "plugins", label: "Scenario Packs", blurb: "Browse, install, update, and remove official scenario packs.", icon: <PlugZap size={16} /> },
+  { id: "models", label: "Models", blurb: "Shared model registry across Bench Packs.", icon: <Bot size={16} /> },
+  { id: "benchPacks", label: "Bench Packs", blurb: "Browse, install, update, and remove official Bench Packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and registry options.", icon: <FolderCog size={16} /> }
 ];
@@ -254,7 +270,7 @@ function defaultProviderName(kind: BenchLocalProviderKind): string {
   return providerKindLabel(kind);
 }
 
-function scenarioPackMutationLabel(mutation: ScenarioPackMutationState): string {
+function benchPackMutationLabel(mutation: BenchPackMutationState): string {
   switch (mutation.action) {
     case "install":
       return mutation.phase === "complete" ? "Installed" : "Installing...";
@@ -304,6 +320,24 @@ function createEmptyModel(providerId = "openrouter"): ModelFormState {
     group: "primary",
     enabled: true
   };
+}
+
+function providerSupportsModelDiscovery(provider?: BenchLocalProviderConfig | null): boolean {
+  return provider?.kind === "openrouter" || provider?.kind === "openai_compatible";
+}
+
+function defaultModelLabel(
+  providerName: string,
+  modelId: string,
+  discoveredName?: string
+): string {
+  const trimmedDiscoveredName = discoveredName?.trim();
+
+  if (trimmedDiscoveredName) {
+    return trimmedDiscoveredName;
+  }
+
+  return `${modelId.trim()} via ${providerName}`.trim();
 }
 
 function createSamplingForm(input?: GenerationRequest): SamplingFormState {
@@ -385,8 +419,8 @@ function createWorkspaceName(existingCount: number): string {
   return existingCount === 0 ? "My Workspace" : `Workspace ${existingCount + 1}`;
 }
 
-function createTabTitle(pluginId: string, inspections: PluginInspection[]): string {
-  return inspections.find((inspection) => inspection.id === pluginId)?.manifest?.name ?? pluginId;
+function createTabTitle(benchPackId: string, inspections: BenchPackInspection[]): string {
+  return inspections.find((inspection) => inspection.id === benchPackId)?.manifest?.name ?? benchPackId;
 }
 
 function normalizeTabModelSelections(
@@ -519,6 +553,44 @@ function updateLiveRunState(
   return next;
 }
 
+const REGISTRY_UNAVAILABLE_MESSAGE =
+  "Official Bench Pack registry is unavailable right now. Installed Bench Packs remain usable.";
+
+function isRegistryConnectivityError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
+  return /fetch failed/i.test(message);
+}
+
+function formatRegistryWarning(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return REGISTRY_UNAVAILABLE_MESSAGE;
+  }
+
+  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
+
+  if (!message || /fetch failed/i.test(message)) {
+    return REGISTRY_UNAVAILABLE_MESSAGE;
+  }
+
+  return `${REGISTRY_UNAVAILABLE_MESSAGE} ${message}`;
+}
+
+function formatRegistryMutationError(
+  action: "install" | "update",
+  benchPackId: string,
+  error: unknown
+): string {
+  if (isRegistryConnectivityError(error)) {
+    return `Failed to ${action} ${benchPackId}. Official Bench Pack registry is unavailable right now.`;
+  }
+
+  return error instanceof Error ? error.message : `Failed to ${action} ${benchPackId}.`;
+}
+
 export function App() {
   if (DETACHED_LOGS_VIEW) {
     return <DetachedLogsWindow />;
@@ -527,14 +599,15 @@ export function App() {
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
-  const [pluginInspections, setPluginInspections] = useState<PluginInspection[]>([]);
-  const [registryEntries, setRegistryEntries] = useState<ScenarioPackRegistryEntry[]>([]);
+  const [benchPackInspections, setBenchPackInspections] = useState<BenchPackInspection[]>([]);
+  const [registryEntries, setRegistryEntries] = useState<BenchPackRegistryEntry[]>([]);
+  const [registryWarning, setRegistryWarning] = useState<string | null>(null);
   const [availableThemes, setAvailableThemes] = useState<BenchLocalThemeDescriptor[]>([]);
   const [activeThemeDefinition, setActiveThemeDefinition] = useState<BenchLocalThemeDefinition | null>(null);
   const [systemPrefersDark, setSystemPrefersDark] = useState(
     typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
   );
-  const [verifierStatuses, setVerifierStatuses] = useState<Record<string, PluginVerifierStatus>>({});
+  const [verifierStatuses, setVerifierStatuses] = useState<Record<string, BenchPackVerifierStatus>>({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -548,6 +621,7 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
   const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
+  const [modelBrowserModal, setModelBrowserModal] = useState<ModelBrowserModalState | null>(null);
   const [tabModelsModal, setTabModelsModal] = useState<TabModelsModalState | null>(null);
   const [samplingModal, setSamplingModal] = useState<SamplingModalState | null>(null);
   const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
@@ -559,8 +633,8 @@ export function App() {
   const [editingTab, setEditingTab] = useState<{ tabId: string; value: string; width: number } | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
   const [stoppingRuns, setStoppingRuns] = useState<Record<string, true>>({});
-  const [runSummaries, setRunSummaries] = useState<Record<string, PluginRunSummary>>({});
-  const [runHistories, setRunHistories] = useState<Record<string, PluginRunHistoryEntry[]>>({});
+  const [runSummaries, setRunSummaries] = useState<Record<string, BenchPackRunSummary>>({});
+  const [runHistories, setRunHistories] = useState<Record<string, BenchPackRunHistoryEntry[]>>({});
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
   const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<Record<string, LoadedHistoryEntry>>({});
   const [logsOpen, setLogsOpen] = useState(false);
@@ -570,9 +644,11 @@ export function App() {
   const [detailModal, setDetailModal] = useState<DetailModalState | null>(null);
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [scenarioPackMutations, setScenarioPackMutations] = useState<Record<string, ScenarioPackMutationState>>({});
+  const [appNotice, setAppNotice] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
+  const [benchPackMutations, setBenchPackMutations] = useState<Record<string, BenchPackMutationState>>({});
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
+  const settingsOpenRef = useRef(false);
 
   const providerIds = useMemo(() => Object.keys(draft?.providers ?? {}), [draft]);
   const themeOptions = useMemo(() => ["system", ...availableThemes.map((theme) => theme.id)], [availableThemes]);
@@ -580,7 +656,7 @@ export function App() {
     () => resolveThemeLabel(draft?.ui.theme ?? "system", availableThemes, systemPrefersDark),
     [draft?.ui.theme, availableThemes, systemPrefersDark]
   );
-  const readyInspections = useMemo(() => pluginInspections.filter((inspection) => inspection.status === "ready"), [pluginInspections]);
+  const readyInspections = useMemo(() => benchPackInspections.filter((inspection) => inspection.status === "ready"), [benchPackInspections]);
   const activeWorkspace = useMemo<BenchLocalWorkspace | null>(
     () => (workspaceState?.activeWorkspaceId ? workspaceState.workspaces[workspaceState.activeWorkspaceId] ?? null : null),
     [workspaceState]
@@ -597,8 +673,8 @@ export function App() {
     [activeWorkspace, workspaceState, workspaceTabs]
   );
   const activeInspection = useMemo(
-    () => pluginInspections.find((inspection) => inspection.id === activeTab?.pluginId) ?? null,
-    [pluginInspections, activeTab]
+    () => benchPackInspections.find((inspection) => inspection.id === activeTab?.benchPackId) ?? null,
+    [benchPackInspections, activeTab]
   );
   const activeTabModels = useMemo(() => (draft ? resolveTabModels(activeTab, draft.models) : []), [draft, activeTab]);
   const activeRunSummary = useMemo(() => (activeTab ? runSummaries[activeTab.id] ?? null : null), [runSummaries, activeTab]);
@@ -612,6 +688,7 @@ export function App() {
   const tabStripShellRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
+  const modelDiscoveryCacheRef = useRef<Record<string, BenchLocalDiscoveredModel[]>>({});
   const appliedThemeKeysRef = useRef<string[]>([]);
   const [tabStripOverflow, setTabStripOverflow] = useState(false);
   const [activeTabMask, setActiveTabMask] = useState<{ left: number; width: number } | null>(null);
@@ -661,28 +738,29 @@ export function App() {
     });
   };
 
-  const loadPluginInspections = async () => {
+  const loadBenchPackInspections = async () => {
     try {
-      const inspections = await window.benchlocal.plugins.list();
-      setPluginInspections(inspections);
+      const inspections = await window.benchlocal.benchPacks.list();
+      setBenchPackInspections(inspections);
     } catch (pluginError) {
-      setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured scenario packs.");
+      setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured Bench Packs.");
     }
   };
 
   const loadRegistryEntries = async () => {
     try {
-      const entries = await window.benchlocal.plugins.registry();
+      const entries = await window.benchlocal.benchPacks.registry();
       setRegistryEntries(entries);
+      setRegistryWarning(null);
     } catch (registryError) {
-      setError(registryError instanceof Error ? registryError.message : "Failed to load scenario pack registry.");
+      setRegistryWarning(formatRegistryWarning(registryError));
     }
   };
 
   const loadVerifierStatuses = async () => {
     try {
       const statuses = await window.benchlocal.verifiers.list();
-      setVerifierStatuses(Object.fromEntries(statuses.map((status) => [status.pluginId, status])));
+      setVerifierStatuses(Object.fromEntries(statuses.map((status) => [status.benchPackId, status])));
     } catch (verifierError) {
       setError(verifierError instanceof Error ? verifierError.message : "Failed to load verifier status.");
     }
@@ -697,15 +775,15 @@ export function App() {
     }
   };
 
-  const loadHistoryForPlugin = async (pluginId: string) => {
+  const loadHistoryForBenchPack = async (benchPackId: string) => {
     try {
-      const history = await window.benchlocal.plugins.history({ pluginId });
+      const history = await window.benchlocal.benchPacks.history({ benchPackId });
       setRunHistories((current) => ({
         ...current,
-        [pluginId]: history
+        [benchPackId]: history
       }));
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load scenario pack history.");
+      setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
     }
   };
 
@@ -715,15 +793,33 @@ export function App() {
     const load = async () => {
       setIsBusy(true);
       setError(null);
+      setRegistryWarning(null);
 
       try {
-        const result = await window.benchlocal.config.load();
-        const workspaceResult = await window.benchlocal.workspaces.load();
-        const inspections = await window.benchlocal.plugins.list();
-        const registry = await window.benchlocal.plugins.registry();
-        const themes = await window.benchlocal.themes.list();
-        const verifierStatusList = await window.benchlocal.verifiers.list();
-        const activeRunsResult = await window.benchlocal.plugins.activeRuns();
+        const [
+          result,
+          workspaceResult,
+          inspections,
+          themes,
+          verifierStatusList,
+          activeRunsResult
+        ] = await Promise.all([
+          window.benchlocal.config.load(),
+          window.benchlocal.workspaces.load(),
+          window.benchlocal.benchPacks.list(),
+          window.benchlocal.themes.list(),
+          window.benchlocal.verifiers.list(),
+          window.benchlocal.benchPacks.activeRuns()
+        ]);
+
+        let registry: BenchPackRegistryEntry[] = [];
+        let nextRegistryWarning: string | null = null;
+
+        try {
+          registry = await window.benchlocal.benchPacks.registry();
+        } catch (registryError) {
+          nextRegistryWarning = formatRegistryWarning(registryError);
+        }
 
         if (cancelled) {
           return;
@@ -732,14 +828,15 @@ export function App() {
         setLoadState(result);
         setDraft(cloneConfig(result.config));
         setWorkspaceState(workspaceResult.state);
-        setPluginInspections(inspections);
+        setBenchPackInspections(inspections);
         setRegistryEntries(registry);
+        setRegistryWarning(nextRegistryWarning);
         setAvailableThemes(themes);
-        setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
+        setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status])));
         setActiveRuns(
-          Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { pluginId: run.pluginId }]))
+          Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { benchPackId: run.benchPackId }]))
         );
-        setNotice(result.created ? "Created a fresh ~/.benchlocal/config.toml bootstrap." : null);
+        setAppNotice(result.created ? "Created a fresh ~/.benchlocal/config.toml bootstrap." : null);
       } catch (loadError) {
         if (!cancelled) {
           setError(loadError instanceof Error ? loadError.message : "Failed to load BenchLocal config.");
@@ -815,7 +912,7 @@ export function App() {
   }, [activeThemeDefinition]);
 
   useEffect(() => {
-    return window.benchlocal.plugins.onRunEvent(({ tabId, event }) => {
+    return window.benchlocal.benchPacks.onRunEvent(({ tabId, event }) => {
       if (event.type === "run_finished" || event.type === "run_error") {
         setActiveRuns((current) => {
           if (!current[tabId]) {
@@ -845,10 +942,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return window.benchlocal.plugins.onMutationProgress((payload) => {
-      setScenarioPackMutations((current) => ({
+    return window.benchlocal.benchPacks.onMutationProgress((payload) => {
+      setBenchPackMutations((current) => ({
         ...current,
-        [payload.pluginId]: payload
+        [payload.benchPackId]: payload
       }));
     });
   }, []);
@@ -882,7 +979,7 @@ export function App() {
       return;
     }
 
-    void loadHistoryForPlugin(activeInspection.id);
+    void loadHistoryForBenchPack(activeInspection.id);
   }, [activeInspection?.id, activeInspection?.status]);
 
   useEffect(() => {
@@ -990,6 +1087,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    settingsOpenRef.current = settingsOpen;
+
+    if (!settingsOpen) {
+      setSettingsNotice(null);
+    }
+  }, [settingsOpen]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -1067,9 +1172,11 @@ export function App() {
       const result = await window.benchlocal.config.save(draft);
       setLoadState(result);
       setDraft(cloneConfig(result.config));
-      await loadPluginInspections();
+      await loadBenchPackInspections();
       await loadRegistryEntries();
-      setNotice("Saved ~/.benchlocal/config.toml");
+      if (settingsOpenRef.current) {
+        setSettingsNotice("Saved ~/.benchlocal/config.toml");
+      }
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save BenchLocal config.");
@@ -1079,20 +1186,27 @@ export function App() {
     }
   };
 
-  const refreshScenarioPackState = async (result?: LoadState) => {
+  const refreshBenchPackState = async (result?: LoadState) => {
     const nextLoadState = result ?? (await window.benchlocal.config.load());
-    const inspections = await window.benchlocal.plugins.list();
-    const registry = await window.benchlocal.plugins.registry();
+    const inspections = await window.benchlocal.benchPacks.list();
     const verifierStatusList = await window.benchlocal.verifiers.list();
+    let registry = registryEntries;
+
+    try {
+      registry = await window.benchlocal.benchPacks.registry();
+      setRegistryWarning(null);
+    } catch (registryError) {
+      setRegistryWarning(formatRegistryWarning(registryError));
+    }
 
     setLoadState(nextLoadState);
     setDraft(cloneConfig(nextLoadState.config));
-    setPluginInspections(inspections);
+    setBenchPackInspections(inspections);
     setRegistryEntries(registry);
-    setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.pluginId, status])));
+    setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status])));
   };
 
-  const ensureScenarioPackMutationReady = async (): Promise<boolean> => {
+  const ensureBenchPackMutationReady = async (): Promise<boolean> => {
     if (!hasUnsavedChanges) {
       return true;
     }
@@ -1100,105 +1214,163 @@ export function App() {
     return save();
   };
 
-  const installScenarioPack = async (pluginId: string) => {
-    if (!(await ensureScenarioPackMutationReady())) {
+  const installBenchPack = async (benchPackId: string) => {
+    if (!(await ensureBenchPackMutationReady())) {
       return;
     }
 
     setIsBusy(true);
     setError(null);
-    setScenarioPackMutations((current) => ({
+    setBenchPackMutations((current) => ({
       ...current,
-      [pluginId]: {
-        pluginId,
+      [benchPackId]: {
+        benchPackId,
         action: "install",
         phase: "resolving",
-        message: "Resolving scenario pack from registry."
+        message: "Resolving Bench Pack from registry."
       }
     }));
 
     try {
-      const result = await window.benchlocal.plugins.install({ pluginId });
-      await refreshScenarioPackState(result);
-      setNotice(`Installed ${pluginId}.`);
+      const result = await window.benchlocal.benchPacks.install({ benchPackId });
+      await refreshBenchPackState(result);
+      if (settingsOpenRef.current) {
+        setSettingsNotice(`Installed ${benchPackId}.`);
+      }
     } catch (installError) {
-      setError(installError instanceof Error ? installError.message : `Failed to install ${pluginId}.`);
+      setError(formatRegistryMutationError("install", benchPackId, installError));
     } finally {
       setIsBusy(false);
-      setScenarioPackMutations((current) => {
+      setBenchPackMutations((current) => {
         const next = { ...current };
-        delete next[pluginId];
+        delete next[benchPackId];
         return next;
       });
     }
   };
 
-  const updateScenarioPack = async (pluginId: string) => {
-    if (!(await ensureScenarioPackMutationReady())) {
+  const installBenchPackFromUrl = async (url: string) => {
+    if (!(await ensureBenchPackMutationReady())) {
+      return;
+    }
+
+    const normalizedUrl = url.trim();
+
+    if (!normalizedUrl) {
+      setError("Bench Pack URL is required.");
       return;
     }
 
     setIsBusy(true);
     setError(null);
-    setScenarioPackMutations((current) => ({
+    let installedBenchPackId: string | null = null;
+    setBenchPackMutations((current) => ({
       ...current,
-      [pluginId]: {
-        pluginId,
+      [THIRD_PARTY_INSTALL_MUTATION_ID]: {
+        benchPackId: THIRD_PARTY_INSTALL_MUTATION_ID,
+        action: "install",
+        phase: "resolving",
+        message: "Resolving Bench Pack from URL."
+      }
+    }));
+
+    try {
+      const result = await window.benchlocal.benchPacks.installFromUrl({ url: normalizedUrl });
+      await refreshBenchPackState(result);
+      installedBenchPackId =
+        Object.entries(result.config.benchpacks).find(([, benchPack]) => benchPack.source === "archive" && benchPack.url === normalizedUrl)?.[0] ??
+        null;
+      if (settingsOpenRef.current) {
+        setSettingsNotice(installedBenchPackId ? `Installed ${installedBenchPackId}.` : "Installed third-party Bench Pack.");
+      }
+      return true;
+    } catch (installError) {
+      setError(installError instanceof Error ? installError.message : "Failed to install Bench Pack from URL.");
+      return false;
+    } finally {
+      setIsBusy(false);
+      setBenchPackMutations((current) => {
+        const next = { ...current };
+        delete next[THIRD_PARTY_INSTALL_MUTATION_ID];
+        delete next["third-party"];
+        if (installedBenchPackId) {
+          delete next[installedBenchPackId];
+        }
+        return next;
+      });
+    }
+  };
+
+  const updateBenchPack = async (benchPackId: string) => {
+    if (!(await ensureBenchPackMutationReady())) {
+      return;
+    }
+
+    setIsBusy(true);
+    setError(null);
+    setBenchPackMutations((current) => ({
+      ...current,
+      [benchPackId]: {
+        benchPackId,
         action: "update",
         phase: "resolving",
-        message: "Resolving scenario pack update."
+        message: "Resolving Bench Pack update."
       }
     }));
 
     try {
-      const result = await window.benchlocal.plugins.update({ pluginId });
-      await refreshScenarioPackState(result);
-      setNotice(`Updated ${pluginId}.`);
+      const result = await window.benchlocal.benchPacks.update({ benchPackId });
+      await refreshBenchPackState(result);
+      if (settingsOpenRef.current) {
+        setSettingsNotice(`Updated ${benchPackId}.`);
+      }
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : `Failed to update ${pluginId}.`);
+      setError(formatRegistryMutationError("update", benchPackId, updateError));
     } finally {
       setIsBusy(false);
-      setScenarioPackMutations((current) => {
+      setBenchPackMutations((current) => {
         const next = { ...current };
-        delete next[pluginId];
+        delete next[benchPackId];
         return next;
       });
     }
   };
 
-  const uninstallInstalledScenarioPack = async (pluginId: string) => {
-    if (!(await ensureScenarioPackMutationReady())) {
+  const uninstallInstalledBenchPack = async (benchPackId: string) => {
+    if (!(await ensureBenchPackMutationReady())) {
       return;
     }
 
-    if (Object.values(activeRuns).some((run) => run.pluginId === pluginId)) {
-      setError("Stop active scenario pack runs before uninstalling this pack.");
+    if (Object.values(activeRuns).some((run) => run.benchPackId === benchPackId)) {
+      setError("Stop active Bench Pack runs before uninstalling this pack.");
       return;
     }
 
     setIsBusy(true);
     setError(null);
-    setScenarioPackMutations((current) => ({
+    setBenchPackMutations((current) => ({
       ...current,
-      [pluginId]: {
-        pluginId,
+      [benchPackId]: {
+        benchPackId,
         action: "uninstall",
         phase: "removing",
-        message: "Removing scenario pack."
+        message: "Removing Bench Pack."
       }
     }));
 
     try {
-      const result = await window.benchlocal.plugins.uninstall({ pluginId });
-      await refreshScenarioPackState(result);
-      setNotice(`Uninstalled ${pluginId}.`);
+      const result = await window.benchlocal.benchPacks.uninstall({ benchPackId });
+      await refreshBenchPackState(result);
+      if (settingsOpenRef.current) {
+        setSettingsNotice(`Uninstalled ${benchPackId}.`);
+      }
     } catch (uninstallError) {
-      setError(uninstallError instanceof Error ? uninstallError.message : `Failed to uninstall ${pluginId}.`);
+      setError(uninstallError instanceof Error ? uninstallError.message : `Failed to uninstall ${benchPackId}.`);
     } finally {
       setIsBusy(false);
-      setScenarioPackMutations((current) => {
+      setBenchPackMutations((current) => {
         const next = { ...current };
-        delete next[pluginId];
+        delete next[benchPackId];
         return next;
       });
     }
@@ -1212,7 +1384,9 @@ export function App() {
     setDraft(cloneConfig(loadState.config));
     setProviderModal(null);
     setModelModal(null);
-    setNotice("Reverted unsaved changes.");
+    if (settingsOpenRef.current) {
+      setSettingsNotice("Reverted unsaved changes.");
+    }
     setError(null);
   };
 
@@ -1245,19 +1419,19 @@ export function App() {
 
   const runTab = async (tab: BenchLocalWorkspaceTab) => {
     setError(null);
-    setNotice(null);
+    setAppNotice(null);
 
-    if (!tab.pluginId) {
-      setError("Select a scenario pack for this tab first.");
+    if (!tab.benchPackId) {
+      setError("Select a Bench Pack for this tab first.");
       return;
     }
 
-    const pluginId = tab.pluginId;
+    const benchPackId = tab.benchPackId;
 
     const selectedModels = draft ? resolveTabModels(tab, draft.models) : [];
 
     if (selectedModels.length === 0) {
-      setError("Select at least one enabled model for this tab before running the scenario pack.");
+      setError("Select at least one enabled model for this tab before running the Bench Pack.");
       return;
     }
 
@@ -1271,7 +1445,7 @@ export function App() {
 
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { pluginId }
+      [tab.id]: { benchPackId }
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -1310,9 +1484,9 @@ export function App() {
     });
 
     try {
-      const result = await window.benchlocal.plugins.run({
+      const result = await window.benchlocal.benchPacks.run({
         tabId: tab.id,
-        pluginId,
+        benchPackId,
         modelIds: selectedModels.map((model) => model.id),
         executionMode: tab.executionMode,
         generation: tab.samplingOverrides
@@ -1322,14 +1496,14 @@ export function App() {
         [tab.id]: result
       }));
       if (result.cancelled) {
-        setNotice(`Stopped ${result.pluginName}.`);
+        setAppNotice(`Stopped ${result.benchPackName}.`);
       } else {
-        setNotice(`Completed ${result.pluginName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`);
+        setAppNotice(`Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`);
       }
-      await loadPluginInspections();
-      await loadHistoryForPlugin(pluginId);
+      await loadBenchPackInspections();
+      await loadHistoryForBenchPack(benchPackId);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : `Failed to run scenario pack for ${pluginId}.`);
+      setError(runError instanceof Error ? runError.message : `Failed to run Bench Pack for ${benchPackId}.`);
     } finally {
       setActiveRuns((current) => {
         const next = { ...current };
@@ -1361,10 +1535,10 @@ export function App() {
     }));
 
     try {
-      const result = await window.benchlocal.plugins.stop({ tabId });
+      const result = await window.benchlocal.benchPacks.stop({ tabId });
 
       if (!result.stopped) {
-        setNotice("That scenario pack run was no longer active.");
+        setAppNotice("That Bench Pack run was no longer active.");
         setActiveRuns((current) => {
           const next = { ...current };
           delete next[tabId];
@@ -1378,14 +1552,14 @@ export function App() {
         return;
       }
 
-      setNotice("Stopping scenario pack run...");
+      setAppNotice("Stopping Bench Pack run...");
     } catch (stopError) {
       setStoppingRuns((current) => {
         const next = { ...current };
         delete next[tabId];
         return next;
       });
-      setError(stopError instanceof Error ? stopError.message : "Failed to stop scenario pack run.");
+      setError(stopError instanceof Error ? stopError.message : "Failed to stop Bench Pack run.");
     }
   };
 
@@ -1408,7 +1582,7 @@ export function App() {
       current.tabs[tabId] = {
         id: tabId,
         title: "New Tab",
-        pluginId: null,
+        benchPackId: null,
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
@@ -1439,7 +1613,7 @@ export function App() {
     const removedTabIds = new Set(workspaceState?.workspaces[workspaceId]?.tabIds ?? []);
 
     if (Array.from(removedTabIds).some((tabId) => activeRuns[tabId])) {
-      setError("Stop active scenario pack runs before deleting this workspace.");
+      setError("Stop active Bench Pack runs before deleting this workspace.");
       return;
     }
 
@@ -1475,7 +1649,7 @@ export function App() {
         current.tabs[nextTabId] = {
           id: nextTabId,
           title: "New Tab",
-          pluginId: null,
+          benchPackId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
@@ -1518,7 +1692,7 @@ export function App() {
       });
 
       if (result.exported) {
-        setNotice(`Exported workspace to ${result.filePath}.`);
+        setAppNotice(`Exported workspace to ${result.filePath}.`);
       }
     } catch (workspaceError) {
       setError(workspaceError instanceof Error ? workspaceError.message : "Failed to export workspace.");
@@ -1548,9 +1722,13 @@ export function App() {
           const importedTab = importedTabs[tabId];
 
           if (importedTab) {
+            const importedTabRecord = importedTab as typeof importedTab & {
+              pluginId?: string | null;
+            };
             current.tabs[nextTabId] = {
-              ...importedTab,
+              ...importedTabRecord,
               id: nextTabId,
+              benchPackId: importedTabRecord.benchPackId ?? importedTabRecord.pluginId ?? null,
               samplingOverrides: importedTab.samplingOverrides ?? {},
               createdAt: importedTab.createdAt ?? now,
               updatedAt: now
@@ -1578,7 +1756,7 @@ export function App() {
         return current;
       });
 
-      setNotice(`Imported workspace "${importedWorkspace.name}".`);
+      setAppNotice(`Imported workspace "${importedWorkspace.name}".`);
     } catch (workspaceError) {
       setError(workspaceError instanceof Error ? workspaceError.message : "Failed to import workspace.");
     }
@@ -1592,7 +1770,7 @@ export function App() {
     });
   };
 
-  const createTab = (pluginId: string) => {
+  const createTab = (benchPackId: string) => {
     if (!activeWorkspace) {
       return;
     }
@@ -1608,8 +1786,8 @@ export function App() {
       const tabId = `tab-${crypto.randomUUID()}`;
       current.tabs[tabId] = {
         id: tabId,
-        title: createTabTitle(pluginId, pluginInspections),
-        pluginId,
+        title: createTabTitle(benchPackId, benchPackInspections),
+        benchPackId,
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
@@ -1625,7 +1803,7 @@ export function App() {
     setTabMenuOpen(false);
   };
 
-  const assignScenarioPackToTab = (tabId: string, pluginId: string) => {
+  const assignBenchPackToTab = (tabId: string, benchPackId: string) => {
     updateWorkspaceState((current) => {
       const tab = current.tabs[tabId];
 
@@ -1633,8 +1811,8 @@ export function App() {
         return current;
       }
 
-      tab.title = createTabTitle(pluginId, pluginInspections);
-      tab.pluginId = pluginId;
+      tab.title = createTabTitle(benchPackId, benchPackInspections);
+      tab.benchPackId = benchPackId;
       tab.focusedScenarioId = null;
       tab.samplingOverrides = {};
       tab.updatedAt = new Date().toISOString();
@@ -1731,7 +1909,7 @@ export function App() {
     }
 
     if (activeRuns[tabId]) {
-      setError("Stop the scenario pack run before closing this tab.");
+      setError("Stop the Bench Pack run before closing this tab.");
       return;
     }
 
@@ -1754,7 +1932,7 @@ export function App() {
         current.tabs[replacementTabId] = {
           id: replacementTabId,
           title: "New Tab",
-          pluginId: null,
+          benchPackId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
@@ -1785,13 +1963,13 @@ export function App() {
     });
   };
 
-  const restoreHistoryRun = async (pluginId: string, runId: string) => {
+  const restoreHistoryRun = async (benchPackId: string, runId: string) => {
     if (!activeTab) {
       return;
     }
 
     try {
-      const summary = await window.benchlocal.plugins.loadHistory({ pluginId, runId });
+      const summary = await window.benchlocal.benchPacks.loadHistory({ benchPackId, runId });
       setRunSummaries((current) => ({
         ...current,
         [activeTab.id]: summary
@@ -1809,7 +1987,7 @@ export function App() {
         }
       }));
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load scenario pack history.");
+      setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
     }
   };
 
@@ -1863,7 +2041,9 @@ export function App() {
     });
 
     setProviderModal(null);
-    setNotice(providerModal.mode === "create" ? "Added provider draft entry." : "Updated provider draft entry.");
+    if (settingsOpenRef.current) {
+      setSettingsNotice(providerModal.mode === "create" ? "Added provider draft entry." : "Updated provider draft entry.");
+    }
   };
 
   const deleteProvider = (providerId: string) => {
@@ -1884,7 +2064,9 @@ export function App() {
       });
     }
 
-    setNotice(`Deleted provider "${providerId}".`);
+    if (settingsOpenRef.current) {
+      setSettingsNotice(`Deleted provider "${providerId}".`);
+    }
   };
 
   const confirmDeleteProvider = (providerId: string) => {
@@ -1904,6 +2086,69 @@ export function App() {
         setProviderModal(null);
       }
     });
+  };
+
+  const openModelBrowser = async () => {
+    if (!modelModal || !draft) {
+      return;
+    }
+
+    const provider = draft.providers[modelModal.form.provider];
+
+    if (!provider) {
+      setError("Select a provider first.");
+      return;
+    }
+
+    if (!providerSupportsModelDiscovery(provider)) {
+      setError(`${provider.name} does not support model browsing yet.`);
+      return;
+    }
+
+    const cacheKey = `${provider.kind}::${provider.base_url}`;
+    const cachedEntries = modelDiscoveryCacheRef.current[cacheKey];
+
+    setModelBrowserModal({
+      providerId: modelModal.form.provider,
+      providerName: provider.name,
+      entries: cachedEntries ?? [],
+      query: "",
+      selectedModelId: modelModal.form.model.trim() || cachedEntries?.[0]?.id || null,
+      loading: !cachedEntries,
+      error: null
+    });
+
+    if (cachedEntries) {
+      return;
+    }
+
+    try {
+      const entries = await window.benchlocal.models.discover({ provider });
+      modelDiscoveryCacheRef.current[cacheKey] = entries;
+      setModelBrowserModal((current) =>
+        current && current.providerId === modelModal.form.provider
+          ? {
+              ...current,
+              entries,
+              selectedModelId: current.selectedModelId ?? entries[0]?.id ?? null,
+              loading: false
+            }
+          : current
+      );
+    } catch (discoverError) {
+      setModelBrowserModal((current) =>
+        current && current.providerId === modelModal.form.provider
+          ? {
+              ...current,
+              loading: false,
+              error:
+                discoverError instanceof Error
+                  ? discoverError.message
+                  : `Failed to load models from ${provider.name}.`
+            }
+          : current
+      );
+    }
   };
 
   const saveModelModal = () => {
@@ -1947,7 +2192,9 @@ export function App() {
     }
 
     setModelModal(null);
-    setNotice(modelModal.mode === "create" ? "Added model draft entry." : "Updated model draft entry.");
+    if (settingsOpenRef.current) {
+      setSettingsNotice(modelModal.mode === "create" ? "Added model draft entry." : "Updated model draft entry.");
+    }
   };
 
   const deleteModel = (index: number) => {
@@ -1967,7 +2214,9 @@ export function App() {
       });
     }
 
-    setNotice("Deleted model.");
+    if (settingsOpenRef.current) {
+      setSettingsNotice("Deleted model.");
+    }
   };
 
   const confirmDeleteModel = (index: number) => {
@@ -2021,17 +2270,17 @@ export function App() {
 
               {!settingsOpen ? (
                 <div className="toolbar-cluster">
-	                  <ScenarioPackPickerTrigger
+	                  <BenchPackPickerTrigger
 	                    inspections={readyInspections}
 	                    open={tabMenuOpen}
 	                    setOpen={setTabMenuOpen}
-	                    onCreateTab={(pluginId) => {
-                        if (activeTab && !activeTab.pluginId) {
-                          assignScenarioPackToTab(activeTab.id, pluginId);
+	                    onCreateTab={(benchPackId) => {
+                        if (activeTab && !activeTab.benchPackId) {
+                          assignBenchPackToTab(activeTab.id, benchPackId);
                           return;
                         }
 
-                        createTab(pluginId);
+                        createTab(benchPackId);
                       }}
 	                    disabled={!activeWorkspace}
 	                  />
@@ -2092,16 +2341,22 @@ export function App() {
             <SettingsScene
               settingsTab={settingsTab}
               setSettingsTab={setSettingsTab}
+              settingsNotice={settingsNotice}
               draft={draft}
               loadState={loadState}
               hasUnsavedChanges={hasUnsavedChanges}
               isBusy={isBusy}
               providerIds={providerIds}
-              pluginInspections={pluginInspections}
+              benchPackInspections={benchPackInspections}
               registryEntries={registryEntries}
-              scenarioPackMutations={scenarioPackMutations}
+              registryWarning={registryWarning}
+              benchPackMutations={benchPackMutations}
               verifierStatuses={verifierStatuses}
-              onBack={() => setSettingsOpen(false)}
+              onBack={() => {
+                setSettingsNotice(null);
+                setSettingsOpen(false);
+              }}
+              onDismissNotice={() => setSettingsNotice(null)}
               onSave={() => void save()}
               onReset={reset}
               onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
@@ -2114,26 +2369,26 @@ export function App() {
               }
               onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
               onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
-              onStartVerifier={async (pluginId) => {
+              onStartVerifier={async (benchPackId) => {
                 try {
-                  const status = await window.benchlocal.verifiers.start({ pluginId });
-                  setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+                  const status = await window.benchlocal.verifiers.start({ benchPackId });
+                  setVerifierStatuses((current) => ({ ...current, [benchPackId]: status }));
                 } catch (verifierError) {
                   setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
                 }
               }}
-              onStopVerifier={async (pluginId) => {
+              onStopVerifier={async (benchPackId) => {
                 try {
-                  const status = await window.benchlocal.verifiers.stop({ pluginId });
-                  setVerifierStatuses((current) => ({ ...current, [pluginId]: status }));
+                  const status = await window.benchlocal.verifiers.stop({ benchPackId });
+                  setVerifierStatuses((current) => ({ ...current, [benchPackId]: status }));
                 } catch (verifierError) {
                   setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
                 }
               }}
               onRefreshRegistry={() => void loadRegistryEntries()}
-              onInstallScenarioPack={(pluginId) => void installScenarioPack(pluginId)}
-              onUpdateScenarioPack={(pluginId) => void updateScenarioPack(pluginId)}
-              onUninstallScenarioPack={(pluginId) => void uninstallInstalledScenarioPack(pluginId)}
+              onInstallBenchPack={(benchPackId) => void installBenchPack(benchPackId)}
+              onUpdateBenchPack={(benchPackId) => void updateBenchPack(benchPackId)}
+              onUninstallBenchPack={(benchPackId) => void uninstallInstalledBenchPack(benchPackId)}
               updateDraft={updateDraft}
             />
           ) : (
@@ -2228,14 +2483,14 @@ export function App() {
 	            </aside>
 
 	            <section className="desktop-main">
-	              {notice ? (
+	              {appNotice ? (
                   <Banner tone="success">
                     <div className="banner-row">
-                      <span>{notice}</span>
+                      <span>{appNotice}</span>
                       <button
                         type="button"
                         className="banner-dismiss"
-                        onClick={() => setNotice(null)}
+                        onClick={() => setAppNotice(null)}
                         aria-label="Dismiss notice"
                         title="Dismiss"
                       >
@@ -2263,7 +2518,7 @@ export function App() {
                           ) : null}
                           <div ref={tabStripRef} className="tab-strip">
 	                          {workspaceTabs.map((tab) => {
-	                            const inspection = pluginInspections.find((candidate) => candidate.id === tab.pluginId);
+	                            const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
                               const isTabRunning = Boolean(activeRuns[tab.id]);
                               const showWarning = !isTabRunning && inspection && inspection.status !== "ready";
                               const isEditingTab = editingTab?.tabId === tab.id;
@@ -2364,7 +2619,7 @@ export function App() {
                                       }
                                       setConfirmDialog({
                                         title: "Close Tab",
-                                        subtitle: `Close "${tab.title}"? The scenario pack tab will be removed from this workspace.`,
+                                        subtitle: `Close "${tab.title}"? The Bench Pack tab will be removed from this workspace.`,
                                         confirmLabel: "Close Tab",
                                         onConfirm: () => closeTab(tab.id)
                                       });
@@ -2375,7 +2630,7 @@ export function App() {
 	                                      event.stopPropagation();
                                         setConfirmDialog({
                                           title: "Close Tab",
-                                          subtitle: `Close "${tab.title}"? The scenario pack tab will be removed from this workspace.`,
+                                          subtitle: `Close "${tab.title}"? The Bench Pack tab will be removed from this workspace.`,
                                           confirmLabel: "Close Tab",
                                           onConfirm: () => closeTab(tab.id)
                                         });
@@ -2448,8 +2703,8 @@ export function App() {
                               onEditSampling={() =>
                                 setSamplingModal({
                                   tabId: activeTab.id,
-                                  pluginId: activeInspection.id,
-                                  pluginName: activeInspection.manifest?.name ?? activeInspection.id,
+                                  benchPackId: activeInspection.id,
+                                  benchPackName: activeInspection.manifest?.name ?? activeInspection.id,
                                   defaults: activeInspection.manifest?.samplingDefaults ?? {},
                                   form: createSamplingForm(activeTab.samplingOverrides)
                                 })
@@ -2458,8 +2713,8 @@ export function App() {
                               isViewingHistory={Boolean(activeLoadedHistory)}
                               onOpenHistory={() =>
                                 setHistoryModal({
-                                  pluginId: activeInspection.id,
-                                  pluginName: activeInspection.manifest?.name ?? activeInspection.id,
+                                  benchPackId: activeInspection.id,
+                                  benchPackName: activeInspection.manifest?.name ?? activeInspection.id,
                                   entries: runHistories[activeInspection.id] ?? []
                                 })
                               }
@@ -2491,8 +2746,22 @@ export function App() {
 	                          />
 	                        ) : (
 	                          <EmptyWorkspace
-                              hasInstalledScenarioPacks={readyInspections.length > 0}
-                              onSelectScenarioPack={
+                              providerCount={Object.keys(draft?.providers ?? {}).length}
+                              modelCount={draft?.models.length ?? 0}
+                              installedBenchPackCount={readyInspections.length}
+                              onOpenProviders={() => {
+                                setSettingsTab("providers");
+                                setSettingsOpen(true);
+                              }}
+                              onOpenModels={() => {
+                                setSettingsTab("models");
+                                setSettingsOpen(true);
+                              }}
+                              onOpenBenchPacks={() => {
+                                setSettingsTab("benchPacks");
+                                setSettingsOpen(true);
+                              }}
+                              onSelectBenchPack={
                                 activeTab ? () => setTabMenuOpen(true) : undefined
                               }
                             />
@@ -2500,7 +2769,23 @@ export function App() {
 	                      </div>
 	                    </div>
 	                  ) : (
-	                    <EmptyWorkspace />
+	                    <EmptyWorkspace
+                        providerCount={Object.keys(draft?.providers ?? {}).length}
+                        modelCount={draft?.models.length ?? 0}
+                        installedBenchPackCount={readyInspections.length}
+                        onOpenProviders={() => {
+                          setSettingsTab("providers");
+                          setSettingsOpen(true);
+                        }}
+                        onOpenModels={() => {
+                          setSettingsTab("models");
+                          setSettingsOpen(true);
+                        }}
+                        onOpenBenchPacks={() => {
+                          setSettingsTab("benchPacks");
+                          setSettingsOpen(true);
+                        }}
+                      />
 	                  )
 	                ) : null}
 	              </div>
@@ -2683,49 +2968,134 @@ export function App() {
       ) : null}
 
       {modelModal ? (
-        <Modal
-          title={modelModal.mode === "create" ? "Add Model" : "Edit Model"}
-          subtitle="Models are shared across every installed scenario pack."
-          onClose={() => setModelModal(null)}
-          onSubmit={saveModelModal}
-          submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
-          leadingActions={
-            modelModal.mode === "edit" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  confirmDeleteModel(modelModal.index);
-                }}
-                className="button-danger"
-              >
-                <Trash2 size={14} />
-                Delete Model
-              </button>
-            ) : undefined
+        (() => {
+          const selectedProvider = draft?.providers[modelModal.form.provider];
+          const canBrowseModels = providerSupportsModelDiscovery(selectedProvider);
+
+          return (
+            <Modal
+              title={modelModal.mode === "create" ? "Add Model" : "Edit Model"}
+              subtitle="Models are shared across every installed Bench Pack."
+              onClose={() => setModelModal(null)}
+              onSubmit={saveModelModal}
+              submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
+              leadingActions={
+                modelModal.mode === "edit" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      confirmDeleteModel(modelModal.index);
+                    }}
+                    className="button-danger"
+                  >
+                    <Trash2 size={14} />
+                    Delete Model
+                  </button>
+                ) : undefined
+              }
+            >
+              <div className="entry-grid two-col">
+                <InlineSelectField
+                  label="Provider"
+                  value={modelModal.form.provider}
+                  options={providerIds.length > 0 ? providerIds : ["openrouter"]}
+                  getOptionLabel={(value) => {
+                    const provider = draft?.providers[value];
+                    return provider ? provider.name : value;
+                  }}
+                  onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
+                />
+                <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
+                <label className="field-block model-field-with-action">
+                  <span className="field-label">Model Identifier</span>
+                  <div className="model-field-with-action-row">
+                    <input
+                      type="text"
+                      value={modelModal.form.model}
+                      placeholder="openai/gpt-4.1"
+                      onChange={(event) =>
+                        setModelModal((current) => current ? { ...current, form: { ...current.form, model: event.target.value } } : current)
+                      }
+                      className="config-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void openModelBrowser()}
+                      className="ghost-button ghost-button-compact"
+                      disabled={!canBrowseModels}
+                      title={
+                        canBrowseModels
+                          ? "Browse models"
+                          : "Model browsing is currently available only for OpenRouter and OpenAI-compatible providers."
+                      }
+                    >
+                      <LayoutList size={14} />
+                      Browse Models
+                    </button>
+                  </div>
+                </label>
+                <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
+                <Field label="Computed ID" value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(/:$/, "")} readOnly onChange={() => undefined} />
+                <FieldToggle
+                  label="Enabled"
+                  checked={modelModal.form.enabled}
+                  onChange={(checked) => setModelModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
+                />
+              </div>
+            </Modal>
+          );
+        })()
+      ) : null}
+
+      {modelBrowserModal ? (
+        <ModelBrowserModal
+          state={modelBrowserModal}
+          onClose={() => setModelBrowserModal(null)}
+          onQueryChange={(query) =>
+            setModelBrowserModal((current) => (current ? { ...current, query } : current))
           }
-        >
-          <div className="entry-grid two-col">
-            <InlineSelectField
-              label="Provider"
-              value={modelModal.form.provider}
-              options={providerIds.length > 0 ? providerIds : ["openrouter"]}
-              getOptionLabel={(value) => {
-                const provider = draft?.providers[value];
-                return provider ? provider.name : value;
-              }}
-              onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
-            />
-            <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
-            <Field label="Model Identifier" value={modelModal.form.model} placeholder="openai/gpt-4.1" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, model: value } } : current)} />
-            <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
-            <Field label="Computed ID" value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(/:$/, "")} readOnly onChange={() => undefined} />
-            <FieldToggle
-              label="Enabled"
-              checked={modelModal.form.enabled}
-              onChange={(checked) => setModelModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
-            />
-          </div>
-        </Modal>
+          onSelect={(modelId) =>
+            setModelBrowserModal((current) => (current ? { ...current, selectedModelId: modelId } : current))
+          }
+          onSubmit={() => {
+            if (!modelBrowserModal.selectedModelId) {
+              return;
+            }
+
+            const selectedEntry = modelBrowserModal.entries.find(
+              (entry) => entry.id === modelBrowserModal.selectedModelId
+            );
+
+            if (!selectedEntry) {
+              return;
+            }
+
+            setModelModal((current) => {
+              if (!current) {
+                return current;
+              }
+
+              const providerName =
+                draft?.providers[current.form.provider]?.name ?? current.form.provider;
+              const currentDefaultLabel = current.form.model.trim()
+                ? defaultModelLabel(providerName, current.form.model, undefined)
+                : "";
+              const nextLabel = defaultModelLabel(providerName, selectedEntry.id, selectedEntry.name);
+              const shouldAutofillLabel =
+                current.form.label.trim() === "" || current.form.label.trim() === currentDefaultLabel;
+
+              return {
+                ...current,
+                form: {
+                  ...current.form,
+                  model: selectedEntry.id,
+                  label: shouldAutofillLabel ? nextLabel : current.form.label
+                }
+              };
+            });
+            setModelBrowserModal(null);
+          }}
+        />
       ) : null}
 
       {tabModelsModal && draft ? (
@@ -2757,7 +3127,7 @@ export function App() {
 
       {samplingModal ? (
         <SamplingModal
-          pluginName={samplingModal.pluginName}
+          benchPackName={samplingModal.benchPackName}
           defaults={samplingModal.defaults}
           form={samplingModal.form}
           onClose={() => setSamplingModal(null)}
@@ -2851,11 +3221,11 @@ export function App() {
 
       {historyModal ? (
         <HistoryModal
-          pluginName={historyModal.pluginName}
+          benchPackName={historyModal.benchPackName}
           entries={historyModal.entries}
           onClose={() => setHistoryModal(null)}
           onOpenRun={(runId) => {
-            void restoreHistoryRun(historyModal.pluginId, runId);
+            void restoreHistoryRun(historyModal.benchPackId, runId);
             setHistoryModal(null);
           }}
         />
@@ -2917,7 +3287,7 @@ export function App() {
 
       {detailModal ? (
         <Modal
-          title={`${detailModal.pluginId} · ${detailModal.scenarioId}`}
+          title={`${detailModal.benchPackId} · ${detailModal.scenarioId}`}
           subtitle={`${detailModal.modelId} · ${detailModal.summary}`}
           onClose={() => setDetailModal(null)}
           onSubmit={() => setDetailModal(null)}
@@ -2947,19 +3317,19 @@ export function App() {
   );
 }
 
-function ScenarioPackPickerDialog({
+function BenchPackPickerDialog({
   inspections,
   open,
   setOpen,
-  onSelectScenarioPack,
+  onSelectBenchPack,
   title = "New Tab",
-  subtitle = "Pick a scenario pack to open in this workspace.",
-  actionLabel = "Open Scenario Pack"
+  subtitle = "Pick a Bench Pack to open in this workspace.",
+  actionLabel = "Open Bench Pack"
 }: {
-  inspections: PluginInspection[];
+  inspections: BenchPackInspection[];
   open: boolean;
   setOpen: (open: boolean) => void;
-  onSelectScenarioPack: (pluginId: string) => void;
+  onSelectBenchPack: (benchPackId: string) => void;
   title?: string;
   subtitle?: string;
   actionLabel?: string;
@@ -3004,7 +3374,7 @@ function ScenarioPackPickerDialog({
 
   return (
     <div className="dialog-backdrop">
-      <div className="dialog-shell dialog-shell-wide scenario-pack-picker-shell">
+      <div className="dialog-shell dialog-shell-wide benchpack-picker-shell">
         <div className="dialog-header">
           <div>
             <h3 className="dialog-title">{title}</h3>
@@ -3015,28 +3385,28 @@ function ScenarioPackPickerDialog({
           </button>
         </div>
 
-        <div className="scenario-pack-picker-body">
-          <div className="scenario-pack-picker-list">
+        <div className="benchpack-picker-body">
+          <div className="benchpack-picker-list">
             <label className="field-block">
               <span className="field-label">Search</span>
               <input
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search scenario packs"
+                placeholder="Search Bench Packs"
                 className="config-input"
               />
             </label>
 
-            <div className="scenario-pack-picker-options">
+            <div className="benchpack-picker-options">
               {filteredInspections.map((inspection) => (
                 <button
                   key={inspection.id}
                   type="button"
-                  className={`scenario-pack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
+                  className={`benchpack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
                   onClick={() => setSelectedId(inspection.id)}
                 >
-                  <div className="scenario-pack-option-main">
+                  <div className="benchpack-option-main">
                     <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
                     <div className="settings-row-secondary settings-mono-cell">{inspection.id}</div>
                   </div>
@@ -3046,16 +3416,16 @@ function ScenarioPackPickerDialog({
                 </button>
               ))}
               {filteredInspections.length === 0 ? (
-                <div className="sidebar-empty">No scenario packs match your search.</div>
+                <div className="sidebar-empty">No Bench Packs match your search.</div>
               ) : null}
             </div>
           </div>
 
-          <div className="scenario-pack-picker-detail">
+          <div className="benchpack-picker-detail">
             {selectedInspection ? (
               <>
                 <div>
-                  <p className="eyebrow">Scenario Pack</p>
+                  <p className="eyebrow">Bench Pack</p>
                   <h3 className="panel-title" style={{ marginTop: "8px" }}>
                     {selectedInspection.manifest?.name ?? selectedInspection.id}
                   </h3>
@@ -3064,26 +3434,26 @@ function ScenarioPackPickerDialog({
                   </p>
                 </div>
 
-                <div className="scenario-pack-picker-meta">
-                  <div className="scenario-pack-stat-card">
-                    <span className="scenario-pack-stat-label">Author</span>
-                    <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                <div className="benchpack-picker-meta">
+                  <div className="benchpack-stat-card">
+                    <span className="benchpack-stat-label">Author</span>
+                    <span className="benchpack-stat-value benchpack-meta-value">
                       {selectedInspection.manifest?.author ?? "Unknown"}
                     </span>
                   </div>
-                  <div className="scenario-pack-stat-card">
-                    <span className="scenario-pack-stat-label">Tests</span>
-                    <span className="scenario-pack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
+                  <div className="benchpack-stat-card">
+                    <span className="benchpack-stat-label">Tests</span>
+                    <span className="benchpack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
                   </div>
-                  <div className="scenario-pack-stat-card">
-                    <span className="scenario-pack-stat-label">Version</span>
-                    <span className="scenario-pack-stat-value scenario-pack-meta-value">
+                  <div className="benchpack-stat-card">
+                    <span className="benchpack-stat-label">Version</span>
+                    <span className="benchpack-stat-value benchpack-meta-value">
                       {selectedInspection.manifest?.version ?? "n/a"}
                     </span>
                   </div>
                 </div>
 
-                <div className="scenario-pack-picker-badges">
+                <div className="benchpack-picker-badges">
                   <span className={`status-chip ${statusClasses(selectedInspection.status)}`}>
                     {selectedInspection.status.replaceAll("_", " ")}
                   </span>
@@ -3095,12 +3465,12 @@ function ScenarioPackPickerDialog({
                   </span>
                 </div>
 
-                <div className="scenario-pack-picker-footer">
+                <div className="benchpack-picker-footer">
                   <button
                     type="button"
                     className="primary-button"
                     onClick={() => {
-                      onSelectScenarioPack(selectedInspection.id);
+                      onSelectBenchPack(selectedInspection.id);
                       setOpen(false);
                     }}
                     disabled={selectedInspection.status !== "ready"}
@@ -3112,10 +3482,10 @@ function ScenarioPackPickerDialog({
               </>
             ) : (
               <div className="entry-card" style={{ marginTop: "40px" }}>
-                <p className="eyebrow">No Installed Scenario Packs</p>
-                <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a scenario pack from Settings</h3>
+                <p className="eyebrow">No Installed Bench Packs</p>
+                <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a Bench Pack from Settings</h3>
                 <p className="section-copy" style={{ marginTop: "10px" }}>
-                  BenchLocal now starts with zero installed scenario packs. Open Settings, go to Scenario Packs, and install one from the official registry.
+                  BenchLocal now starts with zero installed Bench Packs. Open Settings, go to Bench Packs, and install one from the official registry.
                 </p>
               </div>
             )}
@@ -3126,17 +3496,17 @@ function ScenarioPackPickerDialog({
   );
 }
 
-function ScenarioPackPickerTrigger({
+function BenchPackPickerTrigger({
   inspections,
   open,
   setOpen,
   onCreateTab,
   disabled
 }: {
-  inspections: PluginInspection[];
+  inspections: BenchPackInspection[];
   open: boolean;
   setOpen: (open: boolean) => void;
-  onCreateTab: (pluginId: string) => void;
+  onCreateTab: (benchPackId: string) => void;
   disabled?: boolean;
 }) {
   return (
@@ -3151,11 +3521,11 @@ function ScenarioPackPickerTrigger({
         <span>New Tab</span>
       </button>
 
-      <ScenarioPackPickerDialog
+      <BenchPackPickerDialog
         inspections={inspections}
         open={open}
         setOpen={setOpen}
-        onSelectScenarioPack={onCreateTab}
+        onSelectBenchPack={onCreateTab}
       />
     </>
   );
@@ -3184,10 +3554,10 @@ function BenchmarkSection({
   onStop,
   onOpenDetail
 }: {
-  inspection: PluginInspection;
+  inspection: BenchPackInspection;
   selectedModels: ResolvedTabModel[];
-  runSummary: PluginRunSummary | null;
-  historyEntries: PluginRunHistoryEntry[];
+  runSummary: BenchPackRunSummary | null;
+  historyEntries: BenchPackRunHistoryEntry[];
   liveRun: LiveRunState | null;
   loadedHistory: LoadedHistoryEntry | null;
   focusedScenarioId: string | null;
@@ -3328,7 +3698,7 @@ function BenchmarkSection({
       <section className="workspace-panel">
         <div className="workspace-toolbar">
           <div className="workspace-toolbar-copy">
-            <p className="eyebrow">Scenario Pack Session</p>
+            <p className="eyebrow">Bench Pack Session</p>
             <div className="workspace-toolbar-heading">
               <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
               <div className="workspace-stat-chips">
@@ -3354,12 +3724,12 @@ function BenchmarkSection({
             <div className="benchmark-empty-icon">
               <CircleAlert size={22} />
             </div>
-            <p className="eyebrow">Scenario Pack Unavailable</p>
+            <p className="eyebrow">Bench Pack Unavailable</p>
             <h3 className="panel-title" style={{ marginTop: "8px" }}>
               {inspection.manifest?.name ?? inspection.id} cannot run yet
             </h3>
             <p className="muted-copy" style={{ marginTop: "10px", maxWidth: "56ch" }}>
-              {inspection.error ?? "This scenario pack is not installed or is missing its BenchLocal runtime entry."}
+              {inspection.error ?? "This Bench Pack is not installed or is missing its BenchLocal runtime entry."}
             </p>
             <div className="category-chip-row" style={{ marginTop: "14px" }}>
               <span className={`status-chip ${statusClasses(inspection.status)}`}>
@@ -3395,7 +3765,7 @@ function BenchmarkSection({
         type="button"
         onClick={() =>
           onOpenDetail({
-            pluginId: inspection.id,
+            benchPackId: inspection.id,
             modelId,
             scenarioId,
             summary: result.summary,
@@ -3430,7 +3800,7 @@ function BenchmarkSection({
       ) : null}
       <div className="workspace-toolbar">
         <div className="workspace-toolbar-copy">
-          <p className="eyebrow">Scenario Pack Session</p>
+          <p className="eyebrow">Bench Pack Session</p>
           <div className="workspace-toolbar-heading">
             <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
             <div className="workspace-stat-chips">
@@ -3482,19 +3852,19 @@ function BenchmarkSection({
                       title: "What this tests",
                       content:
                         currentScenario?.description ??
-                        "Click a scenario column in the scenario pack table below to inspect that scenario."
+                        "Click a scenario column in the Bench Pack table below to inspect that scenario."
                     },
                     {
                       title: "Prompt Contract",
                       content:
                         currentScenario?.description ??
-                        "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as scenario pack metadata expands."
+                        "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as Bench Pack metadata expands."
                     },
                     {
                       title: "Run Notes",
                       content: runSummary
                         ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
-                        : "Run this scenario pack, then use the scenario columns in the table below to switch the preview context."
+                        : "Run this Bench Pack, then use the scenario columns in the table below to switch the preview context."
                     }
                   ]
               ).map((card) => (
@@ -3563,7 +3933,7 @@ function BenchmarkSection({
                 </div>
                 <div className="table-empty-callout-copy">
                   <h3 className="table-empty-callout-title">No models selected</h3>
-                  <p className="muted-copy">Add one or more models to start running this scenario pack.</p>
+                  <p className="muted-copy">Add one or more models to start running this Bench Pack.</p>
                 </div>
                 <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
                   <Bot size={14} />
@@ -3955,15 +4325,96 @@ function TabModelsModal({
   );
 }
 
+function ModelBrowserModal({
+  state,
+  onClose,
+  onQueryChange,
+  onSelect,
+  onSubmit
+}: {
+  state: ModelBrowserModalState;
+  onClose: () => void;
+  onQueryChange: (query: string) => void;
+  onSelect: (modelId: string) => void;
+  onSubmit: () => void;
+}) {
+  const normalizedQuery = state.query.trim().toLowerCase();
+  const filteredEntries = state.entries.filter((entry) => {
+    const haystack = [entry.id, entry.name, entry.ownedBy, entry.modality, entry.pricing]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return !normalizedQuery || haystack.includes(normalizedQuery);
+  });
+
+  return (
+    <Modal
+      title="Browse Models"
+      subtitle={`Discover available models from ${state.providerName}.`}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      submitLabel="Use Model"
+      size="wide"
+    >
+      <Field
+        label=""
+        value={state.query}
+        onChange={onQueryChange}
+        placeholder="Search models"
+        className="model-browser-search"
+      />
+
+      <div className="model-browser-list">
+        {state.loading ? (
+          <div className="tab-models-empty">
+            <span className="spinner" />
+            <p className="muted-copy">Loading models from {state.providerName}...</p>
+          </div>
+        ) : state.error ? (
+          <div className="tab-models-empty">
+            <p className="muted-copy">{state.error}</p>
+          </div>
+        ) : filteredEntries.length === 0 ? (
+          <div className="tab-models-empty">
+            <p className="muted-copy">No models match the current search.</p>
+          </div>
+        ) : (
+          filteredEntries.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              className={`model-browser-row${state.selectedModelId === entry.id ? " is-selected" : ""}`}
+              onClick={() => onSelect(entry.id)}
+            >
+              <div className="model-browser-main">
+                <div className="settings-row-primary">{entry.name ?? entry.id}</div>
+                <div className="settings-row-secondary settings-mono-cell">{entry.id}</div>
+              </div>
+              <div className="model-browser-meta">
+                {entry.contextLength ? (
+                  <span className="status-chip status-idle">{entry.contextLength.toLocaleString()} ctx</span>
+                ) : null}
+                {entry.modality ? <span className="status-chip status-idle">{entry.modality}</span> : null}
+                {entry.pricing ? <span className="status-chip status-idle">{entry.pricing}</span> : null}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function SamplingModal({
-  pluginName,
+  benchPackName,
   defaults,
   form,
   onChange,
   onClose,
   onSubmit
 }: {
-  pluginName: string;
+  benchPackName: string;
   defaults: GenerationRequest;
   form: SamplingFormState;
   onChange: (form: SamplingFormState) => void;
@@ -3974,8 +4425,8 @@ function SamplingModal({
 
   return (
     <Modal
-      title="Scenario Pack Samplings"
-      subtitle={`Configure request sampling overrides for ${pluginName}. Leave fields blank to use the scenario pack defaults, and BenchLocal will omit values that are still unset.`}
+      title="Bench Pack Samplings"
+      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the Bench Pack defaults, and BenchLocal will omit values that are still unset.`}
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Samplings"
@@ -3994,7 +4445,7 @@ function SamplingModal({
       {hasPackDefaults ? (
         <div className="helper-copy">
           <p>
-            Scenario pack defaults:
+            Bench Pack defaults:
             {" "}
             {SAMPLING_FIELDS.map((field) => {
               const value = defaults[field.key as keyof GenerationRequest];
@@ -4014,7 +4465,7 @@ function SamplingModal({
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This scenario pack does not define recommended defaults yet. Blank fields mean BenchLocal will not send those sampling values.</p>
+          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will not send those sampling values.</p>
         </div>
       )}
       <div className="entry-grid two-col">
@@ -4036,27 +4487,89 @@ function SamplingModal({
 }
 
 function EmptyWorkspace({
-  hasInstalledScenarioPacks,
-  onSelectScenarioPack
+  providerCount,
+  modelCount,
+  installedBenchPackCount,
+  onOpenProviders,
+  onOpenModels,
+  onOpenBenchPacks,
+  onSelectBenchPack
 }: {
-  hasInstalledScenarioPacks: boolean;
-  onSelectScenarioPack?: () => void;
+  providerCount: number;
+  modelCount: number;
+  installedBenchPackCount: number;
+  onOpenProviders: () => void;
+  onOpenModels: () => void;
+  onOpenBenchPacks: () => void;
+  onSelectBenchPack?: () => void;
 }) {
+  const hasProviders = providerCount > 0;
+  const hasModels = modelCount > 0;
+  const hasInstalledBenchPacks = installedBenchPackCount > 0;
+  const checklist = [
+    {
+      key: "providers",
+      complete: hasProviders,
+      title: "Set up providers",
+      detail: hasProviders ? `${providerCount} configured` : "Add at least one provider endpoint.",
+      actionLabel: "Providers",
+      onAction: onOpenProviders
+    },
+    {
+      key: "models",
+      complete: hasModels,
+      title: "Add models",
+      detail: hasModels ? `${modelCount} configured` : "Create shared models that point to your providers.",
+      actionLabel: "Models",
+      onAction: onOpenModels
+    },
+    {
+      key: "benchpacks",
+      complete: hasInstalledBenchPacks,
+      title: "Install Bench Packs",
+      detail: hasInstalledBenchPacks ? `${installedBenchPackCount} installed` : "Install at least one Bench Pack from the official registry.",
+      actionLabel: "Bench Packs",
+      onAction: onOpenBenchPacks
+    }
+  ];
+
   return (
     <section className="empty-workspace">
       <div className="empty-workspace-card benchmark-empty-card">
         <div className="benchmark-empty-icon">
           <FolderOpen size={22} />
         </div>
-        <p className="eyebrow">No Active Scenario Pack</p>
-        <h3 className="panel-title">Select a scenario pack to open its workspace</h3>
+        <p className="eyebrow">No Active Bench Pack</p>
+        <h3 className="panel-title">Select a Bench Pack to open its workspace</h3>
         <p className="section-copy" style={{ marginTop: "12px", maxWidth: "52ch" }}>
-          Install official scenario packs from Settings, then use the pack picker in the toolbar to open them here. BenchLocal keeps providers, models, and shared parameters in one place while each scenario pack owns its scenarios and scoring.
+          Complete the setup checklist below. BenchLocal keeps providers and models shared across the app, while each Bench Pack owns its own scenarios, sampling defaults, and scoring.
         </p>
-        {hasInstalledScenarioPacks && onSelectScenarioPack ? (
-          <button type="button" onClick={onSelectScenarioPack} className="primary-button" style={{ marginTop: "18px" }}>
+
+        <div className="welcome-checklist">
+          {checklist.map((item) => (
+            <div key={item.key} className={`welcome-checklist-item${item.complete ? " is-complete" : ""}`}>
+              <div className="welcome-checklist-icon" aria-hidden="true">
+                {item.complete ? <Check size={14} /> : <span className="welcome-checklist-dot" />}
+              </div>
+              <div className="welcome-checklist-copy">
+                <div className="welcome-checklist-title">{item.title}</div>
+                <div className="settings-row-secondary">{item.detail}</div>
+              </div>
+              {item.complete ? (
+                <span className="status-chip status-done">Done</span>
+              ) : (
+                <button type="button" onClick={item.onAction} className="ghost-button ghost-button-compact">
+                  {item.actionLabel}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {hasInstalledBenchPacks && onSelectBenchPack ? (
+          <button type="button" onClick={onSelectBenchPack} className="primary-button" style={{ marginTop: "20px" }}>
             <FolderOpen size={16} />
-            Select Scenario Pack
+            Select Bench Pack
           </button>
         ) : null}
       </div>
@@ -4202,16 +4715,19 @@ function DetachedLogsWindow() {
 function SettingsScene({
   settingsTab,
   setSettingsTab,
+  settingsNotice,
   draft,
   loadState,
   hasUnsavedChanges,
   isBusy,
   providerIds,
-  pluginInspections,
+  benchPackInspections,
   registryEntries,
-  scenarioPackMutations,
+  registryWarning,
+  benchPackMutations,
   verifierStatuses,
   onBack,
+  onDismissNotice,
   onSave,
   onReset,
   onCreateProvider,
@@ -4221,35 +4737,38 @@ function SettingsScene({
   onStartVerifier,
   onStopVerifier,
   onRefreshRegistry,
-  onInstallScenarioPack,
-  onUpdateScenarioPack,
-  onUninstallScenarioPack,
+  onInstallBenchPack,
+  onUpdateBenchPack,
+  onUninstallBenchPack,
   updateDraft
 }: {
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  settingsNotice: string | null;
   draft: BenchLocalConfig;
   loadState: LoadState | null;
   hasUnsavedChanges: boolean;
   isBusy: boolean;
   providerIds: string[];
-  pluginInspections: PluginInspection[];
-  registryEntries: ScenarioPackRegistryEntry[];
-  scenarioPackMutations: Record<string, ScenarioPackMutationState>;
-  verifierStatuses: Record<string, PluginVerifierStatus>;
+  benchPackInspections: BenchPackInspection[];
+  registryEntries: BenchPackRegistryEntry[];
+  registryWarning: string | null;
+  benchPackMutations: Record<string, BenchPackMutationState>;
+  verifierStatuses: Record<string, BenchPackVerifierStatus>;
   onBack: () => void;
+  onDismissNotice: () => void;
   onSave: () => void;
   onReset: () => void;
   onCreateProvider: () => void;
   onEditProvider: (providerId: string) => void;
   onCreateModel: () => void;
   onEditModel: (index: number) => void;
-  onStartVerifier: (pluginId: string) => Promise<void>;
-  onStopVerifier: (pluginId: string) => Promise<void>;
+  onStartVerifier: (benchPackId: string) => Promise<void>;
+  onStopVerifier: (benchPackId: string) => Promise<void>;
   onRefreshRegistry: () => void;
-  onInstallScenarioPack: (pluginId: string) => void;
-  onUpdateScenarioPack: (pluginId: string) => void;
-  onUninstallScenarioPack: (pluginId: string) => void;
+  onInstallBenchPack: (benchPackId: string) => void;
+  onUpdateBenchPack: (benchPackId: string) => void;
+  onUninstallBenchPack: (benchPackId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
 }) {
   return (
@@ -4304,6 +4823,22 @@ function SettingsScene({
       </aside>
 
       <div className="settings-scene-content">
+        {settingsNotice ? (
+          <Banner tone="success">
+            <div className="banner-row">
+              <span>{settingsNotice}</span>
+              <button
+                type="button"
+                className="banner-dismiss"
+                onClick={onDismissNotice}
+                aria-label="Dismiss notice"
+                title="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </Banner>
+        ) : null}
         <div className="settings-body settings-body-scene">
             {settingsTab === "providers" ? (
               <ProvidersView
@@ -4323,16 +4858,18 @@ function SettingsScene({
               />
             ) : null}
 
-            {settingsTab === "plugins" ? (
-              <ScenarioPackRegistryView
+            {settingsTab === "benchPacks" ? (
+              <BenchPackRegistryView
                 draft={draft}
-                inspections={pluginInspections}
+                inspections={benchPackInspections}
                 registryEntries={registryEntries}
-                scenarioPackMutations={scenarioPackMutations}
+                registryWarning={registryWarning}
+                benchPackMutations={benchPackMutations}
                 onRefresh={onRefreshRegistry}
-                onInstall={onInstallScenarioPack}
-                onUpdate={onUpdateScenarioPack}
-                onUninstall={onUninstallScenarioPack}
+                onInstall={onInstallBenchPack}
+                onInstallFromUrl={(url) => void installBenchPackFromUrl(url)}
+                onUpdate={onUpdateBenchPack}
+                onUninstall={onUninstallBenchPack}
               />
             ) : null}
 
@@ -4340,17 +4877,17 @@ function SettingsScene({
               <VerificationView
                 draft={draft}
                 statuses={verifierStatuses}
-                onUpdate={(pluginId, verifierId, updater) =>
+                onUpdate={(benchPackId, verifierId, updater) =>
                   updateDraft((current) => {
-                    current.plugins[pluginId].verifiers![verifierId] = updater(current.plugins[pluginId].verifiers![verifierId]);
+                    current.benchpacks[benchPackId].verifiers![verifierId] = updater(current.benchpacks[benchPackId].verifiers![verifierId]);
                     return current;
                   })
                 }
-                onStart={async (pluginId) => {
-                  await onStartVerifier(pluginId);
+                onStart={async (benchPackId) => {
+                  await onStartVerifier(benchPackId);
                 }}
-                onStop={async (pluginId) => {
-                  await onStopVerifier(pluginId);
+                onStop={async (benchPackId) => {
+                  await onStopVerifier(benchPackId);
                 }}
               />
             ) : null}
@@ -4363,8 +4900,8 @@ function SettingsScene({
                     current.run_storage_dir = value;
                     return current;
                   })} />
-                  <Field label="Scenario Pack Storage" value={draft.plugin_storage_dir} onChange={(value) => updateDraft((current) => {
-                    current.plugin_storage_dir = value;
+                  <Field label="Bench Pack Storage" value={draft.benchpack_storage_dir} onChange={(value) => updateDraft((current) => {
+                    current.benchpack_storage_dir = value;
                     return current;
                   })} />
                   <Field label="Log Storage" value={draft.log_storage_dir} onChange={(value) => updateDraft((current) => {
@@ -4379,7 +4916,7 @@ function SettingsScene({
                     <p>Durable settings live in <strong>config.toml</strong>.</p>
                   </div>
                 </Panel>
-                <Panel title="Registry" subtitle="Official registry source for scenario pack installs." tone="orange" icon={<Settings2 size={16} />}>
+                <Panel title="Registry" subtitle="Official registry source for Bench Pack installs." tone="orange" icon={<Settings2 size={16} />}>
                   <Field label="Official Registry URL" value={draft.registry.official_url} onChange={(value) => updateDraft((current) => {
                     current.registry.official_url = value;
                     return current;
@@ -4412,7 +4949,7 @@ function ProvidersView({
   return (
     <Panel
       title="Provider Registry"
-      subtitle="Provider endpoints, credentials, and activation state shared across all scenario packs."
+      subtitle="Provider endpoints, credentials, and activation state shared across all Bench Packs."
       tone="sky"
       icon={<Server size={16} />}
       actions={
@@ -4480,7 +5017,7 @@ function ModelsView({
   return (
     <Panel
       title="Shared Model Registry"
-      subtitle="Model labels, provider mapping, and activation state available across all scenario packs."
+      subtitle="Model labels, provider mapping, and activation state available across all Bench Packs."
       tone="orange"
       icon={<Bot size={16} />}
       actions={
@@ -4536,34 +5073,36 @@ function ModelsView({
   );
 }
 
-function ScenarioPackRegistryView({
+function BenchPackRegistryView({
   draft,
   inspections,
   registryEntries,
-  scenarioPackMutations,
+  registryWarning,
+  benchPackMutations,
   onRefresh,
   onInstall,
+  onInstallFromUrl,
   onUpdate,
   onUninstall
 }: {
   draft: BenchLocalConfig;
-  inspections: PluginInspection[];
-  registryEntries: ScenarioPackRegistryEntry[];
-  scenarioPackMutations: Record<string, ScenarioPackMutationState>;
+  inspections: BenchPackInspection[];
+  registryEntries: BenchPackRegistryEntry[];
+  registryWarning: string | null;
+  benchPackMutations: Record<string, BenchPackMutationState>;
   onRefresh: () => void;
-  onInstall: (pluginId: string) => void;
-  onUpdate: (pluginId: string) => void;
-  onUninstall: (pluginId: string) => void;
+  onInstall: (benchPackId: string) => void;
+  onInstallFromUrl: (url: string) => Promise<boolean | void>;
+  onUpdate: (benchPackId: string) => void;
+  onUninstall: (benchPackId: string) => void;
 }) {
+  const [manualUrl, setManualUrl] = useState("");
   const inspectionsById = Object.fromEntries(inspections.map((inspection) => [inspection.id, inspection]));
-  const unlistedInstalledIds = Object.keys(draft.plugins).filter(
-    (pluginId) => !registryEntries.some((entry) => entry.id === pluginId)
-  );
-  const rows = [
-    ...registryEntries.map((entry) => {
-      const installed = draft.plugins[entry.id];
+  const hasActiveMutation = Object.keys(benchPackMutations).length > 0;
+  const officialRows = registryEntries.map((entry) => {
+      const installed = draft.benchpacks[entry.id];
       const inspection = inspectionsById[entry.id];
-      const mutation = scenarioPackMutations[entry.id];
+      const mutation = benchPackMutations[entry.id];
       const updateAvailable =
         Boolean(installed) &&
         (installed?.version !== entry.version ||
@@ -4580,117 +5119,224 @@ function ScenarioPackRegistryView({
         updateAvailable,
         isRegistryEntry: true
       } as const;
-    }),
-    ...unlistedInstalledIds.map((pluginId) => {
-      const installed = draft.plugins[pluginId];
-      const inspection = inspectionsById[pluginId];
-      const mutation = scenarioPackMutations[pluginId];
+    });
+  const thirdPartyRows = Object.entries(draft.benchpacks)
+    .filter(([, benchPack]) => benchPack.source !== "registry")
+    .map(([benchPackId, benchPack]) => {
+      const inspection = inspectionsById[benchPackId];
+      const mutation = benchPackMutations[benchPackId];
 
       return {
-        id: pluginId,
-        name: inspection?.manifest?.name ?? pluginId,
-        description: "Installed, but not listed in the official registry.",
-        version: installed?.version ?? "unknown",
-        installed: true,
+        id: benchPackId,
+        name: inspection?.manifest?.name ?? benchPackId,
+        description: inspection?.manifest?.description ?? "Installed from a third-party source maintained outside BenchLocal.",
+        version: benchPack.version ?? inspection?.manifest?.version ?? "unknown",
         status: inspection?.status ?? "not_installed",
-        mutation,
-        updateAvailable: false,
-        isRegistryEntry: false
+        sourceLabel:
+          benchPack.source === "archive"
+            ? benchPack.url ?? "Archive URL"
+            : benchPack.source === "github"
+              ? benchPack.repo ?? "GitHub"
+              : benchPack.source === "local"
+                ? benchPack.path ?? "Local path"
+                : benchPack.source,
+        mutation
       } as const;
-    })
-  ];
+    });
 
   return (
-    <Panel
-      title="Scenario Pack Registry"
-      subtitle="Install and remove official scenario packs from the BenchLocal registry."
-      tone="sky"
-      icon={<PlugZap size={16} />}
-      actions={<button type="button" onClick={onRefresh} className="ghost-button"><RotateCcw size={14} />Refresh Registry</button>}
-    >
-      <div className="settings-list-table-wrap">
-        <table className="settings-list-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Description</th>
-              <th>Version</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
+    <section className="settings-section-stack">
+      <Panel
+        title="Official Bench Pack"
+        subtitle="Install and update official Bench Packs from the BenchLocal registry."
+        tone="sky"
+        icon={<PlugZap size={16} />}
+        actions={<button type="button" onClick={onRefresh} className="ghost-button" disabled={hasActiveMutation}><RotateCcw size={14} />Refresh Registry</button>}
+      >
+        {registryWarning ? <Banner tone="warning">{registryWarning}</Banner> : null}
+        <div className="settings-list-table-wrap">
+          <table className="settings-list-table">
+            <thead>
               <tr>
-                <td colSpan={5}>
-                  <div className="settings-row-secondary">No scenario packs are available in the registry.</div>
-                </td>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Actions</th>
               </tr>
-            ) : (
-              rows.map((row) => {
-                const isMutating = Boolean(row.mutation);
-                return (
-                  <tr key={row.id}>
-                    <td>
-                      <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
-                    </td>
-                    <td>{row.description}</td>
-                    <td>
-                      <div className="settings-table-actions settings-table-actions-inline">
-                        <span>v{row.version}</span>
-                        {row.installed && row.isRegistryEntry && row.updateAvailable ? (
-                          <button
-                            type="button"
-                            onClick={() => onUpdate(row.id)}
-                            className="ghost-button ghost-button-compact"
-                            disabled={isMutating}
-                          >
-                            {row.mutation?.action === "update" ? <LoaderCircle size={14} className="spinner" /> : <RotateCcw size={14} />}
-                            {row.mutation?.action === "update" ? scenarioPackMutationLabel(row.mutation) : "Upgrade"}
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`status-chip ${row.installed ? statusClasses(row.status as PluginInspection["status"]) : "status-idle"}`}>
-                        {row.mutation ? scenarioPackMutationLabel(row.mutation) : row.installed ? row.status.replaceAll("_", " ") : "available"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="settings-table-actions">
-                        {row.installed ? (
-                          <>
+            </thead>
+            <tbody>
+              {officialRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>
+                    <div className="settings-row-secondary">
+                      {registryWarning
+                        ? "The official registry is currently unavailable."
+                        : "No Bench Packs are available in the official registry."}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                officialRows.map((row) => {
+                  const isMutating = Boolean(row.mutation);
+                  const disableRowAction = hasActiveMutation && !isMutating;
+
+                  return (
+                    <tr key={row.id}>
+                      <td>
+                        <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
+                      </td>
+                      <td>{row.description}</td>
+                      <td>
+                        <div className="settings-table-actions settings-table-actions-inline">
+                          <span>v{row.version}</span>
+                          {row.installed && row.isRegistryEntry && row.updateAvailable ? (
+                            <button
+                              type="button"
+                              onClick={() => onUpdate(row.id)}
+                              className="ghost-button ghost-button-compact"
+                              disabled={disableRowAction || isMutating}
+                            >
+                              {row.mutation?.action === "update" ? <span className="spinner" /> : <RotateCcw size={14} />}
+                              {row.mutation?.action === "update" ? benchPackMutationLabel(row.mutation) : "Upgrade"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status-chip ${row.installed ? statusClasses(row.status as BenchPackInspection["status"]) : "status-idle"}`}>
+                          {row.mutation ? benchPackMutationLabel(row.mutation) : row.installed ? row.status.replaceAll("_", " ") : "available"}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="settings-table-actions">
+                          {row.installed ? (
                             <button
                               type="button"
                               onClick={() => onUninstall(row.id)}
-                              className="ghost-button ghost-button-compact"
-                              disabled={isMutating}
+                              className="ghost-button ghost-button-compact benchpack-action-button"
+                              disabled={disableRowAction || isMutating}
                             >
-                              {row.mutation?.action === "uninstall" ? <LoaderCircle size={14} className="spinner" /> : <Trash2 size={14} />}
-                              {row.mutation?.action === "uninstall" ? scenarioPackMutationLabel(row.mutation) : "Uninstall"}
+                              {row.mutation?.action === "uninstall" ? <span className="spinner" /> : <Trash2 size={14} />}
+                              {row.mutation?.action === "uninstall" ? benchPackMutationLabel(row.mutation) : "Uninstall"}
                             </button>
-                          </>
-                        ) : (
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onInstall(row.id)}
+                              className="primary-button benchpack-action-button"
+                              disabled={disableRowAction || isMutating}
+                            >
+                              {row.mutation?.action === "install" ? <span className="spinner" /> : <Plus size={14} />}
+                              {row.mutation?.action === "install" ? benchPackMutationLabel(row.mutation) : "Install"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Third-Party Bench Packs"
+        subtitle="Install Bench Packs from third-party sources using a direct artifact URL."
+        tone="orange"
+        icon={<FolderOpen size={16} />}
+      >
+        <div className="helper-copy">
+          <p>Third-party Bench Packs are maintained by their authors, not by BenchLocal. Only install packages from sources you trust.</p>
+        </div>
+        <div className="benchpack-url-install-row">
+          <Field
+            label="Bench Pack URL"
+            value={manualUrl}
+            placeholder="https://example.com/my-benchpack.tar.gz"
+            onChange={setManualUrl}
+            className="benchpack-url-field"
+          />
+          <button
+            type="button"
+            className="primary-button benchpack-action-button"
+            disabled={hasActiveMutation || !manualUrl.trim()}
+            onClick={async () => {
+              const installed = await onInstallFromUrl(manualUrl);
+
+              if (installed !== false) {
+                setManualUrl("");
+              }
+            }}
+          >
+            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] || benchPackMutations["third-party"] ? <span className="spinner" /> : <Plus size={14} />}
+            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] || benchPackMutations["third-party"]
+              ? benchPackMutationLabel(benchPackMutations["third-party"] ?? benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID])
+              : "Install from URL"}
+          </button>
+        </div>
+
+        <div className="settings-list-table-wrap">
+          <table className="settings-list-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Version</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {thirdPartyRows.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <div className="settings-row-secondary">No third-party Bench Packs are installed.</div>
+                  </td>
+                </tr>
+              ) : (
+                thirdPartyRows.map((row) => {
+                  const isMutating = Boolean(row.mutation);
+                  const disableRowAction = hasActiveMutation && !isMutating;
+
+                  return (
+                    <tr key={row.id}>
+                      <td>
+                        <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
+                      </td>
+                      <td>{row.description}</td>
+                      <td>v{row.version}</td>
+                      <td className="settings-mono-cell">{row.sourceLabel}</td>
+                      <td>
+                        <span className={`status-chip ${statusClasses(row.status as BenchPackInspection["status"])}`}>
+                          {row.mutation ? benchPackMutationLabel(row.mutation) : row.status.replaceAll("_", " ")}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="settings-table-actions">
                           <button
                             type="button"
-                            onClick={() => onInstall(row.id)}
-                            className="primary-button"
-                            disabled={isMutating}
+                            onClick={() => onUninstall(row.id)}
+                            className="ghost-button ghost-button-compact benchpack-action-button"
+                            disabled={disableRowAction || isMutating}
                           >
-                            {row.mutation?.action === "install" ? <LoaderCircle size={14} className="spinner" /> : <Plus size={14} />}
-                            {row.mutation?.action === "install" ? scenarioPackMutationLabel(row.mutation) : "Install"}
+                            {row.mutation?.action === "uninstall" ? <span className="spinner" /> : <Trash2 size={14} />}
+                            {row.mutation?.action === "uninstall" ? benchPackMutationLabel(row.mutation) : "Uninstall"}
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </section>
   );
 }
 
@@ -4714,25 +5360,25 @@ function VerificationView({
   onStop
 }: {
   draft: BenchLocalConfig;
-  statuses: Record<string, PluginVerifierStatus>;
-  onUpdate: (pluginId: string, verifierId: string, updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig) => void;
-  onStart: (pluginId: string) => Promise<void>;
-  onStop: (pluginId: string) => Promise<void>;
+  statuses: Record<string, BenchPackVerifierStatus>;
+  onUpdate: (benchPackId: string, verifierId: string, updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig) => void;
+  onStart: (benchPackId: string) => Promise<void>;
+  onStop: (benchPackId: string) => Promise<void>;
 }) {
-  const verificationEntries = Object.entries(draft.plugins).filter(([pluginId]) => {
-    const status = statuses[pluginId];
+  const verificationEntries = Object.entries(draft.benchpacks).filter(([benchPackId]) => {
+    const status = statuses[benchPackId];
     return Boolean(status && status.verifiers.length > 0);
   });
 
-  const rows = verificationEntries.flatMap(([pluginId, plugin]) => {
-    const status = statuses[pluginId];
-    const inspectionName = status?.pluginName ?? pluginId;
+  const rows = verificationEntries.flatMap(([benchPackId, benchPack]) => {
+    const status = statuses[benchPackId];
+    const inspectionName = status?.benchPackName ?? benchPackId;
 
-    return Object.entries(plugin.verifiers ?? {}).map(([verifierId, verifier]) => {
+    return Object.entries(benchPack.verifiers ?? {}).map(([verifierId, verifier]) => {
       const runtime = status?.verifiers.find((entry) => entry.id === verifierId);
       return {
-        pluginId,
-        pluginName: inspectionName,
+        benchPackId,
+        benchPackName: inspectionName,
         verifierId,
         verifier,
         runtime,
@@ -4752,7 +5398,7 @@ function VerificationView({
         <table className="settings-list-table">
           <thead>
             <tr>
-              <th>Scenario Pack</th>
+              <th>Bench Pack</th>
               <th>Mode</th>
               <th>Status</th>
               <th>Endpoint</th>
@@ -4764,14 +5410,14 @@ function VerificationView({
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={6}>
-                  <div className="settings-row-secondary">No installed scenario packs currently require a verifier.</div>
+                  <div className="settings-row-secondary">No installed Bench Packs currently require a verifier.</div>
                 </td>
               </tr>
             ) : (
-              rows.map(({ pluginId, pluginName, verifierId, verifier, runtime, docker }) => (
-                <tr key={`${pluginId}:${verifierId}`}>
+              rows.map(({ benchPackId, benchPackName, verifierId, verifier, runtime, docker }) => (
+                <tr key={`${benchPackId}:${verifierId}`}>
                   <td>
-                    <div className="settings-row-primary settings-nowrap-cell">{pluginName}</div>
+                    <div className="settings-row-primary settings-nowrap-cell">{benchPackName}</div>
                   </td>
                   <td>
                     <InlineSelectField
@@ -4783,7 +5429,7 @@ function VerificationView({
                         { value: "custom_url", label: `${verifierModeLabel("custom_url")} (Soon)`, disabled: true }
                       ]}
                       onChange={(value) =>
-                        onUpdate(pluginId, verifierId, (current) => ({
+                        onUpdate(benchPackId, verifierId, (current) => ({
                           ...current,
                           mode: value as BenchLocalVerifierConfig["mode"]
                         }))
@@ -4817,7 +5463,7 @@ function VerificationView({
                         type="checkbox"
                         checked={verifier.auto_start}
                         onChange={(event) =>
-                          onUpdate(pluginId, verifierId, (current) => ({
+                          onUpdate(benchPackId, verifierId, (current) => ({
                             ...current,
                             auto_start: event.target.checked
                           }))
@@ -4828,12 +5474,12 @@ function VerificationView({
                   <td>
                     <div className="settings-table-actions">
                       {runtime?.status === "running" ? (
-                        <button type="button" onClick={() => onStop(pluginId)} className="ghost-button ghost-button-compact">
+                        <button type="button" onClick={() => onStop(benchPackId)} className="ghost-button ghost-button-compact">
                           <Square size={14} />
                           Stop
                         </button>
                       ) : (
-                        <button type="button" onClick={() => onStart(pluginId)} className="ghost-button ghost-button-compact">
+                        <button type="button" onClick={() => onStart(benchPackId)} className="ghost-button ghost-button-compact">
                           <Play size={14} />
                           Start
                         </button>
@@ -4920,13 +5566,13 @@ function DetailCard({ title, content }: { title: string; content: string }) {
 }
 
 function HistoryModal({
-  pluginName,
+  benchPackName,
   entries,
   onClose,
   onOpenRun
 }: {
-  pluginName: string;
-  entries: PluginRunHistoryEntry[];
+  benchPackName: string;
+  entries: BenchPackRunHistoryEntry[];
   onClose: () => void;
   onOpenRun: (runId: string) => void;
 }) {
@@ -4936,7 +5582,7 @@ function HistoryModal({
         <div className="dialog-header">
           <div>
             <h3 className="dialog-title">Test Histories</h3>
-            <p className="section-copy" style={{ marginTop: "12px" }}>{pluginName}</p>
+            <p className="section-copy" style={{ marginTop: "12px" }}>{benchPackName}</p>
           </div>
           <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
             <X size={16} />
@@ -5227,7 +5873,7 @@ function InlineSelectField({
   );
 }
 
-function statusClasses(status: PluginInspection["status"]): string {
+function statusClasses(status: BenchPackInspection["status"]): string {
   switch (status) {
     case "ready":
       return "status-ready";

@@ -1815,11 +1815,11 @@ pre {
   opacity: 0.6;
 }
 
-.scenario-pack-picker-shell {
+.benchpack-picker-shell {
   width: min(1180px, calc(100vw - 40px));
 }
 
-.scenario-pack-picker-body {
+.benchpack-picker-body {
   margin-top: 20px;
   display: grid;
   grid-template-columns: minmax(340px, 0.88fr) minmax(0, 1.12fr);
@@ -1827,19 +1827,19 @@ pre {
   min-height: 420px;
 }
 
-.scenario-pack-picker-list,
-.scenario-pack-picker-detail {
+.benchpack-picker-list,
+.benchpack-picker-detail {
   min-width: 0;
   display: grid;
   gap: 14px;
   align-content: start;
 }
 
-.scenario-pack-picker-list {
+.benchpack-picker-list {
   align-self: start;
 }
 
-.scenario-pack-picker-options {
+.benchpack-picker-options {
   display: grid;
   gap: 8px;
   align-content: start;
@@ -1849,7 +1849,7 @@ pre {
   padding-right: 4px;
 }
 
-.scenario-pack-option {
+.benchpack-option {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -1863,51 +1863,51 @@ pre {
   cursor: pointer;
 }
 
-.scenario-pack-option:hover,
-.scenario-pack-option.is-selected {
+.benchpack-option:hover,
+.benchpack-option.is-selected {
   border-color: var(--outline-accent);
   background: var(--surface-strong);
 }
 
-.scenario-pack-option:hover {
+.benchpack-option:hover {
   border-color: var(--border-strong);
   background: var(--surface-strong);
 }
 
-.scenario-pack-option.is-selected {
+.benchpack-option.is-selected {
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--outline-accent) 60%, transparent);
 }
 
-.scenario-pack-option.is-selected .settings-row-primary {
+.benchpack-option.is-selected .settings-row-primary {
   color: var(--ink);
 }
 
-.scenario-pack-option.is-selected .settings-row-secondary {
+.benchpack-option.is-selected .settings-row-secondary {
   color: color-mix(in srgb, var(--ink) 72%, var(--muted));
 }
 
-.scenario-pack-option-main {
+.benchpack-option-main {
   min-width: 0;
   display: grid;
   align-content: start;
   gap: 4px;
 }
 
-.scenario-pack-picker-detail {
+.benchpack-picker-detail {
   display: flex;
   flex-direction: column;
   align-self: stretch;
   min-height: 100%;
 }
 
-.scenario-pack-picker-meta {
+.benchpack-picker-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.scenario-pack-stat-card {
+.benchpack-stat-card {
   display: grid;
   gap: 0;
   padding: 10px 14px 9px;
@@ -1917,7 +1917,7 @@ pre {
   align-content: start;
 }
 
-.scenario-pack-stat-label {
+.benchpack-stat-label {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.22em;
@@ -1925,7 +1925,7 @@ pre {
   color: var(--muted);
 }
 
-.scenario-pack-stat-value {
+.benchpack-stat-value {
   font-size: 1.18rem;
   font-weight: 650;
   line-height: 1.05;
@@ -1934,20 +1934,20 @@ pre {
   margin-top: 6px;
 }
 
-.scenario-pack-meta-value {
+.benchpack-meta-value {
   font-size: 0.98rem;
   line-height: 1.2;
 }
 
 
-.scenario-pack-picker-badges {
+.benchpack-picker-badges {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
 
-.scenario-pack-picker-footer {
+.benchpack-picker-footer {
   display: flex;
   justify-content: flex-end;
   align-items: flex-end;
@@ -1977,6 +1977,65 @@ pre {
   display: grid;
   gap: 4px;
   justify-items: start;
+}
+
+.welcome-checklist {
+  width: min(640px, 100%);
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.welcome-checklist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-1);
+}
+
+.welcome-checklist-item.is-complete {
+  background: var(--surface-2);
+}
+
+.welcome-checklist-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  background: var(--surface-0);
+  flex-shrink: 0;
+}
+
+.welcome-checklist-item.is-complete .welcome-checklist-icon {
+  color: var(--done);
+  border-color: color-mix(in srgb, var(--done) 40%, var(--border-strong));
+  background: var(--done-soft);
+}
+
+.welcome-checklist-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.welcome-checklist-copy {
+  min-width: 0;
+}
+
+.welcome-checklist-title {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .benchmark-empty-icon {
@@ -2118,6 +2177,10 @@ pre {
   flex-direction: column;
   padding: 22px 22px 18px;
   background: var(--workspace-canvas-bg);
+}
+
+.settings-scene-content > .banner {
+  margin: 0 0 16px;
 }
 
 .settings-shell {
@@ -2303,6 +2366,78 @@ pre {
 
 .field-block-no-label .config-input {
   margin-top: 0;
+}
+
+.model-field-with-action {
+  min-width: 0;
+}
+
+.model-field-with-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.model-field-with-action-row .config-input {
+  margin-top: 6px;
+}
+
+.model-field-with-action-row .ghost-button {
+  min-height: 40px;
+  height: 40px;
+  align-self: end;
+}
+
+.model-browser-search {
+  margin-bottom: 12px;
+}
+
+.model-browser-list {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  min-height: min(52vh, 560px);
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.model-browser-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+}
+
+.model-browser-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.model-browser-row.is-selected {
+  border-color: var(--outline-accent);
+  background: var(--accent-soft);
+}
+
+.model-browser-main,
+.model-browser-meta {
+  min-width: 0;
+}
+
+.model-browser-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .config-input {
@@ -2555,6 +2690,36 @@ select.config-input {
   border: 1px solid var(--border);
   background: var(--surface-strong);
   box-shadow: inset 0 1px 0 var(--glass-border);
+}
+
+.settings-section-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.benchpack-action-button {
+  min-height: 32px;
+  height: 32px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.benchpack-url-install-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 14px 0 16px;
+}
+
+.benchpack-url-field {
+  min-width: 0;
+}
+
+.benchpack-url-install-row .benchpack-action-button {
+  height: 32px;
+  min-height: 32px;
+  align-self: end;
 }
 
 .settings-list-table {

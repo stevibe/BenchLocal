@@ -1,9 +1,9 @@
 import type {
-  BenchPlugin,
+  BenchPackRuntime,
   BenchmarkScore,
   GenerationRequest,
   HostContext,
-  PluginManifest,
+  BenchPackManifest,
   ProgressEmitter,
   ProgressEvent,
   ProviderConfig,
@@ -15,11 +15,11 @@ import type {
   VerifierEndpoint
 } from "@benchlocal/core";
 export type {
-  BenchPlugin,
+  BenchPackRuntime,
   BenchmarkScore,
   GenerationRequest,
   HostContext,
-  PluginManifest,
+  BenchPackManifest,
   ProgressEmitter,
   ProgressEvent,
   ProviderConfig,
@@ -34,7 +34,7 @@ export type {
 export const BENCHLOCAL_SCHEMA_VERSION = 1 as const;
 export const BENCHLOCAL_PROTOCOL_VERSION = 1 as const;
 
-export type PluginManifestInput = Omit<PluginManifest, "schemaVersion" | "protocolVersion">;
+export type BenchPackManifestInput = Omit<BenchPackManifest, "schemaVersion" | "protocolVersion">;
 
 export type ProviderLookupOptions = {
   enabledOnly?: boolean;
@@ -82,9 +82,9 @@ function createLookupError(kind: string, id: string, detail?: string): Error {
   return new Error(detail ? `${kind} "${id}" ${detail}` : `${kind} "${id}" was not found.`);
 }
 
-export function definePluginManifest<const TManifest extends PluginManifestInput>(
+export function defineBenchPackManifest<const TManifest extends BenchPackManifestInput>(
   manifest: TManifest
-): PluginManifest & TManifest {
+): BenchPackManifest & TManifest {
   return {
     schemaVersion: BENCHLOCAL_SCHEMA_VERSION,
     protocolVersion: BENCHLOCAL_PROTOCOL_VERSION,
@@ -92,8 +92,8 @@ export function definePluginManifest<const TManifest extends PluginManifestInput
   };
 }
 
-export function defineBenchPlugin<const TPlugin extends BenchPlugin>(plugin: TPlugin): TPlugin {
-  return plugin;
+export function defineBenchPack<const TBenchPack extends BenchPackRuntime>(benchPack: TBenchPack): TBenchPack {
+  return benchPack;
 }
 
 export function createHostHelpers(context: HostContext): HostHelpers {

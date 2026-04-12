@@ -11,7 +11,7 @@ export default defineConfig({
       alias: {
         "@": path.resolve(projectRoot, "src"),
         "@core": path.resolve(projectRoot, "../packages/benchlocal-core/src"),
-        "@plugin-host": path.resolve(projectRoot, "../packages/plugin-host/src")
+        "@benchpack-host": path.resolve(projectRoot, "../packages/benchpack-host/src")
       }
     }
   },
@@ -29,7 +29,7 @@ export default defineConfig({
       alias: {
         "@": path.resolve(projectRoot, "src"),
         "@core": path.resolve(projectRoot, "../packages/benchlocal-core/src"),
-        "@plugin-host": path.resolve(projectRoot, "../packages/plugin-host/src")
+        "@benchpack-host": path.resolve(projectRoot, "../packages/benchpack-host/src")
       }
     }
   },
@@ -39,7 +39,7 @@ export default defineConfig({
       alias: {
         "@renderer": path.resolve(projectRoot, "src/renderer/src"),
         "@core": path.resolve(projectRoot, "../packages/benchlocal-core/src"),
-        "@plugin-host": path.resolve(projectRoot, "../packages/plugin-host/src")
+        "@benchpack-host": path.resolve(projectRoot, "../packages/benchpack-host/src")
       }
     }
   }

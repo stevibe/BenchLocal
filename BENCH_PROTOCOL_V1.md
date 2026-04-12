@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Bench Protocol v1 defines how BenchLocal loads, configures, executes, and manages benchmark plugins.
+Bench Protocol v1 defines how BenchLocal loads, configures, executes, and manages Bench Packs.
 
 This protocol is designed for the current six benchmark pillars:
 
@@ -19,12 +19,12 @@ It must support:
 - tool-calling benchmarks
 - multi-turn benchmarks
 - verifier-backed benchmarks with sidecars
-- standalone operation in each plugin repo
+- standalone operation in each Bench Pack repo
 
 ## Design Principles
 
 - Host-owned shared config
-- plugin-owned benchmark logic
+- Bench Pack-owned benchmark logic
 - deterministic event stream
 - explicit sidecar requirements
 - stable standalone compatibility
@@ -32,14 +32,14 @@ It must support:
 
 ## Artifact Layout
 
-Each installable plugin repo should expose:
+Each installable Bench Pack repo should expose:
 
 ```text
-benchlocal.plugin.json
+benchlocal.pack.json
 dist/benchlocal/index.js
 ```
 
-Recommended source layout inside the plugin repo:
+Recommended source layout inside the Bench Pack repo:
 
 ```text
 src/benchlocal/
@@ -56,13 +56,13 @@ lib/
 scripts/
 ```
 
-Plugin authors should build against `@benchlocal/sdk` rather than hand-rolling the host context and plugin object shape.
+Bench Pack authors should build against `@benchlocal/sdk` rather than hand-rolling the host context and Bench Pack runtime object shape.
 
 ## Manifest
 
 File name:
 
-`benchlocal.plugin.json`
+`benchlocal.pack.json`
 
 Example:
 
@@ -86,16 +86,20 @@ Example:
     "tools": false,
     "multiTurn": true,
     "streamingProgress": true,
-    "sidecars": true,
+    "verification": true,
     "standaloneWebApp": true
   },
-  "sidecars": [
+  "verifiers": [
     {
       "id": "verifier",
-      "kind": "docker-http",
+      "transport": "http",
       "required": true,
-      "defaultPort": 4010,
-      "healthcheckPath": "/health"
+      "defaultMode": "docker",
+      "docker": {
+        "buildContext": "./verification",
+        "listenPort": 4010,
+        "healthcheckPath": "/health"
+      }
     }
   ]
 }
@@ -118,25 +122,26 @@ Optional:
 - `description`
 - `repository`
 - `theme`
-- `sidecars`
+- `samplingDefaults`
+- `verifiers`
 
 ### Manifest Constraints
 
 - `id` must be globally unique and stable.
 - `protocolVersion` must match a version supported by BenchLocal.
 - `entry` must resolve relative to the repo root.
-- `sidecars` must be declarative. The host decides lifecycle.
+- `verifiers` must be declarative. The host decides lifecycle and host port assignment.
 
 ## TypeScript Interfaces
 
 ```ts
-export type PluginId = string;
+export type BenchPackId = string;
 export type ScenarioId = string;
 
-export interface PluginManifest {
+export interface BenchPackManifest {
   schemaVersion: 1;
   protocolVersion: 1;
-  id: PluginId;
+  id: BenchPackId;
   name: string;
   version: string;
   description?: string;
@@ -166,14 +171,14 @@ export interface SidecarSpec {
   healthcheckPath?: string;
 }
 
-export interface BenchPlugin {
-  manifest: PluginManifest;
+export interface BenchPackRuntime {
+  manifest: BenchPackManifest;
   listScenarios(): Promise<ScenarioMeta[]>;
-  prepare(context: HostContext): Promise<PreparedPlugin>;
+  prepare(context: HostContext): Promise<PreparedBenchPack>;
   scoreModelResults(results: ScenarioResult[]): BenchmarkScore;
 }
 
-export interface PreparedPlugin {
+export interface PreparedBenchPack {
   runScenario(input: ScenarioRunInput, emit: ProgressEmitter): Promise<ScenarioResult>;
   dispose(): Promise<void>;
 }
@@ -181,12 +186,12 @@ export interface PreparedPlugin {
 
 ## Host Context
 
-BenchLocal passes normalized host-owned configuration into the plugin.
+BenchLocal passes normalized host-owned configuration into the Bench Pack.
 
 ```ts
 export interface HostContext {
   protocolVersion: 1;
-  plugin: {
+  benchPack: {
     id: string;
     version: string;
     installDir: string;
@@ -255,7 +260,7 @@ export interface SidecarEndpoint {
 
 ## Scenario Metadata
 
-Plugins must expose a list of scenarios without executing them.
+Bench Packs must expose a list of scenarios without executing them.
 
 ```ts
 export interface ScenarioMeta {
@@ -272,16 +277,16 @@ This powers:
 - run selection UI
 - single-scenario reruns
 - category filters
-- plugin overview screens
+- Bench Pack overview screens
 
 ## Scenario Run Input
 
-BenchLocal invokes the plugin one scenario at a time, per model.
+BenchLocal invokes the Bench Pack one scenario at a time, per model.
 
 ```ts
 export interface ScenarioRunInput {
   runId: string;
-  pluginId: string;
+  benchPackId: string;
   scenario: ScenarioMeta;
   model: RegisteredModel;
   generation: GenerationRequest;
@@ -297,11 +302,11 @@ export interface GenerationRequest {
 }
 ```
 
-The plugin must not read model/provider configuration from `.env` in BenchLocal mode. It must use the host-supplied input and host context.
+The Bench Pack must not read model/provider configuration from `.env` in BenchLocal mode. It must use the host-supplied input and host context.
 
 ## Scenario Result
 
-Plugins return normalized results so BenchLocal can render all benchmarks in one UI.
+Bench Packs return normalized results so BenchLocal can render all benchmarks in one UI.
 
 ```ts
 export interface ScenarioResult {
@@ -378,7 +383,7 @@ export interface ArtifactRef {
 
 ## Final Benchmark Score
 
-Plugins remain responsible for turning scenario results into benchmark-specific aggregate scoring.
+Bench Packs remain responsible for turning scenario results into benchmark-specific aggregate scoring.
 
 ```ts
 export interface BenchmarkScore {
@@ -393,7 +398,7 @@ export interface BenchmarkScore {
 }
 ```
 
-BenchLocal stores and displays this shape, but does not impose one scoring formula on all plugins.
+BenchLocal stores and displays this shape, but does not impose one scoring formula on all benchpacks.
 
 ## Progress Event Protocol
 
@@ -461,7 +466,7 @@ This shape is deliberately aligned with the current standalone orchestrator even
 
 ## Sidecar Lifecycle Contract
 
-BenchLocal owns sidecar lifecycle. Plugins declare what they need and receive running endpoints through `HostContext`.
+BenchLocal owns sidecar lifecycle. Bench Packs declare what they need and receive running endpoints through `HostContext`.
 
 Sidecar host responsibilities:
 
@@ -471,36 +476,36 @@ Sidecar host responsibilities:
 - healthcheck
 - restart on failure if configured
 - surface logs to the UI
-- stop on plugin uninstall or app shutdown when appropriate
+- stop on Bench Pack uninstall or app shutdown when appropriate
 
-Plugins can optionally expose helper hooks for sidecars:
+Bench Packs can optionally expose helper hooks for sidecars:
 
 ```ts
-export interface BenchPlugin {
-  manifest: PluginManifest;
+export interface BenchPackRuntime {
+  manifest: BenchPackManifest;
   listScenarios(): Promise<ScenarioMeta[]>;
-  prepare(context: HostContext): Promise<PreparedPlugin>;
+  prepare(context: HostContext): Promise<PreparedBenchPack>;
   scoreModelResults(results: ScenarioResult[]): BenchmarkScore;
-  sidecars?: PluginSidecarLifecycle;
+  sidecars?: Bench PackSidecarLifecycle;
 }
 
-export interface PluginSidecarLifecycle {
+export interface Bench PackSidecarLifecycle {
   validate?(context: HostContext): Promise<void>;
 }
 ```
 
-BenchLocal should avoid making plugin authors own raw Docker command orchestration in the primary protocol.
+BenchLocal should avoid making Bench Pack authors own raw Docker command orchestration in the primary protocol.
 
 ## Error Handling
 
-Plugins should fail with explicit host-visible errors.
+Bench Packs should fail with explicit host-visible errors.
 
 Recommended error classes:
 
 ```ts
-export class PluginConfigError extends Error {}
-export class PluginDependencyError extends Error {}
-export class PluginExecutionError extends Error {}
+export class Bench PackConfigError extends Error {}
+export class Bench PackDependencyError extends Error {}
+export class Bench PackExecutionError extends Error {}
 ```
 
 Examples:
@@ -508,13 +513,13 @@ Examples:
 - missing sidecar endpoint
 - unsupported scenario ID
 - provider secret unavailable
-- malformed plugin manifest
+- malformed Bench Pack manifest
 
 BenchLocal should display these as actionable UI errors, not opaque stack traces.
 
 ## Standalone Compatibility Contract
 
-A plugin repo must support:
+A Bench Pack repo must support:
 
 - BenchLocal mode
 - standalone mode
@@ -522,36 +527,36 @@ A plugin repo must support:
 Recommended pattern:
 
 - benchmark core code moves into shared library modules
-- standalone Next.js route calls the same plugin core
+- standalone Next.js route calls the same Bench Pack core
 - standalone `.env` adapter translates local env into the same normalized host config shape
 
 That avoids code drift between the desktop host and the standalone app.
 
 ## Security Model
 
-Plugins are executable code. Treat them as trusted-but-isolated local extensions.
+Bench Packs are executable code. Treat them as trusted-but-isolated local extensions.
 
 Recommended rules:
 
-- run plugins in a separate Node host process
-- do not run plugin code in the Electron renderer
-- do not expose unrestricted Electron APIs directly to plugins
-- surface plugin logs separately from host logs
+- run Bench Packs in a separate Node host process
+- do not run Bench Pack code in the Electron renderer
+- do not expose unrestricted Electron APIs directly to Bench Packs
+- surface Bench Pack logs separately from host logs
 
 ## Compatibility Rules
 
-BenchLocal should support a plugin if:
+BenchLocal should support a Bench Pack if:
 
 - `protocolVersion` is recognized
 - manifest validates
 - entrypoint loads
 - required sidecars can be satisfied
 
-BenchLocal should reject a plugin if:
+BenchLocal should reject a Bench Pack if:
 
 - protocol version is unsupported
 - entrypoint is missing
-- duplicate plugin ID is already installed
+- duplicate Bench Pack ID is already installed
 - declared sidecar kind is unsupported
 
 ## Mapping The Current Six Repos
@@ -596,13 +601,13 @@ Bench Protocol v1 is explicitly designed to cover all six without special cases 
 
 Each repo should add:
 
-- `benchlocal.plugin.json`
+- `benchlocal.pack.json`
 - `src/benchlocal/index.ts`
 - optional `src/benchlocal/manifest.ts`
 
 Each repo should then:
 
-- move provider parsing out of plugin core
+- move provider parsing out of Bench Pack core
 - accept host-supplied models and generation params
 - accept host-supplied sidecar endpoints
 - expose `listScenarios`, `prepare`, and `scoreModelResults`

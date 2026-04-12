@@ -1,14 +1,14 @@
 import type {
+  BenchPackRegistryEntry,
   BenchLocalConfig,
   BenchLocalThemeDefinition,
   BenchLocalThemeDescriptor,
   GenerationRequest,
   ProgressEvent,
   BenchLocalWorkspaceState,
-  PluginInspection,
-  PluginRunHistoryEntry,
-  PluginRunSummary,
-  ScenarioPackRegistryEntry,
+  BenchPackInspection,
+  BenchPackRunHistoryEntry,
+  BenchPackRunSummary,
   VerifierEndpoint
 } from "@core";
 
@@ -25,9 +25,9 @@ export type ConfigLoadResult = {
   config: BenchLocalConfig;
 };
 
-export type PluginVerifierStatus = {
-  pluginId: string;
-  pluginName: string;
+export type BenchPackVerifierStatus = {
+  benchPackId: string;
+  benchPackName: string;
   docker: {
     available: boolean;
     details?: string;
@@ -35,11 +35,20 @@ export type PluginVerifierStatus = {
   verifiers: VerifierEndpoint[];
 };
 
-export type ScenarioPackMutationProgress = {
-  pluginId: string;
+export type BenchPackMutationProgress = {
+  benchPackId: string;
   action: "install" | "update" | "uninstall";
   phase: "resolving" | "downloading" | "extracting" | "hydrating" | "validating" | "activating" | "removing" | "complete";
   message: string;
+};
+
+export type BenchLocalDiscoveredModel = {
+  id: string;
+  name?: string;
+  ownedBy?: string;
+  contextLength?: number;
+  pricing?: string;
+  modality?: string;
 };
 
 export interface BenchLocalDesktopApi {
@@ -49,6 +58,9 @@ export interface BenchLocalDesktopApi {
   config: {
     load(): Promise<ConfigLoadResult>;
     save(config: BenchLocalConfig): Promise<ConfigLoadResult>;
+  };
+  models: {
+    discover(input: { provider: BenchLocalConfig["providers"][string] }): Promise<BenchLocalDiscoveredModel[]>;
   };
   themes: {
     list(): Promise<BenchLocalThemeDescriptor[]>;
@@ -60,30 +72,31 @@ export interface BenchLocalDesktopApi {
     export(input: { workspaceId: string; state: BenchLocalWorkspaceState }): Promise<{ exported: boolean; filePath?: string }>;
     import(): Promise<{ imported: boolean; workspace?: BenchLocalWorkspaceState["workspaces"][string]; tabs?: BenchLocalWorkspaceState["tabs"] }>;
   };
-  plugins: {
-    list(): Promise<PluginInspection[]>;
-    registry(): Promise<ScenarioPackRegistryEntry[]>;
-    install(input: { pluginId: string }): Promise<ConfigLoadResult>;
-    update(input: { pluginId: string }): Promise<ConfigLoadResult>;
-    uninstall(input: { pluginId: string }): Promise<ConfigLoadResult>;
-    onMutationProgress(listener: (payload: ScenarioPackMutationProgress) => void): () => void;
-    activeRuns(): Promise<Array<{ tabId: string; pluginId: string }>>;
+  benchPacks: {
+    list(): Promise<BenchPackInspection[]>;
+    registry(): Promise<BenchPackRegistryEntry[]>;
+    install(input: { benchPackId: string }): Promise<ConfigLoadResult>;
+    installFromUrl(input: { url: string }): Promise<ConfigLoadResult>;
+    update(input: { benchPackId: string }): Promise<ConfigLoadResult>;
+    uninstall(input: { benchPackId: string }): Promise<ConfigLoadResult>;
+    onMutationProgress(listener: (payload: BenchPackMutationProgress) => void): () => void;
+    activeRuns(): Promise<Array<{ tabId: string; benchPackId: string }>>;
     run(input: {
       tabId: string;
-      pluginId: string;
+      benchPackId: string;
       modelIds?: string[];
       executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
       generation?: GenerationRequest;
-    }): Promise<PluginRunSummary>;
+    }): Promise<BenchPackRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;
-    history(input: { pluginId: string }): Promise<PluginRunHistoryEntry[]>;
-    loadHistory(input: { pluginId: string; runId: string }): Promise<PluginRunSummary>;
+    history(input: { benchPackId: string }): Promise<BenchPackRunHistoryEntry[]>;
+    loadHistory(input: { benchPackId: string; runId: string }): Promise<BenchPackRunSummary>;
     onRunEvent(listener: (payload: { tabId: string; event: ProgressEvent }) => void): () => void;
   };
   verifiers: {
-    list(): Promise<PluginVerifierStatus[]>;
-    start(input: { pluginId: string }): Promise<PluginVerifierStatus>;
-    stop(input: { pluginId: string }): Promise<PluginVerifierStatus>;
+    list(): Promise<BenchPackVerifierStatus[]>;
+    start(input: { benchPackId: string }): Promise<BenchPackVerifierStatus>;
+    stop(input: { benchPackId: string }): Promise<BenchPackVerifierStatus>;
   };
   logs: {
     openDetachedWindow(): Promise<{ opened: boolean }>;

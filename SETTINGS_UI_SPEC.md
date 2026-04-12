@@ -29,7 +29,7 @@ Inside `Settings`, use these tabs:
 - Providers
 - Models
 - Generation
-- Plugins
+- Bench Packs
 - Sidecars
 - Advanced
 
@@ -74,7 +74,7 @@ Each provider row should show:
 
 ### Purpose
 
-Manage the shared model registry used by all plugins.
+Manage the shared model registry used by all benchpacks.
 
 ### Required UI
 
@@ -134,18 +134,18 @@ Manage host-level default request parameters.
 - explain which fields may be ignored by some providers
 - allow restore defaults
 
-## Plugins Tab
+## Bench Packs Tab
 
 ### Purpose
 
-Install, inspect, update, and remove benchmark plugins.
+Install, inspect, update, and remove Bench Packs.
 
 ### Required UI
 
-Each plugin card should show:
+Each Bench Pack row should show:
 
-- plugin name
-- plugin ID
+- Bench Pack name
+- Bench Pack ID
 - installed version
 - source
 - capabilities
@@ -160,7 +160,7 @@ Each plugin card should show:
 - remove
 - inspect manifest
 
-### Plugin Detail View
+### Bench Pack detail view
 
 Show:
 
@@ -180,7 +180,7 @@ Manage benchmark-specific verification dependencies.
 
 Each sidecar row should show:
 
-- plugin
+- Bench Pack
 - sidecar ID
 - kind
 - auto-start toggle
@@ -200,7 +200,7 @@ Each sidecar row should show:
 
 - surface port conflicts clearly
 - show last healthcheck timestamp
-- show the effective URL the plugin receives
+- show the effective URL the Bench Pack receives
 
 ## Advanced Tab
 
@@ -211,7 +211,7 @@ Expose filesystem and maintenance operations.
 ### Required UI
 
 - config file path
-- plugins directory path
+- Bench Pack directory path
 - runs directory path
 - logs directory path
 - export config
@@ -254,7 +254,7 @@ On first launch, BenchLocal should guide the user through:
 1. select or confirm config location
 2. configure one provider
 3. add at least one model
-4. install or register at least one plugin
+4. install or register at least one Bench Pack
 
 This can be a lightweight setup flow, not a mandatory wizard.
 
@@ -264,8 +264,8 @@ This is not part of Settings, but the settings model directly supports it.
 
 The Benchmarks screen should show:
 
-- installed plugins
-- plugin status
+- installed benchpacks
+- Bench Pack status
 - scenario count
 - whether sidecars are ready
 - quick launch buttons
@@ -298,11 +298,11 @@ Show:
 - message that no models are configured
 - shortcut to Models tab
 
-### No Plugins
+### No Bench Packs
 
 Show:
 
-- install plugin CTA
+- install Bench Pack CTA
 - explain local-path and repo-based install
 
 ## Accessibility And Practical UX
@@ -319,7 +319,7 @@ Required:
 1. Providers
 2. Models
 3. Generation
-4. Plugins
+4. Bench Packs
 5. Sidecars
 6. Advanced
 
