@@ -68,6 +68,16 @@ export type ScoredScenarioResult = ScenarioResult & {
   score: number;
 };
 
+function compactGenerationRequest(input?: GenerationRequest): GenerationRequest {
+  if (!input) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined)
+  ) as GenerationRequest;
+}
+
 function createLookupError(kind: string, id: string, detail?: string): Error {
   return new Error(detail ? `${kind} "${id}" ${detail}` : `${kind} "${id}" was not found.`);
 }
@@ -192,14 +202,7 @@ export function createHostHelpers(context: HostContext): HostHelpers {
     },
 
     resolveGenerationRequest(overrides) {
-      return {
-        temperature: overrides?.temperature ?? context.defaults.temperature,
-        top_p: overrides?.top_p ?? context.defaults.top_p,
-        top_k: overrides?.top_k ?? context.defaults.top_k,
-        min_p: overrides?.min_p ?? context.defaults.min_p,
-        repetition_penalty: overrides?.repetition_penalty ?? context.defaults.repetition_penalty,
-        request_timeout_seconds: overrides?.request_timeout_seconds ?? context.defaults.request_timeout_seconds
-      };
+      return compactGenerationRequest(overrides);
     },
 
     getScenarioById(scenarios, scenarioId) {

@@ -46,17 +46,6 @@ cache_dir = "~/.benchlocal/cache"
 
 [ui]
 theme = "system"
-show_secondary_table = true
-
-[defaults]
-temperature = 0
-top_p = 1
-top_k = 0
-min_p = 0
-repetition_penalty = 1
-request_timeout_seconds = 30
-max_concurrent_models = 8
-max_concurrent_runs = 1
 
 [providers.openrouter]
 kind = "openrouter"
@@ -144,26 +133,8 @@ Desktop UI preferences.
 Supported fields:
 
 - `theme = "system" | "light" | "dark"`
-- `show_secondary_table = true | false`
 
 This section should stay small. Temporary window state belongs in `state.json`.
-
-## `[defaults]`
-
-Global generation and scheduler defaults.
-
-Supported fields:
-
-- `temperature`
-- `top_p`
-- `top_k`
-- `min_p`
-- `repetition_penalty`
-- `request_timeout_seconds`
-- `max_concurrent_models`
-- `max_concurrent_runs`
-
-These are host-level defaults, not plugin-owned settings.
 
 ## `[providers.<provider-id>]`
 

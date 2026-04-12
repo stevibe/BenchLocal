@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { dialog, ipcMain } from "electron";
-import type { BenchLocalConfig, BenchLocalWorkspaceState } from "@core";
+import type { BenchLocalConfig, BenchLocalWorkspaceState, GenerationRequest } from "@core";
 import type { DetachedLogsState } from "@/shared/desktop-api";
 import {
   getConfigPath,
@@ -278,6 +278,7 @@ export function registerIpcHandlers(): void {
         pluginId: string;
         modelIds?: string[];
         executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+        generation?: GenerationRequest;
       }
     ) => {
       if (activePluginRuns.has(input.tabId)) {
@@ -295,6 +296,7 @@ export function registerIpcHandlers(): void {
         return await runConfiguredPluginBenchmark(config, input.pluginId, {
           modelIds: input.modelIds,
           executionMode: input.executionMode,
+          generation: input.generation,
           abortSignal: controller.signal,
           onEvent: (progressEvent) => {
             event.sender.send(PLUGIN_RUN_EVENT_CHANNEL, {

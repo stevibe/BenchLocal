@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { BenchLocalConfig, BenchLocalWorkspaceState, ProgressEvent } from "@core";
+import type { BenchLocalConfig, BenchLocalWorkspaceState, GenerationRequest, ProgressEvent } from "@core";
 import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-api";
 
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
@@ -51,7 +51,7 @@ const api: BenchLocalDesktopApi = {
       return () => ipcRenderer.removeListener(PLUGIN_MUTATION_PROGRESS_CHANNEL, wrapped);
     },
     activeRuns: () => ipcRenderer.invoke("benchlocal:plugins:active-runs"),
-    run: (input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel" }) =>
+    run: (input: { tabId: string; pluginId: string; modelIds?: string[]; executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; generation?: GenerationRequest }) =>
       ipcRenderer.invoke("benchlocal:plugins:run", input),
     stop: (input: { tabId: string }) => ipcRenderer.invoke("benchlocal:plugins:stop", input),
     history: (input: { pluginId: string }) => ipcRenderer.invoke("benchlocal:plugins:history", input),

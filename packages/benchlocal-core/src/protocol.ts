@@ -45,6 +45,7 @@ export interface PluginManifest {
   theme?: {
     accent?: string;
   };
+  samplingDefaults?: GenerationRequest;
   capabilities: {
     tools: boolean;
     multiTurn: boolean;
@@ -171,17 +172,6 @@ export interface RegisteredModel {
   group: string;
 }
 
-export interface GenerationDefaults {
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  min_p?: number;
-  repetition_penalty?: number;
-  request_timeout_seconds: number;
-  max_concurrent_models: number;
-  max_concurrent_runs: number;
-}
-
 export interface SecretResolution {
   providerId: string;
   keyName: string;
@@ -214,7 +204,6 @@ export interface HostContext {
   };
   providers: ProviderConfig[];
   models: RegisteredModel[];
-  defaults: GenerationDefaults;
   secrets: SecretResolution[];
   verifiers: VerifierEndpoint[];
   sidecars?: SidecarEndpoint[];

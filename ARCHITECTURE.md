@@ -147,17 +147,6 @@ plugin_storage_dir = "~/.benchlocal/plugins"
 
 [ui]
 theme = "system"
-show_secondary_table = true
-
-[defaults]
-temperature = 0
-top_p = 1
-top_k = 0
-min_p = 0
-repetition_penalty = 1
-request_timeout_seconds = 30
-max_concurrent_models = 8
-max_concurrent_runs = 1
 
 [providers.openrouter]
 enabled = true

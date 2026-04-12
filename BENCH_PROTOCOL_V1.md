@@ -196,7 +196,6 @@ export interface HostContext {
   };
   providers: ProviderConfig[];
   models: RegisteredModel[];
-  defaults: GenerationDefaults;
   secrets: SecretResolution[];
   sidecars: SidecarEndpoint[];
   logger: HostLogger;
@@ -227,21 +226,6 @@ export interface RegisteredModel {
   label: string;
   enabled: boolean;
   group: "primary" | "secondary" | string;
-}
-```
-
-### GenerationDefaults
-
-```ts
-export interface GenerationDefaults {
-  temperature?: number;
-  top_p?: number;
-  top_k?: number;
-  min_p?: number;
-  repetition_penalty?: number;
-  request_timeout_seconds: number;
-  max_concurrent_models: number;
-  max_concurrent_runs: number;
 }
 ```
 

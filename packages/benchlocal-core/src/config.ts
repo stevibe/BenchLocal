@@ -68,17 +68,6 @@ export type BenchLocalConfig = {
   registry: BenchLocalRegistryConfig;
   ui: {
     theme: string;
-    show_secondary_table: boolean;
-  };
-  defaults: {
-    temperature: number;
-    top_p: number;
-    top_k: number;
-    min_p: number;
-    repetition_penalty: number;
-    request_timeout_seconds: number;
-    max_concurrent_models: number;
-    max_concurrent_runs: number;
   };
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
@@ -163,33 +152,10 @@ const ConfigSchema = z.object({
     }),
   ui: z
     .object({
-      theme: z.string().trim().min(1).default("system"),
-      show_secondary_table: z.boolean().default(true)
+      theme: z.string().trim().min(1).default("system")
     })
     .default({
-      theme: "system",
-      show_secondary_table: true
-    }),
-  defaults: z
-    .object({
-      temperature: z.number().default(0),
-      top_p: z.number().default(1),
-      top_k: z.number().default(0),
-      min_p: z.number().default(0),
-      repetition_penalty: z.number().default(1),
-      request_timeout_seconds: z.number().int().min(1).default(30),
-      max_concurrent_models: z.number().int().min(1).default(8),
-      max_concurrent_runs: z.number().int().min(1).default(1)
-    })
-    .default({
-      temperature: 0,
-      top_p: 1,
-      top_k: 0,
-      min_p: 0,
-      repetition_penalty: 1,
-      request_timeout_seconds: 30,
-      max_concurrent_models: 8,
-      max_concurrent_runs: 1
+      theme: "system"
     }),
   providers: z.record(z.string(), ProviderSchema).default({}),
   models: z.array(ModelSchema).default([]),
@@ -307,18 +273,7 @@ export function createDefaultConfig(): BenchLocalConfig {
       official_url: "https://raw.githubusercontent.com/stevibe/benchlocal-registry/main/registry.json"
     },
     ui: {
-      theme: "system",
-      show_secondary_table: true
-    },
-    defaults: {
-      temperature: 0,
-      top_p: 1,
-      top_k: 0,
-      min_p: 0,
-      repetition_penalty: 1,
-      request_timeout_seconds: 30,
-      max_concurrent_models: 8,
-      max_concurrent_runs: 1
+      theme: "system"
     },
     providers: createDefaultProviders(),
     models: [
@@ -389,10 +344,6 @@ function normalizeConfig(raw: unknown): BenchLocalConfig {
     ui: {
       ...defaults.ui,
       ...parsed.ui
-    },
-    defaults: {
-      ...defaults.defaults,
-      ...parsed.defaults
     },
     providers: normalizedProviders,
     plugins: Object.fromEntries(

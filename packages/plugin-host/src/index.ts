@@ -11,6 +11,7 @@ import type {
   BenchLocalExecutionMode,
   BenchLocalPluginConfig,
   BenchLocalVerifierConfig,
+  GenerationRequest,
   HostContext,
   PluginRunHistoryEntry,
   PluginRunSummary,
@@ -496,6 +497,7 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
   try {
     const loaded = normalizePluginModule(await importFreshModule(entryPath));
     const listScenarios = loaded.listScenarios;
+    const runtimeManifest = isPluginManifest(loaded.manifest) ? loaded.manifest : manifest;
 
     if (typeof listScenarios !== "function") {
       return {
@@ -503,7 +505,7 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
         source: pluginConfig.source,
         rootDir,
         status: "load_error",
-        manifest,
+        manifest: runtimeManifest,
         error: "Plugin entry does not export a listScenarios function."
       };
     }
@@ -515,7 +517,7 @@ async function inspectPlugin(pluginId: string, config: BenchLocalConfig, pluginC
       source: pluginConfig.source,
       rootDir,
       status: "ready",
-      manifest,
+      manifest: runtimeManifest,
       scenarioCount: scenarios?.length ?? 0,
       scenarios
     };
@@ -918,11 +920,13 @@ async function loadConfiguredPlugin(config: BenchLocalConfig, pluginId: string):
   }
 
   const imported = await importFreshModule(entryPath);
+  const plugin = normalizeLoadedPlugin(imported);
+  const runtimeManifest = isPluginManifest(plugin.manifest) ? plugin.manifest : manifest;
 
   return {
     rootDir,
-    manifest,
-    plugin: normalizeLoadedPlugin(imported)
+    manifest: runtimeManifest,
+    plugin
   };
 }
 
@@ -983,6 +987,26 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw new Error("Run cancelled by user.");
 }
 
+function compactGenerationRequest(input?: GenerationRequest): GenerationRequest {
+  if (!input) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined)
+  ) as GenerationRequest;
+}
+
+function resolveScenarioPackGeneration(
+  manifest: PluginManifest,
+  overrides?: GenerationRequest
+): GenerationRequest {
+  return compactGenerationRequest({
+    ...(manifest.samplingDefaults ?? {}),
+    ...(overrides ?? {})
+  });
+}
+
 async function createHostContext(
   config: BenchLocalConfig,
   pluginId: string,
@@ -1038,7 +1062,6 @@ async function createHostContext(
     },
     providers,
     models,
-    defaults: config.defaults,
     secrets,
     verifiers,
     sidecars: verifiers,
@@ -1383,7 +1406,7 @@ async function executeSerialMode(
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
   pluginId: string,
-  config: BenchLocalConfig,
+  generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -1408,14 +1431,7 @@ async function executeSerialMode(
           scenario,
           model,
           abortSignal,
-          generation: {
-            temperature: config.defaults.temperature,
-            top_p: config.defaults.top_p,
-            top_k: config.defaults.top_k,
-            min_p: config.defaults.min_p,
-            repetition_penalty: config.defaults.repetition_penalty,
-            request_timeout_seconds: config.defaults.request_timeout_seconds
-          }
+          generation
         },
         emit
       );
@@ -1436,7 +1452,7 @@ async function executeParallelModelsMode(
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
   pluginId: string,
-  config: BenchLocalConfig,
+  generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -1461,14 +1477,7 @@ async function executeParallelModelsMode(
           scenario,
           model,
           abortSignal,
-          generation: {
-              temperature: config.defaults.temperature,
-              top_p: config.defaults.top_p,
-              top_k: config.defaults.top_k,
-              min_p: config.defaults.min_p,
-              repetition_penalty: config.defaults.repetition_penalty,
-              request_timeout_seconds: config.defaults.request_timeout_seconds
-            }
+          generation
           },
           emit
         );
@@ -1494,7 +1503,7 @@ async function executeParallelScenariosMode(
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
   pluginId: string,
-  config: BenchLocalConfig,
+  generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -1519,14 +1528,7 @@ async function executeParallelScenariosMode(
           scenario,
           model,
           abortSignal,
-          generation: {
-              temperature: config.defaults.temperature,
-              top_p: config.defaults.top_p,
-              top_k: config.defaults.top_k,
-              min_p: config.defaults.min_p,
-              repetition_penalty: config.defaults.repetition_penalty,
-              request_timeout_seconds: config.defaults.request_timeout_seconds
-            }
+          generation
           },
           emit
         );
@@ -1548,7 +1550,7 @@ async function executeFullParallelMode(
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPlugin["prepare"]>>,
   pluginId: string,
-  config: BenchLocalConfig,
+  generation: GenerationRequest,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -1574,14 +1576,7 @@ async function executeFullParallelMode(
             scenario,
             model,
             abortSignal,
-            generation: {
-                temperature: config.defaults.temperature,
-                top_p: config.defaults.top_p,
-                top_k: config.defaults.top_k,
-                min_p: config.defaults.min_p,
-                repetition_penalty: config.defaults.repetition_penalty,
-                request_timeout_seconds: config.defaults.request_timeout_seconds
-              }
+            generation
             },
             emit
           );
@@ -1609,6 +1604,7 @@ export async function runConfiguredPluginBenchmark(
   options?: {
     modelIds?: string[];
     executionMode?: BenchLocalExecutionMode;
+    generation?: GenerationRequest;
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
   }
@@ -1635,6 +1631,7 @@ export async function runConfiguredPluginBenchmark(
   const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
   const startedAt = new Date().toISOString();
   const executionMode = options?.executionMode ?? "parallel_by_model";
+  const generation = resolveScenarioPackGeneration(manifest, options?.generation);
   let runErrorMessage: string | undefined;
   let cancelled = false;
 
@@ -1655,17 +1652,17 @@ export async function runConfiguredPluginBenchmark(
       throwIfAborted(options?.abortSignal);
       switch (executionMode) {
         case "serial":
-          await executeSerialMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeSerialMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "parallel_by_test_case":
-          await executeParallelScenariosMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeParallelScenariosMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "full_parallel":
-          await executeFullParallelMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeFullParallelMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
         case "parallel_by_model":
         default:
-          await executeParallelModelsMode(scenarios, selectedModels, prepared, pluginId, config, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+          await executeParallelModelsMode(scenarios, selectedModels, prepared, pluginId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
           break;
       }
     } catch (error) {

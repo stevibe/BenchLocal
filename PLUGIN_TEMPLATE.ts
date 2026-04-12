@@ -22,6 +22,9 @@ export const manifest = definePluginManifest({
   version: "0.1.0",
   description: "Minimal BenchLocal plugin template.",
   entry: "./dist/benchlocal/index.js",
+  samplingDefaults: {
+    temperature: 0
+  },
   capabilities: {
     tools: false,
     multiTurn: false,

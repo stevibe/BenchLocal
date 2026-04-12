@@ -206,9 +206,14 @@ Use the host context instead:
 
 - `context.providers`
 - `context.models`
-- `context.defaults`
 - `context.secrets`
 - `context.sidecars`
+
+For scenario pack sampling defaults, declare them on the SDK manifest:
+
+- `manifest.samplingDefaults`
+
+BenchLocal merges scenario pack sampling defaults with per-tab user overrides from the `Samplings` button. If a field is left blank in both places, BenchLocal does not send that value to the model provider.
 
 ## Sidecars
 

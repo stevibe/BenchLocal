@@ -1394,6 +1394,21 @@ pre {
   font-size: 0.88rem;
 }
 
+.detail-inline-code {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.12rem 0.45rem;
+  margin: 0 0.08rem;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82em;
+  font-weight: 600;
+  vertical-align: baseline;
+}
+
 .scoreboard {
   display: grid;
   gap: 10px;
@@ -2802,6 +2817,12 @@ select.config-input {
 .history-table-wrap {
   max-height: min(64vh, 720px);
   overflow: auto;
+}
+
+.history-table-metric {
+  font-size: 0.94rem;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .status-text {

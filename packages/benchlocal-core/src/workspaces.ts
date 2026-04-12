@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { getBenchLocalHome } from "./config.js";
+import type { GenerationRequest } from "./protocol.js";
 
 export type BenchLocalExecutionMode =
   | "serial"
@@ -21,6 +22,7 @@ export type BenchLocalWorkspaceTab = {
   pluginId: string | null;
   focusedScenarioId: string | null;
   modelSelections: BenchLocalWorkspaceTabModelSelection[];
+  samplingOverrides?: GenerationRequest;
   executionMode: BenchLocalExecutionMode;
   createdAt: string;
   updatedAt: string;
@@ -62,6 +64,16 @@ const WorkspaceTabSchema = z.object({
       })
     )
     .default([]),
+  samplingOverrides: z
+    .object({
+      temperature: z.number().optional(),
+      top_p: z.number().optional(),
+      top_k: z.number().optional(),
+      min_p: z.number().optional(),
+      repetition_penalty: z.number().optional(),
+      request_timeout_seconds: z.number().int().min(1).optional()
+    })
+    .default({}),
   executionMode: z
     .enum(["serial", "parallel_by_model", "parallel_by_test_case", "parallel_models", "parallel_scenarios", "full_parallel"])
     .default("parallel_by_model")
@@ -128,6 +140,7 @@ export function createDefaultWorkspaceState(defaultPlugin = ""): BenchLocalWorks
         pluginId: hasDefaultPlugin ? defaultPlugin : null,
         focusedScenarioId: null,
         modelSelections: [],
+        samplingOverrides: {},
         executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
@@ -158,6 +171,9 @@ function normalizeWorkspaceState(raw: unknown, defaultPlugin = ""): BenchLocalWo
     tabs[tabId] = {
       ...tab,
       modelSelections: (tab.modelSelections ?? []).filter((selection) => Boolean(selection.modelId)),
+      samplingOverrides: Object.fromEntries(
+        Object.entries(tab.samplingOverrides ?? {}).filter(([, value]) => value !== undefined && Number.isFinite(value))
+      ),
       executionMode: tab.executionMode ?? "parallel_by_model"
     };
   }

@@ -41,6 +41,7 @@ import type {
   BenchLocalWorkspaceState,
   BenchLocalWorkspaceTab,
   BenchLocalWorkspaceTabModelSelection,
+  GenerationRequest,
   ProgressEvent,
   ScenarioResult,
   PluginInspection,
@@ -53,7 +54,7 @@ import type { DetachedLogsState, PluginVerifierStatus, ScenarioPackMutationProgr
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
 
-type SettingsTab = "providers" | "models" | "generation" | "plugins" | "verification" | "advanced";
+type SettingsTab = "providers" | "models" | "plugins" | "verification" | "advanced";
 
 type LoadState = {
   path: string;
@@ -114,6 +115,23 @@ type DetailModalState = {
 type TabModelsModalState = {
   tabId: string;
   selections: BenchLocalWorkspaceTabModelSelection[];
+};
+
+type SamplingFormState = {
+  temperature: string;
+  top_p: string;
+  top_k: string;
+  min_p: string;
+  repetition_penalty: string;
+  request_timeout_seconds: string;
+};
+
+type SamplingModalState = {
+  tabId: string;
+  pluginId: string;
+  pluginName: string;
+  defaults: GenerationRequest;
+  form: SamplingFormState;
 };
 
 type ModelAliasModalState = {
@@ -207,8 +225,21 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "models", label: "Models", blurb: "Shared model registry across scenario packs.", icon: <Bot size={16} /> },
   { id: "plugins", label: "Scenario Packs", blurb: "Browse, install, update, and remove official scenario packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
-  { id: "generation", label: "Generation", blurb: "Sampling and scheduler defaults.", icon: <SlidersHorizontal size={16} /> },
   { id: "advanced", label: "Advanced", blurb: "Storage paths and registry options.", icon: <FolderCog size={16} /> }
+];
+
+const SAMPLING_FIELDS: Array<{
+  key: keyof SamplingFormState;
+  label: string;
+  placeholder: string;
+  integer?: boolean;
+}> = [
+  { key: "temperature", label: "Temperature", placeholder: "Leave blank" },
+  { key: "top_p", label: "Top P", placeholder: "Leave blank" },
+  { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
+  { key: "min_p", label: "Min P", placeholder: "Leave blank" },
+  { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
+  { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
 ];
 
 function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
@@ -273,6 +304,43 @@ function createEmptyModel(providerId = "openrouter"): ModelFormState {
     group: "primary",
     enabled: true
   };
+}
+
+function createSamplingForm(input?: GenerationRequest): SamplingFormState {
+  return {
+    temperature: input?.temperature?.toString() ?? "",
+    top_p: input?.top_p?.toString() ?? "",
+    top_k: input?.top_k?.toString() ?? "",
+    min_p: input?.min_p?.toString() ?? "",
+    repetition_penalty: input?.repetition_penalty?.toString() ?? "",
+    request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
+  };
+}
+
+function parseSamplingForm(form: SamplingFormState): { value?: GenerationRequest; error?: string } {
+  const result: GenerationRequest = {};
+
+  for (const field of SAMPLING_FIELDS) {
+    const rawValue = form[field.key].trim();
+
+    if (!rawValue) {
+      continue;
+    }
+
+    const parsed = field.integer ? Number.parseInt(rawValue, 10) : Number(rawValue);
+
+    if (!Number.isFinite(parsed)) {
+      return { error: `${field.label} must be a valid number.` };
+    }
+
+    if (field.integer && parsed <= 0) {
+      return { error: `${field.label} must be greater than zero.` };
+    }
+
+    result[field.key as keyof GenerationRequest] = parsed;
+  }
+
+  return { value: result };
 }
 
 function toProviderForm(id: string, provider: BenchLocalProviderConfig): ProviderFormState {
@@ -481,6 +549,7 @@ export function App() {
   const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
   const [tabModelsModal, setTabModelsModal] = useState<TabModelsModalState | null>(null);
+  const [samplingModal, setSamplingModal] = useState<SamplingModalState | null>(null);
   const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState>(null);
@@ -1221,6 +1290,15 @@ export function App() {
         activeCellKeys: []
       }
     }));
+    setRunSummaries((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
     setLoadedHistoryRuns((current) => {
       if (!current[tab.id]) {
         return current;
@@ -1236,7 +1314,8 @@ export function App() {
         tabId: tab.id,
         pluginId,
         modelIds: selectedModels.map((model) => model.id),
-        executionMode: tab.executionMode
+        executionMode: tab.executionMode,
+        generation: tab.samplingOverrides
       });
       setRunSummaries((current) => ({
         ...current,
@@ -1332,6 +1411,7 @@ export function App() {
         pluginId: null,
         focusedScenarioId: null,
         modelSelections: [],
+        samplingOverrides: {},
         executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
@@ -1398,6 +1478,7 @@ export function App() {
           pluginId: null,
           focusedScenarioId: null,
           modelSelections: [],
+          samplingOverrides: {},
           executionMode: "parallel_by_model",
           createdAt: now,
           updatedAt: now
@@ -1470,6 +1551,7 @@ export function App() {
             current.tabs[nextTabId] = {
               ...importedTab,
               id: nextTabId,
+              samplingOverrides: importedTab.samplingOverrides ?? {},
               createdAt: importedTab.createdAt ?? now,
               updatedAt: now
             };
@@ -1530,6 +1612,7 @@ export function App() {
         pluginId,
         focusedScenarioId: null,
         modelSelections: [],
+        samplingOverrides: {},
         executionMode: "parallel_by_model",
         createdAt: now,
         updatedAt: now
@@ -1553,6 +1636,7 @@ export function App() {
       tab.title = createTabTitle(pluginId, pluginInspections);
       tab.pluginId = pluginId;
       tab.focusedScenarioId = null;
+      tab.samplingOverrides = {};
       tab.updatedAt = new Date().toISOString();
 
       return current;
@@ -1673,6 +1757,7 @@ export function App() {
           pluginId: null,
           focusedScenarioId: null,
           modelSelections: [],
+          samplingOverrides: {},
           executionMode: "parallel_by_model",
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
@@ -2360,6 +2445,15 @@ export function App() {
 	                                selections: structuredClone(activeTab.modelSelections)
 	                              })
 	                            }
+                              onEditSampling={() =>
+                                setSamplingModal({
+                                  tabId: activeTab.id,
+                                  pluginId: activeInspection.id,
+                                  pluginName: activeInspection.manifest?.name ?? activeInspection.id,
+                                  defaults: activeInspection.manifest?.samplingDefaults ?? {},
+                                  form: createSamplingForm(activeTab.samplingOverrides)
+                                })
+                              }
 	                            executionMode={activeTab.executionMode}
                               isViewingHistory={Boolean(activeLoadedHistory)}
                               onOpenHistory={() =>
@@ -2657,6 +2751,38 @@ export function App() {
             });
 
             setTabModelsModal(null);
+          }}
+        />
+      ) : null}
+
+      {samplingModal ? (
+        <SamplingModal
+          pluginName={samplingModal.pluginName}
+          defaults={samplingModal.defaults}
+          form={samplingModal.form}
+          onClose={() => setSamplingModal(null)}
+          onChange={(form) => setSamplingModal((current) => (current ? { ...current, form } : current))}
+          onSubmit={() => {
+            const parsed = parseSamplingForm(samplingModal.form);
+
+            if (parsed.error) {
+              setError(parsed.error);
+              return;
+            }
+
+            updateWorkspaceState((current) => {
+              const tab = current.tabs[samplingModal.tabId];
+
+              if (!tab) {
+                return current;
+              }
+
+              tab.samplingOverrides = parsed.value ?? {};
+              tab.updatedAt = new Date().toISOString();
+              return current;
+            });
+
+            setSamplingModal(null);
           }}
         />
       ) : null}
@@ -3045,6 +3171,7 @@ function BenchmarkSection({
   focusedScenarioId,
   onFocusScenario,
   onEditModels,
+  onEditSampling,
   onEditModelAlias,
   executionMode,
   isViewingHistory,
@@ -3066,6 +3193,7 @@ function BenchmarkSection({
   focusedScenarioId: string | null;
   onFocusScenario: (scenarioId: string) => void;
   onEditModels: () => void;
+  onEditSampling: () => void;
   onEditModelAlias: (model: ResolvedTabModel) => void;
   executionMode: BenchLocalExecutionMode;
   isViewingHistory: boolean;
@@ -3211,7 +3339,7 @@ function BenchmarkSection({
             </div>
           </div>
           <div className="section-actions">
-            <button type="button" onClick={onEditModels} className="ghost-button">
+            <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
               <Bot size={14} />
               Edit Models
             </button>
@@ -3416,7 +3544,11 @@ function BenchmarkSection({
                   </div>
                 ) : null}
               </div>
-              <button type="button" onClick={onEditModels} className="ghost-button">
+              <button type="button" onClick={onEditSampling} className="ghost-button" disabled={isRunning}>
+                <SlidersHorizontal size={14} />
+                Samplings
+              </button>
+              <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
                 <Bot size={14} />
                 Edit Models
               </button>
@@ -3433,7 +3565,7 @@ function BenchmarkSection({
                   <h3 className="table-empty-callout-title">No models selected</h3>
                   <p className="muted-copy">Add one or more models to start running this scenario pack.</p>
                 </div>
-                <button type="button" onClick={onEditModels} className="ghost-button">
+                <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
                   <Bot size={14} />
                   Add Models
                 </button>
@@ -3823,6 +3955,86 @@ function TabModelsModal({
   );
 }
 
+function SamplingModal({
+  pluginName,
+  defaults,
+  form,
+  onChange,
+  onClose,
+  onSubmit
+}: {
+  pluginName: string;
+  defaults: GenerationRequest;
+  form: SamplingFormState;
+  onChange: (form: SamplingFormState) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const hasPackDefaults = Object.values(defaults).some((value) => value !== undefined);
+
+  return (
+    <Modal
+      title="Scenario Pack Samplings"
+      subtitle={`Configure request sampling overrides for ${pluginName}. Leave fields blank to use the scenario pack defaults, and BenchLocal will omit values that are still unset.`}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      submitLabel="Save Samplings"
+      size="wide"
+      leadingActions={
+        <button
+          type="button"
+          onClick={() => onChange(createSamplingForm())}
+          className="ghost-button"
+        >
+          <RotateCcw size={14} />
+          Reset Overrides
+        </button>
+      }
+    >
+      {hasPackDefaults ? (
+        <div className="helper-copy">
+          <p>
+            Scenario pack defaults:
+            {" "}
+            {SAMPLING_FIELDS.map((field) => {
+              const value = defaults[field.key as keyof GenerationRequest];
+              return value === undefined ? null : (
+                <span key={field.key} className="settings-inline-meta">
+                  <strong>{field.label}:</strong> {value}
+                </span>
+              );
+            }).filter(Boolean).reduce<ReactNode[]>((items, item, index) => {
+              if (index > 0) {
+                items.push(<span key={`sep-${index}`}> · </span>);
+              }
+              items.push(item);
+              return items;
+            }, [])}
+          </p>
+        </div>
+      ) : (
+        <div className="helper-copy">
+          <p>This scenario pack does not define recommended defaults yet. Blank fields mean BenchLocal will not send those sampling values.</p>
+        </div>
+      )}
+      <div className="entry-grid two-col">
+        {SAMPLING_FIELDS.map((field) => (
+          <Field
+            key={field.key}
+            label={field.label}
+            value={form[field.key]}
+            placeholder={defaults[field.key as keyof GenerationRequest] === undefined ? field.placeholder : `Default: ${defaults[field.key as keyof GenerationRequest]}`}
+            onChange={(value) => onChange({
+              ...form,
+              [field.key]: value
+            })}
+          />
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 function EmptyWorkspace({
   hasInstalledScenarioPacks,
   onSelectScenarioPack
@@ -4109,51 +4321,6 @@ function SettingsScene({
                 onCreate={onCreateModel}
                 onEdit={onEditModel}
               />
-            ) : null}
-
-            {settingsTab === "generation" ? (
-              <section className="settings-grid">
-                <Panel title="Sampling Defaults" subtitle="BenchLocal-owned request parameters." tone="sky" icon={<SlidersHorizontal size={16} />}>
-                  <Field label="Temperature" type="number" value={String(draft.defaults.temperature)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.temperature = Number(value || 0);
-                    return current;
-                  })} />
-                  <Field label="Top P" type="number" value={String(draft.defaults.top_p)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.top_p = Number(value || 0);
-                    return current;
-                  })} />
-                  <Field label="Top K" type="number" value={String(draft.defaults.top_k)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.top_k = Number(value || 0);
-                    return current;
-                  })} />
-                  <Field label="Min P" type="number" value={String(draft.defaults.min_p)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.min_p = Number(value || 0);
-                    return current;
-                  })} />
-                  <Field label="Repetition Penalty" type="number" value={String(draft.defaults.repetition_penalty)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.repetition_penalty = Number(value || 0);
-                    return current;
-                  })} />
-                </Panel>
-                <Panel title="Scheduler Defaults" subtitle="Host-level runtime controls." tone="orange" icon={<Wrench size={16} />}>
-                  <Field label="Request Timeout Seconds" type="number" value={String(draft.defaults.request_timeout_seconds)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.request_timeout_seconds = Number(value || 1);
-                    return current;
-                  })} />
-                  <Field label="Max Concurrent Models" type="number" value={String(draft.defaults.max_concurrent_models)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.max_concurrent_models = Number(value || 1);
-                    return current;
-                  })} />
-                  <Field label="Max Concurrent Runs" type="number" value={String(draft.defaults.max_concurrent_runs)} onChange={(value) => updateDraft((current) => {
-                    current.defaults.max_concurrent_runs = Number(value || 1);
-                    return current;
-                  })} />
-                  <ToggleRow label="Show Secondary Table" checked={draft.ui.show_secondary_table} onChange={(checked) => updateDraft((current) => {
-                    current.ui.show_secondary_table = checked;
-                    return current;
-                  })} />
-                </Panel>
-              </section>
             ) : null}
 
             {settingsTab === "plugins" ? (
@@ -4723,12 +4890,31 @@ function DetailCard({ title, content }: { title: string; content: string }) {
         ? "is-amber"
         : "is-slate";
 
+  const lines = content.split("\n");
+
   return (
     <article className={`detail-card ${toneClass}`}>
       <div className="detail-card-summary">
         <h4>{title}</h4>
       </div>
-      <p className="detail-copy">{content}</p>
+      <p className="detail-copy">
+        {lines.map((line, lineIndex) => (
+          <span key={`${title}-${lineIndex}`}>
+            {line.split(/(`[^`]+`)/g).map((part, partIndex) => {
+              if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+                return (
+                  <code key={`${title}-${lineIndex}-${partIndex}`} className="detail-inline-code">
+                    {part.slice(1, -1)}
+                  </code>
+                );
+              }
+
+              return <span key={`${title}-${lineIndex}-${partIndex}`}>{part}</span>;
+            })}
+            {lineIndex < lines.length - 1 ? <br /> : null}
+          </span>
+        ))}
+      </p>
     </article>
   );
 }
@@ -4783,8 +4969,12 @@ function HistoryModal({
                       <td>
                         <span className="status-chip status-idle">{executionModeLabel}</span>
                       </td>
-                      <td>{entry.modelCount}</td>
-                      <td>{entry.scenarioCount}</td>
+                      <td>
+                        <span className="history-table-metric">{entry.modelCount}</span>
+                      </td>
+                      <td>
+                        <span className="history-table-metric">{entry.scenarioCount}</span>
+                      </td>
                       <td>
                         <span
                           className={`status-chip ${
