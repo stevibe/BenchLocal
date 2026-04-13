@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { promisify } from "node:util";
-import { loadReleaseEnv, releaseEnvPath } from "./release-env.mjs";
+import { loadReleaseEnv, normalizeSigningIdentity, releaseEnvPath } from "./release-env.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,7 +40,7 @@ async function promptRequired(rl, label, defaultValue = "") {
 
 async function chooseSigningIdentity(rl, identities, existingValue = "") {
   if (identities.length === 0) {
-    return await promptRequired(rl, "Signing identity (Developer ID Application)");
+    return normalizeSigningIdentity(await promptRequired(rl, "Signing identity (Developer ID Application)"));
   }
 
   const preferredIndex = existingValue ? identities.findIndex((identity) => identity === existingValue) : 0;
@@ -125,7 +125,9 @@ async function main() {
   try {
     const existingValues = (await loadReleaseEnv()) ?? {};
     const identities = await listSigningIdentities();
-    const cscName = await chooseSigningIdentity(rl, identities, existingValues.CSC_NAME ?? "");
+    const cscName = normalizeSigningIdentity(
+      await chooseSigningIdentity(rl, identities, existingValues.CSC_NAME ?? "")
+    );
     const notarizationValues = await chooseNotarizationFlow(rl, existingValues);
 
     const body = [

@@ -4,6 +4,13 @@ import path from "node:path";
 export const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
 export const releaseEnvPath = path.join(repoRoot, ".env.release.local");
 
+export function normalizeSigningIdentity(value) {
+  if (!value) {
+    return value;
+  }
+  return value.replace(/^(Developer ID Application|Apple Development):\s*/, "").trim();
+}
+
 function stripQuotes(value) {
   if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
     return value.slice(1, -1);

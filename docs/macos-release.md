@@ -86,6 +86,8 @@ Build a signed release with local secrets loaded:
 npm run release:mac
 ```
 
+This command builds, signs, and notarizes the release, and staples the produced `.app`.
+
 ## Signing vs notarization
 
 These are separate steps.
@@ -97,7 +99,7 @@ Signing happens locally with the certificate in your keychain.
 BenchLocal expects:
 
 - `CSC_NAME`
-  - the `Developer ID Application` identity name from Keychain Access
+  - the signing identity name from Keychain Access, without the `Developer ID Application:` prefix
 
 ### Notarization
 
@@ -129,8 +131,9 @@ codesign --verify --deep --strict --verbose=2 app/dist/mac-arm64/BenchLocal.app
 codesign -dv --verbose=4 app/dist/mac-arm64/BenchLocal.app 2>&1 | rg "Authority|TeamIdentifier|Identifier"
 spctl --assess --type execute --verbose=4 app/dist/mac-arm64/BenchLocal.app
 xcrun stapler validate app/dist/mac-arm64/BenchLocal.app
-xcrun stapler validate app/dist/BenchLocal-<version>-arm64.dmg
 ```
+
+BenchLocal treats the notarized `.app` as the authoritative artifact for trust validation. The generated `.dmg` is the delivery container.
 
 ## Typical local release flow
 

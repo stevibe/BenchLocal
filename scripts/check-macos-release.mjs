@@ -1,13 +1,23 @@
 import fs from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { loadReleaseEnv, releaseEnvPath, releaseEnvProblems } from "./release-env.mjs";
+import {
+  loadReleaseEnv,
+  normalizeSigningIdentity,
+  releaseEnvPath,
+  releaseEnvProblems
+} from "./release-env.mjs";
 
 const execFileAsync = promisify(execFile);
 
 async function checkSigningIdentity(identity) {
   const { stdout } = await execFileAsync("security", ["find-identity", "-v", "-p", "codesigning"]);
-  return stdout.includes(identity);
+  const normalized = normalizeSigningIdentity(identity);
+  return (
+    stdout.includes(identity) ||
+    stdout.includes(`Developer ID Application: ${normalized}`) ||
+    stdout.includes(`Apple Development: ${normalized}`)
+  );
 }
 
 async function main() {
@@ -39,7 +49,7 @@ async function main() {
   }
 
   console.log("BenchLocal macOS release configuration looks valid.");
-  console.log(`Using signing identity: ${env.CSC_NAME}`);
+  console.log(`Using signing identity: ${normalizeSigningIdentity(env.CSC_NAME)}`);
   if (env.APPLE_API_KEY) {
     console.log(`Using App Store Connect API key: ${env.APPLE_API_KEY}`);
   } else {
