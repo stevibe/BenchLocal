@@ -5,52 +5,18 @@ BenchLocal ships a standard macOS desktop release as:
 - `BenchLocal-<version>-arm64.dmg`
 - `BenchLocal-<version>-arm64.zip`
 
-`npm run build` performs a production package build. `npm run build:mac` is an explicit alias for the same macOS packaging path.
-
-For a real public release, use the local release workflow below instead of exporting secrets directly in the shell.
+This repo uses a local signing workflow. Apple credentials stay on the release machine and are not committed to the repo.
 
 ## Requirements
 
 - macOS
-- Xcode command line tools installed
+- Xcode command line tools
 - Apple Developer membership
 - a `Developer ID Application` certificate installed in the login keychain
 
-## Local secret handling
+For public internet distribution, you also want notarization configured.
 
-Do not commit Apple signing or notarization values into the repo.
-
-BenchLocal now supports a local ignored file:
-
-```bash
-.env.release.local
-```
-
-Generate it interactively:
-
-```bash
-npm run release:setup:mac
-```
-
-Validate it:
-
-```bash
-npm run release:doctor:mac
-```
-
-Run a signed macOS release build with that local config loaded:
-
-```bash
-npm run release:mac
-```
-
-An example template is committed at:
-
-```bash
-.env.release.example
-```
-
-## Build commands
+## Command reference
 
 From the repo root:
 
@@ -58,81 +24,135 @@ From the repo root:
 npm run build
 ```
 
-or explicitly:
+Compile only. This is the normal development build.
 
 ```bash
-npm run build:mac
+npm run pack
 ```
 
-For an unpacked local app bundle without installer artifacts:
+Compile and package the production app, including DMG and ZIP artifacts.
 
 ```bash
 npm run build:dir
 ```
 
-For public release builds, prefer:
+Compile and produce an unpacked local `.app` bundle.
+
+```bash
+npm run build:mac
+```
+
+Compile and package the macOS DMG and ZIP explicitly through the app workspace.
+
+For a real signed release, use:
+
+```bash
+npm run release:setup:mac
+npm run release:doctor:mac
+npm run release:mac
+```
+
+## Local secrets
+
+Do not commit Apple signing or notarization values into the repo.
+
+BenchLocal uses a local ignored file:
+
+```text
+.env.release.local
+```
+
+An example template is committed as:
+
+```text
+.env.release.example
+```
+
+Use the interactive setup helper:
+
+```bash
+npm run release:setup:mac
+```
+
+Validate the local release environment:
+
+```bash
+npm run release:doctor:mac
+```
+
+Build a signed release with local secrets loaded:
 
 ```bash
 npm run release:mac
 ```
 
-## Signing
+## Signing vs notarization
 
-`electron-builder` will discover the installed `Developer ID Application` identity from the keychain and sign the app bundle automatically.
+These are separate steps.
 
-BenchLocal is configured for macOS distribution signing:
+### Signing
 
-- hardened runtime enabled
-- distribution signing mode
-- DMG + ZIP output
+Signing happens locally with the certificate in your keychain.
 
-BenchLocal can still package successfully if only an `Apple Development` certificate is installed, but that is not the correct certificate for public distribution outside local testing. For public releases, install a `Developer ID Application` certificate in the login keychain first.
+BenchLocal expects:
 
-## Notarization
+- `CSC_NAME`
+  - the `Developer ID Application` identity name from Keychain Access
 
-Notarization is enabled when Apple credentials are present in the environment.
+### Notarization
 
-Preferred App Store Connect API key flow:
+Notarization talks to Apple after the app has already been signed.
+
+BenchLocal supports both notarization flows:
+
+- App Store Connect API key
+- Apple ID + app-specific password
+
+Preferred:
+
+- `APPLE_API_KEY`
+- `APPLE_API_KEY_ID`
+- `APPLE_API_ISSUER`
+
+Fallback:
+
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID`
+
+## Verification commands
+
+Useful local checks after a release build:
 
 ```bash
-export APPLE_API_KEY="/absolute/path/to/AuthKey_XXXXXX.p8"
-export APPLE_API_KEY_ID="XXXXXX"
-export APPLE_API_ISSUER="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+codesign --verify --deep --strict --verbose=2 app/dist/mac-arm64/BenchLocal.app
+codesign -dv --verbose=4 app/dist/mac-arm64/BenchLocal.app 2>&1 | rg "Authority|TeamIdentifier|Identifier"
+spctl --assess --type execute --verbose=4 app/dist/mac-arm64/BenchLocal.app
+xcrun stapler validate app/dist/mac-arm64/BenchLocal.app
+xcrun stapler validate app/dist/BenchLocal-<version>-arm64.dmg
 ```
 
-Alternative Apple ID flow:
+## Typical local release flow
+
+1. Ensure the correct `Developer ID Application` certificate is installed locally.
+2. Create or update `.env.release.local`.
+3. Run:
 
 ```bash
-export APPLE_ID="you@example.com"
-export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-export APPLE_TEAM_ID="XXXXXXXXXX"
+npm run release:doctor:mac
+npm run release:mac
 ```
 
-With one of those sets exported, `npm run build` will:
+4. Validate the produced artifacts.
+5. Upload the finished `.dmg` and `.zip` to GitHub Releases.
 
-1. compile BenchLocal
-2. sign the app
-3. build the DMG and ZIP
-4. submit for notarization
-5. staple the notarization ticket
-
-If no notarization credentials are present, the build still succeeds, but notarization is skipped.
-
-## Best practice
-
-For an open-source Electron app with public binaries:
-
-- keep certificate selection and notarization secrets out of git
-- use an ignored local env file for local releases
-- use CI secrets for automated releases
-- use `Developer ID Application` for public macOS signing
-- prefer the App Store Connect API key flow over Apple ID + app-specific password
+This repo intentionally supports local-only release management without putting Apple credentials into GitHub.
 
 ## Output
 
 Artifacts are written to:
 
-```bash
+```text
 app/dist/
 ```
 

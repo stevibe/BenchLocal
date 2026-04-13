@@ -1,139 +1,143 @@
-# BenchLocal Registry V1
+# BenchLocal Registry v1
 
-`benchlocal-registry` should be the single source of truth for official Bench Packs.
+`benchlocal-registry` is the source of truth for official Bench Packs published by the BenchLocal project.
 
-BenchLocal the desktop app should not hardcode official Bench Packs in user config. Instead:
+BenchLocal does not hardcode the official catalog in local config. Instead:
 
-- `benchlocal-registry` publishes the official index
-- BenchLocal reads that index
-- `~/.benchlocal/config.toml` stores only local install state and user overrides
+- the registry publishes the official list
+- BenchLocal fetches that list when available
+- local config stores only install state and user overrides
+
+If the registry is unreachable, BenchLocal should still start and installed Bench Packs should remain usable.
 
 ## Goals
 
-- define one canonical list of official Bench Packs
-- let BenchLocal distinguish official vs local/dev Bench Packs
-- support version and channel metadata without coupling it to user config
-- prepare for future checksum or signature verification
+- define the official Bench Pack catalog
+- provide install metadata for official packs
+- keep local user state separate from public catalog metadata
+- leave room for future integrity checks such as checksums or signatures
 
-## Index Shape
+## Current registry shape
 
-Registry file:
+BenchLocal currently expects this top-level structure:
 
 ```json
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-04-09T00:00:00.000Z",
-  "benchpacks": [
+  "packs": [
     {
       "id": "dataextract-15",
       "name": "DataExtract-15",
-      "publisher": "stevibe",
-      "official": true,
+      "author": "stevibe",
       "description": "Deterministic data extraction benchmark with 15 fixed scenarios.",
-      "repository": {
-        "type": "git",
-        "url": "https://github.com/stevibe/DataExtract-15.git"
+      "version": "1.0.0",
+      "source": {
+        "type": "github",
+        "repo": "stevibe/DataExtract-15",
+        "tag": "v1.0.0"
       },
-      "install": {
-        "type": "git",
-        "defaultRef": "main"
-      },
-      "manifest": {
-        "schemaVersion": 1,
-        "protocolVersion": 1,
-        "entry": "./dist/benchlocal/index.js"
-      },
-      "channels": {
-        "stable": {
-          "version": "0.1.0",
-          "ref": "main"
-        }
-      },
-      "sidecars": [],
-      "tags": ["official", "data-extraction"]
+      "homepage": "https://github.com/stevibe/DataExtract-15",
+      "license": "MIT",
+      "scenarioCount": 15,
+      "capabilities": {
+        "tools": false,
+        "multiTurn": false,
+        "verification": false,
+        "standaloneWebApp": false
+      }
     }
   ]
 }
 ```
 
-## Required Fields
+## Entry fields
 
-Top level:
-
-- `schemaVersion`
-- `generatedAt`
-- `benchpacks`
-
-Per Bench Pack:
+Required:
 
 - `id`
 - `name`
-- `publisher`
-- `official`
-- `repository`
-- `install`
-- `manifest`
-- `channels`
+- `version`
+- `source`
 
-## Install Model
+Common optional fields:
 
-Registry metadata should describe how BenchLocal installs an official Bench Pack, but not where the user installed it locally.
+- `author`
+- `description`
+- `homepage`
+- `license`
+- `scenarioCount`
+- `capabilities`
 
-Registry:
+## Source types
 
-- canonical repo URL
-- default branch or tag
-- available channels
-- official metadata
+### GitHub source
 
-Local config:
-
-- enabled/disabled
-- local install path if overridden
-- pinned ref if user overrides
-- local sidecar overrides such as ports
-
-## Local Config Relationship
-
-BenchLocal should eventually move to:
-
-```toml
-[registry]
-url = "https://raw.githubusercontent.com/<org>/benchlocal-registry/main/registry.json"
-channel = "stable"
-
-[benchpacks.dataextract-15]
-enabled = true
-source = "registry"
-channel = "stable"
-
-[benchpacks.structoutput-15]
-enabled = true
-source = "local"
-path = "/path/to/StructOutput-15"
+```json
+{
+  "source": {
+    "type": "github",
+    "repo": "stevibe/ToolCall-15",
+    "tag": "v1.0.0"
+  }
+}
 ```
 
-Meaning:
+BenchLocal converts that into a GitHub archive download for installation.
 
-- official Bench Packs can come from the registry
-- local development benchpacks can still be loaded directly from disk
-- BenchLocal can merge registry metadata with local overrides
+### Archive source
 
-## Trust Model
+```json
+{
+  "source": {
+    "type": "archive",
+    "url": "https://example.com/toolcall-15-v1.0.0.tar.gz"
+  }
+}
+```
 
-`official = true` should mean:
+This is useful for local registries or alternate distribution channels.
 
-- listed by the registry
-- published by an approved maintainer
-- expected to follow BenchLocal protocol and packaging rules
+## What the registry does not store
 
-It should not yet imply full sandboxing or cryptographic verification. Those can be added in a later registry version.
+The registry is not user state.
 
-## Future Extensions
+It does not store:
+
+- local install paths
+- enabled or disabled state per user
+- selected models
+- verifier mode preferences
+- theme preferences
+
+Those belong in `~/.benchlocal/config.toml` and `~/.benchlocal/state.json`.
+
+## Official vs third-party
+
+The official registry only covers Bench Packs maintained by the BenchLocal project.
+
+Third-party Bench Packs are installed directly by URL from the desktop app. They are maintained by their authors, not by BenchLocal.
+
+Those installs are stored in local config as `source = "archive"` and do not appear in the official registry unless the project chooses to adopt them.
+
+## Local development note
+
+During local registry development, the server can package a repo directly from disk, for example:
+
+```bash
+cd /path/to/StructOutput-15
+npm run build:benchlocal
+```
+
+That local packaging flow is a development convenience, not part of the public registry contract.
+
+## Future extensions
+
+The current registry intentionally stays small.
+
+Reasonable future additions include:
 
 - checksums for Bench Pack bundles
 - signatures
-- release notes per channel
 - minimum BenchLocal app version
-- Bench Pack capability compatibility matrix
-- sidecar image metadata for host-managed Docker startup
+- release notes
+- richer capability metadata

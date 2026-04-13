@@ -2,97 +2,101 @@
 
 ## Purpose
 
-This document describes how to build a Bench Pack that BenchLocal can load.
+This guide describes the recommended structure for a Bench Pack that BenchLocal can install and run.
 
-BenchLocal Bench Packs should be thin adapters over benchmark logic that already exists in a repo.
+Bench Packs should be plain benchmark repos by default:
 
-Recommended split:
+- a standalone web app is optional
+- a CLI runner is recommended
+- a verifier runtime is optional and only needed when the benchmark requires exact external validation
 
-- benchmark core
-  - scenarios
-  - prompts
-  - scoring
-  - verifier logic
-  - model transport
-- standalone adapter
-  - Next.js app
-  - `.env`
-  - repo-local scripts
-- BenchLocal adapter
-  - manifest
-  - scenario listing
-  - host-context mapping
-  - run lifecycle
+## Canonical metadata source
 
-## Required Files
+All Bench Pack metadata belongs in:
 
-Each Bench Pack repo should expose:
+```text
+benchlocal.pack.json
+```
+
+That file is the single authored metadata source.
+
+Do not duplicate name, version, author, description, sampling defaults, or verifier metadata inside `benchlocal/index.ts`.
+
+The runtime entry should load and export the JSON manifest.
+
+## Required runtime artifact
+
+BenchLocal expects every built artifact to include:
 
 ```text
 benchlocal.pack.json
 dist/benchlocal/index.js
 ```
 
-Recommended source layout:
+Optional runtime content:
+
+- `verification/`
+- `README.md`
+- `METHODOLOGY.md`
+
+## Recommended repo shapes
+
+### Minimal Bench Pack
 
 ```text
-app/
-components/
-lib/
+benchlocal.pack.json
 benchlocal/
   index.ts
 cli/
-verification/     # optional
-scripts/          # optional
+  run.ts
+lib/
+package.json
+tsconfig.json
+tsconfig.benchlocal.json
+tsconfig.cli.json
+README.md
+METHODOLOGY.md
+LICENSE
 ```
 
-Layout rules:
+### Verifier-dependent Bench Pack
 
-- `lib/` owns the benchmark logic, scenario definitions, grading, and transport code.
-- `benchlocal/index.ts` is the only place that should depend on `@benchlocal/sdk`.
-- `benchlocal.pack.json` is the canonical Bench Pack metadata manifest used for install, inspection, and runtime metadata.
-- `verification/` is optional and only used when exact validation needs a helper runtime.
-- Scenario packs declare the verifier's internal `listenPort`; BenchLocal assigns the host port automatically.
-
-## Runtime Surface
-
-BenchLocal loads the compiled Bench Pack entry and expects:
-
-```ts
-export const manifest: BenchPackManifest;
-
-export default defineBenchPack({
-  manifest,
-  async listScenarios() {
-    return [];
-  },
-  async prepare(context) {
-    return {
-      async runScenario(input, emit) {
-        return {
-          scenarioId: input.scenario.id,
-          status: "pass",
-          summary: "ok",
-          rawLog: ""
-        };
-      },
-      async dispose() {}
-    };
-  },
-  scoreModelResults(results) {
-    return {
-      totalScore: 0,
-      categories: []
-    };
-  }
-});
+```text
+benchlocal.pack.json
+benchlocal/
+  index.ts
+cli/
+  run.ts
+lib/
+verification/
+  Dockerfile
+  server.mjs
+  core.mjs
+scripts/          # optional local verifier helpers
+package.json
+tsconfig.json
+tsconfig.benchlocal.json
+tsconfig.cli.json
+README.md
+METHODOLOGY.md
+LICENSE
 ```
 
-## SDK
+## Source layout rules
 
-Scenario pack repos should import from `@benchlocal/sdk` only in the BenchLocal adapter layer.
+- `lib/` owns benchmark behavior
+  - scenarios
+  - prompts
+  - scoring
+  - provider requests
+  - verifier client logic where needed
+- `benchlocal/index.ts` is the BenchLocal adapter layer
+- `cli/` is recommended for local testing and debugging
+- `verification/` is only for exact external validation that cannot live entirely inside the pack runtime
 
-Bench Pack repos should depend on the published SDK and core packages, for example:
+## Package dependencies
+
+Bench Packs should depend on the published public packages:
 
 ```json
 {
@@ -103,15 +107,21 @@ Bench Pack repos should depend on the published SDK and core packages, for examp
 }
 ```
 
-Useful exports:
+Use the current published version in real packs. The version above is an example, not a promise that it will stay current.
 
-- `loadBenchPackManifest(__dirname)`
-- `defineBenchPack(...)`
-- `createHostHelpers(context)`
-- `requireScoredResults(results)`
-- all core protocol types re-exported from `@benchlocal/core`
+## `benchlocal/index.ts`
 
-### Example
+`benchlocal/index.ts` should stay thin.
+
+Its job is to:
+
+- load the manifest from `benchlocal.pack.json`
+- export the manifest
+- list scenarios for the desktop UI
+- bridge `HostContext` into the pack's runtime logic
+- return deterministic `ScenarioResult` values
+
+Example:
 
 ```ts
 import {
@@ -134,26 +144,11 @@ export default defineBenchPack({
   manifest,
 
   async listScenarios() {
-    return getScenarioCards().map((scenario) => ({
+    return SCENARIOS.map((scenario) => ({
       id: scenario.id,
       title: scenario.title,
       category: scenario.category,
-      description: scenario.description,
-      promptText: scenario.userMessage,
-      detailCards: [
-        {
-          title: "What this tests",
-          content: scenario.description
-        },
-        {
-          title: "Success case",
-          content: scenario.successCase
-        },
-        {
-          title: "Failure case",
-          content: scenario.failureCase
-        }
-      ]
+      detailCards: getScenarioCards(scenario)
     }));
   },
 
@@ -161,99 +156,110 @@ export default defineBenchPack({
     const helpers = createHostHelpers(context);
 
     return {
-      async runScenario(input, emit): Promise<ScenarioResult> {
-        const scenario = helpers.getScenarioById(SCENARIOS, input.scenario.id);
-        const provider = helpers.getRequiredProvider(input.model.provider, { enabledOnly: true });
-
-        return runScenarioForModel(
-          {
-            id: input.model.id,
-            label: input.model.label,
-            provider: input.model.provider as "openrouter" | "ollama" | "llamacpp" | "mlx" | "lmstudio",
-            model: input.model.model,
-            baseUrl: provider.baseUrl,
-            apiKey: helpers.getSecretValue(input.model.provider)
-          },
-          scenario,
-          emit,
-          {
-            ...helpers.resolveGenerationRequest(input.generation),
-            signal: input.abortSignal
-          }
-        );
+      async runScenario(input: ScenarioRunInput): Promise<ScenarioResult> {
+        return runScenarioForModel(input, helpers);
       },
       async dispose() {}
     };
   },
 
   scoreModelResults(results) {
-    const summary = scoreModelResults(requireScoredResults(results));
-
-    return {
-      totalScore: summary.finalScore,
-      categories: summary.categoryScores.map((category) => ({
-        id: category.category,
-        label: category.label,
-        score: category.averageScore,
-        weight: category.weight
-      })),
-      summary: summary.rating
-    };
+    return scoreModelResults(requireScoredResults(results));
   }
 });
 ```
 
-## Host Context Rules
+## Sampling defaults
 
-In BenchLocal mode:
+Bench Pack authors can declare recommended defaults in `benchlocal.pack.json`:
 
-- do not read provider config from `.env` as the primary source
-- do not hardcode base URLs
-- do not own API key lookup outside the host context
-- do not invent separate model registries
+```json
+{
+  "samplingDefaults": {
+    "temperature": 0
+  }
+}
+```
 
-Use the host context instead:
+Behavior:
 
-- `context.providers`
-- `context.models`
-- `context.secrets`
-- `context.verifiers`
+- if a Bench Pack provides a default, BenchLocal uses it unless the user overrides it in that tab
+- if a field is omitted, BenchLocal does not send that field
 
-For Bench Pack sampling defaults, declare them on the SDK manifest:
+## Non-verifier vs verifier-dependent packs
 
-- `manifest.samplingDefaults`
+### Non-verifier packs
 
-BenchLocal merges Bench Pack sampling defaults with per-tab user overrides from the `Samplings` button. If a field is left blank in both places, BenchLocal does not send that value to the model provider.
+The common case is a pack that only needs model access and scoring logic.
 
-## Verifiers
+These packs:
 
-If a benchmark requires a verifier or helper service:
+- do not declare `verifiers`
+- do not ship `verification/`
+- rely only on provider/model access from `HostContext`
+
+### Verifier-dependent packs
+
+Use a verifier only when the benchmark genuinely needs external execution or exact checking.
+
+If a pack requires a verifier:
 
 - declare it in `benchlocal.pack.json`
-- load it from `benchlocal.pack.json` in the runtime entry
-- do not hardcode host-side startup policy in the Bench Pack
+- include the runtime in `verification/`
+- use `createHostHelpers(context).getRequiredVerifier(...)` to consume the resolved endpoint
 
-BenchLocal owns lifecycle:
+Example manifest fragment:
 
-- start
-- stop
-- healthcheck
-- port assignment
-- logs
+```json
+{
+  "verifiers": [
+    {
+      "id": "verifier",
+      "transport": "http",
+      "required": true,
+      "defaultMode": "docker",
+      "docker": {
+        "buildContext": "./verification",
+        "listenPort": 4010,
+        "healthcheckPath": "/health"
+      }
+    }
+  ]
+}
+```
 
-## Migration Advice
+Important:
 
-When converting an existing benchmark repo:
+- BenchLocal assigns the host port automatically
+- the pack only declares the internal `listenPort`
 
-1. Keep standalone code intact.
-2. Reuse existing benchmark logic from `lib/`.
-3. Add a thin `benchlocal/index.ts`.
-4. Keep all Bench Pack metadata in `benchlocal.pack.json`; the runtime entry should load and export it.
-5. Map host context into the repo's existing runtime types.
-6. Compile that adapter to `dist/benchlocal/index.js`.
+## CLI testing
 
-## Current Trust Model
+The CLI runner is not required by BenchLocal, but it is useful for:
 
-BenchLocal currently assumes Bench Packs are trusted.
+- local benchmark debugging
+- methodology verification
+- reproducing pack behavior outside the desktop app
 
-That means Bench Pack authors should treat the host runtime surface as privileged and avoid unnecessary file access, process spawning, or side effects.
+## Recommended scripts
+
+```json
+{
+  "scripts": {
+    "build:benchlocal": "tsc -p tsconfig.benchlocal.json && tsc-alias -p tsconfig.benchlocal.json",
+    "build:cli": "tsc -p tsconfig.cli.json && tsc-alias -p tsconfig.cli.json",
+    "cli": "npm run build:cli && node dist-cli/cli/run.js"
+  }
+}
+```
+
+## Packaging checklist
+
+When shipping a Bench Pack artifact:
+
+- keep `benchlocal.pack.json` at repo root
+- compile the BenchLocal adapter to `dist/benchlocal/index.js`
+- include `verification/` only if the pack actually requires it
+- avoid shipping repo-local development files that are not needed at runtime
+
+BenchLocal validates the artifact before activation, so the runtime surface should stay small, deterministic, and explicit.

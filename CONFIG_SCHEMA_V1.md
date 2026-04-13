@@ -2,20 +2,34 @@
 
 ## Purpose
 
-This document defines the first durable user configuration model for BenchLocal.
+This document describes the durable user configuration stored in:
 
-Primary config path:
+```text
+~/.benchlocal/config.toml
+```
 
-`~/.benchlocal/config.toml`
+BenchLocal edits this file through the desktop UI. Advanced users can edit it manually.
 
-This file is edited by:
+## Durable config vs UI state
 
-- the BenchLocal settings UI
-- advanced users manually
+BenchLocal keeps two different local files:
 
-It should remain stable, readable, and migration-friendly.
+- `config.toml`
+  - durable configuration
+  - providers
+  - models
+  - installed Bench Pack state
+  - verifier preferences
+  - theme selection
+- `state.json`
+  - workspaces and tabs
+  - selected models per tab
+  - sampling overrides per tab
+  - execution mode per tab
 
-## Layout
+This document is only about `config.toml`.
+
+## Storage layout
 
 ```text
 ~/.benchlocal/
@@ -25,49 +39,76 @@ It should remain stable, readable, and migration-friendly.
   runs/
   logs/
   cache/
+  themes/
 ```
 
-## Rules
-
-- `config.toml` stores durable user config.
-- `state.json` stores ephemeral UI state.
-- provider API keys may be stored directly in `config.toml` in the current BenchLocal implementation.
-- all paths should support `~` expansion.
-
-## Top-Level Schema
+## Current top-level schema
 
 ```toml
 schema_version = 1
-default_benchpack = "toolcall-15"
+default_benchpack = ""
 run_storage_dir = "~/.benchlocal/runs"
 benchpack_storage_dir = "~/.benchlocal/benchpacks"
 log_storage_dir = "~/.benchlocal/logs"
 cache_dir = "~/.benchlocal/cache"
 
+[registry]
+official_url = "https://raw.githubusercontent.com/stevibe/benchlocal-registry/main/registry.json"
+
 [ui]
 theme = "system"
+```
 
+Fresh config starts intentionally blank:
+
+- no providers
+- no models
+- no installed Bench Packs
+
+BenchLocal does not seed providers or models automatically.
+
+## Providers
+
+Providers live under:
+
+```toml
+[providers.<provider-id>]
+```
+
+Example:
+
+```toml
 [providers.openrouter]
 kind = "openrouter"
 name = "OpenRouter"
 enabled = true
 base_url = "https://openrouter.ai/api/v1"
-api_key = "sk-or-v1-..."
 api_key_env = "OPENROUTER_API_KEY"
+```
 
-[providers.ollama]
-kind = "ollama"
-name = "Ollama"
-enabled = true
-base_url = "http://127.0.0.1:11434/v1"
+Supported provider kinds:
 
-[providers.my_vendor]
-kind = "openai_compatible"
-name = "My Vendor"
-enabled = true
-base_url = "https://llm.example.com/v1"
-api_key = "sk-live-..."
+- `openrouter`
+- `ollama`
+- `llamacpp`
+- `mlx`
+- `lmstudio`
+- `openai_compatible`
 
+Provider fields:
+
+- `kind`
+- `name`
+- `enabled`
+- `base_url`
+- `api_key` optional
+- `api_key_env` optional
+
+## Models
+
+Models are stored as an array:
+
+```toml
 [[models]]
 id = "openrouter:openai/gpt-4.1"
 provider = "openrouter"
@@ -75,116 +116,9 @@ model = "openai/gpt-4.1"
 label = "GPT-4.1 via OpenRouter"
 group = "primary"
 enabled = true
-
-[benchpacks.toolcall-15]
-enabled = true
-source = "github"
-repo = "stevibe/ToolCall-15"
-
-[benchpacks.bugfind-15]
-enabled = true
-source = "github"
-repo = "stevibe/BugFind-15"
-
-[benchpacks.bugfind-15.verifiers.verifier]
-auto_start = true
 ```
 
-## Top-Level Fields
-
-### `schema_version`
-
-- type: integer
-- required: yes
-- initial value: `1`
-
-### `default_benchpack`
-
-- type: string
-- required: no
-- meaning: Bench Pack selected by default on launch
-
-### `run_storage_dir`
-
-- type: string
-- required: yes
-
-### `benchpack_storage_dir`
-
-- type: string
-- required: yes
-
-### `log_storage_dir`
-
-- type: string
-- required: yes
-
-### `cache_dir`
-
-- type: string
-- required: yes
-
-## `[ui]`
-
-Desktop UI preferences.
-
-Supported fields:
-
-- `theme = "system" | "light" | "dark"`
-
-This section should stay small. Temporary window state belongs in `state.json`.
-
-## `[providers.<provider-id>]`
-
-Provider registry entries.
-
-Known built-in provider IDs:
-
-- `openrouter`
-- `ollama`
-- `llamacpp`
-- `mlx`
-- `lmstudio`
-
-Supported fields:
-
-- `kind`
-- `name`
-- `enabled`
-- `base_url`
-- `api_key`
-- `api_key_env`
-
-Examples:
-
-```toml
-[providers.openrouter]
-kind = "openrouter"
-name = "OpenRouter"
-enabled = true
-base_url = "https://openrouter.ai/api/v1"
-api_key = "sk-or-v1-..."
-api_key_env = "OPENROUTER_API_KEY"
-
-[providers.my_vendor]
-kind = "openai_compatible"
-name = "My Vendor"
-enabled = true
-base_url = "https://llm.example.com/v1"
-api_key = "sk-live-..."
-```
-
-```toml
-[providers.ollama]
-enabled = true
-base_url = "http://127.0.0.1:11434/v1"
-```
-
-## `[[models]]`
-
-Model registry entries.
-
-Supported fields:
+Model fields:
 
 - `id`
 - `provider`
@@ -193,153 +127,115 @@ Supported fields:
 - `group`
 - `enabled`
 
-Rules:
+`id` must remain stable because tabs and run history refer to it.
 
-- `id` must be unique
-- `provider` must reference an enabled provider
-- `group` is free-form but defaults to `primary` or `secondary`
+## Installed Bench Packs
 
-Example:
+Bench Pack install state lives under:
 
 ```toml
-[[models]]
-id = "ollama:qwen3.5:4b"
-provider = "ollama"
-model = "qwen3.5:4b"
-label = "Qwen3.5 4B via Ollama"
-group = "primary"
-enabled = true
+[benchpacks.<benchpack-id>]
 ```
 
-## `[benchpacks.<benchpack-id>]`
+Example official install:
 
-Bench Pack registry entries.
+```toml
+[benchpacks.toolcall-15]
+enabled = true
+source = "registry"
+version = "1.0.0"
+```
 
-Supported fields:
+Example third-party install:
+
+```toml
+[benchpacks.third-party-pack]
+enabled = true
+source = "archive"
+url = "https://example.com/benchpack.tar.gz"
+version = "1.0.0"
+```
+
+Supported stored sources:
+
+- `registry`
+- `archive`
+- `github`
+- `local`
+- `git`
+
+In normal product use, the important ones are:
+
+- `registry`
+- `archive`
+
+The others remain for compatibility and local development workflows.
+
+Bench Pack fields:
 
 - `enabled`
 - `source`
-- `repo`
-- `path`
-- `ref`
-- `auto_update`
+- `version` optional
+- `repo` optional
+- `path` optional
+- `url` optional
+- `ref` optional
+- `auto_update` optional
 
-Rules:
+## Verifier preferences
 
-- `source = "github"` requires `repo`
-- `source = "git"` requires clone URL support in future
-- `source = "local"` requires `path`
-
-Example:
+Verifier preferences live inside each installed Bench Pack block:
 
 ```toml
-[benchpacks.structoutput-15]
-enabled = true
-source = "local"
-path = "/Users/example/dev/StructOutput-15"
-```
-
-## `[benchpacks.<benchpack-id>.verifiers.<verifier-id>]`
-
-Host-managed sidecar config.
-
-Supported fields:
-
-- `kind`
-- `port`
-- `auto_start`
-
-Example:
-
-```toml
-[benchpacks.structoutput-15.sidecars.verifier]
-kind = "docker-http"
-port = 4011
+[benchpacks.structoutput-15.verifiers.verifier]
+mode = "docker"
 auto_start = true
 ```
 
-BenchLocal should validate this against the Bench Pack manifest.
+Verifier fields:
 
-## Secrets Policy
+- `mode`
+  - `docker`
+  - `cloud`
+  - `custom_url`
+- `auto_start`
+- `custom_url` optional
+- `cloud_url` optional
+- `docker_image` optional
 
-Current policy:
+BenchLocal manages Docker host ports automatically. Users do not configure them in `config.toml`.
 
-- allow direct local API key storage in `config.toml`
-- allow environment variable fallback via `api_key_env`
-- do not duplicate provider secrets inside Bench Pack repos
+## UI settings
 
-BenchLocal should expose this in the settings UI clearly:
+Current UI settings are intentionally small:
 
-- key present
-- env fallback configured
-- key missing
+```toml
+[ui]
+theme = "system"
+```
 
-## UI Editing Rules
+Supported built-in values:
 
-The settings UI should be the primary editor for `config.toml`.
+- `system`
+- `light`
+- `dark`
+- `night`
 
-Required UI sections:
+Custom themes can be added under:
 
-- Providers
-- Models
-- Generation
-- Bench Packs
-- Sidecars
-- Advanced
+```text
+~/.benchlocal/themes/
+```
 
-The UI must:
+## Compatibility aliases
 
-- validate before save
-- preserve comments only if a TOML library supports stable round-tripping
-- rewrite atomically
-- back up the old config on migration
+BenchLocal still reads a few legacy keys during migration:
 
-## Validation Rules
+- `default_bench_pack`
+- `default_plugin`
+- `bench_pack_storage_dir`
+- `plugin_storage_dir`
+- `bench_packs`
+- `plugins`
 
-BenchLocal should reject invalid config on load if:
-
-- `schema_version` is unsupported
-- any configured model ID is duplicated
-- a model references a missing provider
-- a provider `base_url` is malformed
-- a Bench Pack entry is missing its required source fields
-- a sidecar entry conflicts with manifest requirements
-
-BenchLocal should surface these as actionable settings errors in the UI.
-
-## Migration Rules
-
-When schema changes:
-
-- preserve old file
-- write migrated file
-- record migration in logs
-
-Future versions should support:
-
-- v1 to v2 migration
-- missing-field defaulting
-- provider additions without breaking old configs
-
-## State File
-
-Ephemeral UI state belongs in:
-
-`~/.benchlocal/state.json`
-
-Examples:
-
-- selected tab
-- last used Bench Pack
-- open trace viewer item
-- last window bounds
-
-This file should be safe to delete without losing benchmark configuration.
-
-## Immediate Follow-Up
-
-After this schema is accepted, the next implementation documents should be:
-
-1. Bench Pack manifest JSON schema
-2. SDK TypeScript package layout
-3. BenchLocal settings UI wireframe and data model
+Those aliases are backward-compatibility only. New config should use the `benchpack` forms documented above.
