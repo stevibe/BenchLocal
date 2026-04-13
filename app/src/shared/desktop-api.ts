@@ -29,8 +29,10 @@ export type BenchPackVerifierStatus = {
   benchPackId: string;
   benchPackName: string;
   docker: {
+    state: "ready" | "not_installed" | "not_running";
     available: boolean;
     details?: string;
+    simulated?: boolean;
   };
   verifiers: VerifierEndpoint[];
 };

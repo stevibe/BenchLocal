@@ -48,6 +48,7 @@ import type {
   ProgressEvent,
   ScenarioResult,
   BenchPackInspection,
+  BenchPackManifest,
   BenchPackRunHistoryEntry,
   BenchPackRunSummary
 } from "@core";
@@ -207,6 +208,19 @@ type ActiveRunEntry = {
 type LoadedHistoryEntry = {
   runId: string;
   startedAt: string;
+};
+
+type VerifierPreparingProgress = Extract<ProgressEvent, { type: "verifier_preparing" }>;
+
+type VerifierPreparationModalState = {
+  tabId: string;
+  progress: VerifierPreparingProgress;
+};
+
+type BenchPackRunBlocker = {
+  title: string;
+  message: string;
+  actionLabel: string;
 };
 
 type BenchPackMutationState = BenchPackMutationProgress;
@@ -593,6 +607,90 @@ function formatRegistryMutationError(
   return error instanceof Error ? error.message : `Failed to ${action} ${benchPackId}.`;
 }
 
+function getRequiredVerifierRunBlocker(
+  manifest: BenchPackManifest | undefined,
+  benchPackConfig: BenchLocalConfig["benchpacks"][string] | undefined,
+  verifierStatus: BenchPackVerifierStatus | undefined
+): BenchPackRunBlocker | null {
+  const requiredVerifierSpecs = (manifest?.verifiers ?? manifest?.sidecars ?? []).filter((spec) => spec.required);
+
+  if (requiredVerifierSpecs.length === 0) {
+    return null;
+  }
+
+  if (verifierStatus?.docker.state === "not_installed") {
+    return {
+      title: "Docker Required",
+      message: "This Bench Pack needs a local verifier runtime. Install Docker Desktop before starting the test run.",
+      actionLabel: "Open Verification"
+    };
+  }
+
+  if (verifierStatus?.docker.state === "not_running") {
+    return {
+      title: "Docker Not Running",
+      message: "This Bench Pack needs a local verifier runtime. Start Docker Desktop, then try the run again.",
+      actionLabel: "Open Verification"
+    };
+  }
+
+  for (const spec of requiredVerifierSpecs) {
+    const runtimeConfig = benchPackConfig?.verifiers?.[spec.id] ?? benchPackConfig?.sidecars?.[spec.id];
+    const runtimeStatus = verifierStatus?.verifiers.find((entry) => entry.id === spec.id);
+
+    if ((runtimeConfig?.mode ?? spec.defaultMode) === "docker" && runtimeConfig?.auto_start === false && runtimeStatus?.status !== "running") {
+      return {
+        title: "Verifier Not Started",
+        message: "Auto Start is disabled for this required verifier. Start it from Verification settings before running the Bench Pack.",
+        actionLabel: "Open Verification"
+      };
+    }
+
+    if (runtimeStatus?.status === "missing_dependency") {
+      return {
+        title: "Docker Required",
+        message: runtimeStatus.details ?? "This Bench Pack needs Local Docker before it can run.",
+        actionLabel: "Open Verification"
+      };
+    }
+
+    if (runtimeStatus?.status === "dependency_not_running") {
+      return {
+        title: "Docker Not Running",
+        message: runtimeStatus.details ?? "This Bench Pack needs Local Docker to be running before it can run.",
+        actionLabel: "Open Verification"
+      };
+    }
+  }
+
+  return null;
+}
+
+function getVerifierStatusTone(status: BenchPackVerifierStatus["verifiers"][number]["status"] | undefined): string {
+  switch (status) {
+    case "running":
+      return "status-ready";
+    case "missing_dependency":
+      return "status-not-installed";
+    case "dependency_not_running":
+    case "failed":
+      return "status-danger";
+    default:
+      return "status-idle";
+  }
+}
+
+function formatVerifierRuntimeStatus(status: BenchPackVerifierStatus["verifiers"][number]["status"] | undefined): string {
+  switch (status) {
+    case "missing_dependency":
+      return "docker required";
+    case "dependency_not_running":
+      return "docker not running";
+    default:
+      return (status ?? "stopped").replaceAll("_", " ");
+  }
+}
+
 export function App() {
   if (DETACHED_LOGS_VIEW) {
     return <DetachedLogsWindow />;
@@ -631,6 +729,7 @@ export function App() {
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState>(null);
   const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
+  const [verifierPreparationModal, setVerifierPreparationModal] = useState<VerifierPreparationModalState | null>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [editingTab, setEditingTab] = useState<{ tabId: string; value: string; width: number } | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
@@ -678,9 +777,20 @@ export function App() {
     () => benchPackInspections.find((inspection) => inspection.id === activeTab?.benchPackId) ?? null,
     [benchPackInspections, activeTab]
   );
+  const activeVerifierStatus = useMemo(
+    () => (activeInspection ? verifierStatuses[activeInspection.id] ?? null : null),
+    [activeInspection, verifierStatuses]
+  );
   const activeTabModels = useMemo(() => (draft ? resolveTabModels(activeTab, draft.models) : []), [draft, activeTab]);
   const activeRunSummary = useMemo(() => (activeTab ? runSummaries[activeTab.id] ?? null : null), [runSummaries, activeTab]);
   const activeLiveRun = useMemo(() => (activeTab ? liveRuns[activeTab.id] ?? null : null), [liveRuns, activeTab]);
+  const activeRunBlocker = useMemo(
+    () =>
+      activeInspection && draft
+        ? getRequiredVerifierRunBlocker(activeInspection.manifest, draft.benchpacks[activeInspection.id], activeVerifierStatus ?? undefined)
+        : null,
+    [activeInspection, activeVerifierStatus, draft]
+  );
   const activeLoadedHistory = useMemo(
     () => (activeTab ? loadedHistoryRuns[activeTab.id] ?? null : null),
     [loadedHistoryRuns, activeTab]
@@ -915,6 +1025,17 @@ export function App() {
 
   useEffect(() => {
     return window.benchlocal.benchPacks.onRunEvent(({ tabId, event }) => {
+      if (event.type === "verifier_preparing") {
+        setVerifierPreparationModal({
+          tabId,
+          progress: event
+        });
+      }
+
+      if (event.type === "run_started" || event.type === "run_finished" || event.type === "run_error") {
+        setVerifierPreparationModal((current) => (current?.tabId === tabId ? null : current));
+      }
+
       if (event.type === "run_finished" || event.type === "run_error") {
         setActiveRuns((current) => {
           if (!current[tabId]) {
@@ -1423,14 +1544,44 @@ export function App() {
     setError(null);
     setAppNotice(null);
 
-    if (!tab.benchPackId) {
+    if (!tab.benchPackId || !draft) {
       setError("Select a Bench Pack for this tab first.");
       return;
     }
 
     const benchPackId = tab.benchPackId;
+    const selectedModels = resolveTabModels(tab, draft.models);
+    const inspection = benchPackInspections.find((candidate) => candidate.id === benchPackId);
 
-    const selectedModels = draft ? resolveTabModels(tab, draft.models) : [];
+    if (inspection?.manifest) {
+      try {
+        const verifierStatusList = await window.benchlocal.verifiers.list();
+        const nextVerifierStatuses = Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status]));
+        setVerifierStatuses(nextVerifierStatuses);
+
+        const runBlocker = getRequiredVerifierRunBlocker(
+          inspection.manifest,
+          draft.benchpacks[benchPackId],
+          nextVerifierStatuses[benchPackId]
+        );
+
+        if (runBlocker) {
+          setConfirmDialog({
+            title: runBlocker.title,
+            subtitle: runBlocker.message,
+            confirmLabel: runBlocker.actionLabel,
+            onConfirm: () => {
+              setSettingsTab("verification");
+              setSettingsOpen(true);
+            }
+          });
+          return;
+        }
+      } catch (verifierError) {
+        setError(verifierError instanceof Error ? verifierError.message : "Failed to refresh verifier status.");
+        return;
+      }
+    }
 
     if (selectedModels.length === 0) {
       setError("Select at least one enabled model for this tab before running the Bench Pack.");
@@ -1507,6 +1658,7 @@ export function App() {
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : `Failed to run Bench Pack for ${benchPackId}.`);
     } finally {
+      setVerifierPreparationModal((current) => (current?.tabId === tab.id ? null : current));
       setActiveRuns((current) => {
         const next = { ...current };
         delete next[tab.id];
@@ -2679,6 +2831,8 @@ export function App() {
 	                        {activeInspection && activeTab ? (
 	                          <BenchmarkSection
 	                            inspection={activeInspection}
+                              verifierStatus={activeVerifierStatus}
+                              runBlocker={activeRunBlocker}
 	                            selectedModels={activeTabModels}
 	                            runSummary={activeRunSummary}
                               historyEntries={runHistories[activeInspection.id] ?? []}
@@ -2741,6 +2895,11 @@ export function App() {
                             }
 	                            isRunning={Boolean(activeRuns[activeTab.id])}
 	                            isStopping={Boolean(stoppingRuns[activeTab.id])}
+                              onOpenVerification={() => {
+                                setSettingsTab("verification");
+                                setSettingsOpen(true);
+                              }}
+                              onRefreshVerification={() => void loadVerifierStatuses()}
                               onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
 	                            onRun={() => void runTab(activeTab)}
 	                            onStop={() => void stopTabRun(activeTab.id)}
@@ -3247,6 +3406,14 @@ export function App() {
         />
       ) : null}
 
+      {verifierPreparationModal ? (
+        <VerifierPreparationModal
+          benchPackName={verifierPreparationModal.progress.benchPackName}
+          verifierId={verifierPreparationModal.progress.verifierId}
+          message={verifierPreparationModal.progress.message}
+        />
+      ) : null}
+
       {workspaceContextMenu ? (
         <div
           className="workspace-context-menu"
@@ -3535,6 +3702,8 @@ function BenchPackPickerTrigger({
 
 function BenchmarkSection({
   inspection,
+  verifierStatus,
+  runBlocker,
   selectedModels,
   runSummary,
   historyEntries,
@@ -3551,12 +3720,16 @@ function BenchmarkSection({
   onOpenHistory,
   isRunning,
   isStopping,
+  onOpenVerification,
+  onRefreshVerification,
   onClearHistory,
   onRun,
   onStop,
   onOpenDetail
 }: {
   inspection: BenchPackInspection;
+  verifierStatus: BenchPackVerifierStatus | null;
+  runBlocker: BenchPackRunBlocker | null;
   selectedModels: ResolvedTabModel[];
   runSummary: BenchPackRunSummary | null;
   historyEntries: BenchPackRunHistoryEntry[];
@@ -3573,6 +3746,8 @@ function BenchmarkSection({
   onOpenHistory: () => void;
   isRunning: boolean;
   isStopping: boolean;
+  onOpenVerification: () => void;
+  onRefreshVerification: () => void;
   onClearHistory: () => void;
   onRun: () => void;
   onStop: () => void;
@@ -3830,6 +4005,30 @@ function BenchmarkSection({
           </button>
         </div>
       </div>
+
+      {runBlocker ? (
+        <div className="workspace-verifier-warning">
+          <div className="workspace-verifier-warning-copy">
+            <span className={`status-chip ${getVerifierStatusTone(verifierStatus?.verifiers.find((entry) => entry.required)?.status)}`}>
+              Verifier blocked
+            </span>
+            <div>
+              <div className="workspace-verifier-warning-title">{runBlocker.title}</div>
+              <div className="settings-row-secondary">{runBlocker.message}</div>
+            </div>
+          </div>
+          <div className="workspace-verifier-warning-actions">
+            <button type="button" className="ghost-button ghost-button-compact" onClick={onRefreshVerification}>
+              <RotateCcw size={14} />
+              Refresh
+            </button>
+            <button type="button" className="ghost-button ghost-button-compact" onClick={onOpenVerification}>
+              <Wrench size={14} />
+              Verification
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="workspace-grid">
         <div className="workspace-document">
@@ -5450,16 +5649,8 @@ function VerificationView({
                     />
                   </td>
                   <td>
-                    <span className={`status-chip ${
-                      runtime?.status === "running"
-                        ? "status-ready"
-                        : runtime?.status === "missing_dependency"
-                          ? "status-not-installed"
-                          : runtime?.status === "failed"
-                            ? "status-danger"
-                            : "status-idle"
-                    }`}>
-                      {(runtime?.status ?? "stopped").replaceAll("_", " ")}
+                    <span className={`status-chip ${getVerifierStatusTone(runtime?.status)}`}>
+                      {formatVerifierRuntimeStatus(runtime?.status)}
                     </span>
                   </td>
                   <td>
@@ -5467,7 +5658,11 @@ function VerificationView({
                       {runtime?.url ?? "Managed by BenchLocal"}
                     </div>
                     <div className="settings-row-secondary">
-                      Docker: {docker?.available ? docker.details ?? "available" : "not detected"}
+                      Docker: {docker?.state === "ready"
+                        ? docker.details ?? "ready"
+                        : docker?.state === "not_running"
+                          ? docker.details ?? "not running"
+                          : docker?.details ?? "not installed"}
                     </div>
                   </td>
                   <td>
@@ -5492,7 +5687,12 @@ function VerificationView({
                           Stop
                         </button>
                       ) : (
-                        <button type="button" onClick={() => onStart(benchPackId)} className="ghost-button ghost-button-compact">
+                        <button
+                          type="button"
+                          onClick={() => onStart(benchPackId)}
+                          className="ghost-button ghost-button-compact"
+                          disabled={docker?.state !== "ready"}
+                        >
                           <Play size={14} />
                           Start
                         </button>
@@ -5656,6 +5856,37 @@ function HistoryModal({
             </table>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VerifierPreparationModal({
+  benchPackName,
+  verifierId,
+  message
+}: {
+  benchPackName: string;
+  verifierId: string;
+  message: string;
+}) {
+  return (
+    <div className="dialog-backdrop">
+      <div className="dialog-shell verifier-preparation-shell">
+        <div className="verifier-preparation-header">
+          <div className="verifier-preparation-spinner">
+            <span className="spinner" />
+          </div>
+          <div className="verifier-preparation-copy">
+            <p className="eyebrow">Preparing Verifier</p>
+            <h3 className="dialog-title">{benchPackName}</h3>
+            <p className="section-copy" style={{ marginTop: "12px" }}>
+              BenchLocal is preparing <code className="detail-inline-code">{verifierId}</code> before the run can start.
+            </p>
+          </div>
+        </div>
+
+        <p className="settings-row-secondary verifier-preparation-message">{message}</p>
       </div>
     </div>
   );

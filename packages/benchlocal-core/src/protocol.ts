@@ -184,7 +184,7 @@ export interface VerifierEndpoint {
   transport: "http";
   mode: VerifierMode;
   required: boolean;
-  status: "running" | "stopped" | "failed" | "missing_dependency";
+  status: "running" | "stopped" | "failed" | "missing_dependency" | "dependency_not_running";
   url?: string;
   port?: number;
   details?: string;
@@ -296,6 +296,15 @@ export interface RunStartedEvent {
   totalScenarios: number;
 }
 
+export interface VerifierPreparingEvent {
+  type: "verifier_preparing";
+  benchPackId: string;
+  benchPackName: string;
+  verifierId: string;
+  phase: "checking_docker" | "building_image" | "pulling_image" | "starting_container" | "waiting_for_healthcheck";
+  message: string;
+}
+
 export interface ScenarioStartedEvent {
   type: "scenario_started";
   scenarioId: string;
@@ -334,6 +343,7 @@ export interface RunErrorEvent {
 }
 
 export type ProgressEvent =
+  | VerifierPreparingEvent
   | RunStartedEvent
   | ScenarioStartedEvent
   | ModelProgressEvent

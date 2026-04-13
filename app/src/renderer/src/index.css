@@ -1045,6 +1045,44 @@ pre {
   padding: 2px 4px;
 }
 
+.workspace-verifier-warning {
+  margin: 14px 4px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-muted);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workspace-verifier-warning-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.workspace-verifier-warning-copy .status-chip {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.workspace-verifier-warning-title {
+  font-size: 0.98rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.workspace-verifier-warning-actions {
+  display: inline-flex;
+  align-items: flex-start;
+  align-self: flex-start;
+  gap: 10px;
+}
+
 .workspace-toolbar-title {
   font-size: 1rem;
   font-weight: 650;
@@ -1240,6 +1278,7 @@ pre {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  white-space: nowrap;
   background: var(--neutral-soft);
   color: var(--idle);
 }
@@ -1399,7 +1438,7 @@ pre {
   align-items: center;
   padding: 0.12rem 0.45rem;
   margin: 0 0.08rem;
-  border-radius: 2px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
   border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
   color: var(--text);
@@ -2073,6 +2112,48 @@ pre {
   width: min(1180px, calc(100vw - 48px));
 }
 
+.verifier-preparation-shell {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.verifier-preparation-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.verifier-preparation-spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.verifier-preparation-spinner .spinner {
+  width: 18px;
+  height: 18px;
+}
+
+.verifier-preparation-copy {
+  min-width: 0;
+}
+
+.verifier-preparation-phase {
+  margin-top: 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.verifier-preparation-message {
+  margin: 0 0 8px 60px;
+  padding-top: 28px;
+}
+
 .history-dialog-shell {
   width: min(1180px, calc(100vw - 48px));
 }
@@ -2655,6 +2736,17 @@ select.config-input {
 
   .tab-models-column {
     grid-template-rows: auto auto auto;
+  }
+
+  .workspace-verifier-warning {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-verifier-warning-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 

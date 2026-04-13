@@ -43,6 +43,19 @@ export type LoadedBenchPackHandle = {
 
 const execFileAsync = promisify(execFile);
 
+type DockerRuntimeAvailability = {
+  state: "ready" | "not_installed" | "not_running";
+  available: boolean;
+  details?: string;
+  simulated?: boolean;
+};
+
+type VerifierPreparationProgress = {
+  verifierId: string;
+  phase: "checking_docker" | "building_image" | "pulling_image" | "starting_container" | "waiting_for_healthcheck";
+  message: string;
+};
+
 async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
   const raw = await fs.readFile(targetPath, "utf8");
   return JSON.parse(raw) as TValue;
@@ -186,6 +199,74 @@ async function runDockerCommand(args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+async function runDockerCliVersionCheck(): Promise<boolean> {
+  try {
+    await execFileAsync("docker", ["--version"], {
+      maxBuffer: 1024 * 1024
+    });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return false;
+    }
+
+    return true;
+  }
+}
+
+function normalizeDockerErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Docker is unavailable.";
+  }
+
+  const candidate = error.message.trim();
+  return candidate || "Docker is unavailable.";
+}
+
+function getSimulatedDockerAvailability(): DockerRuntimeAvailability | null {
+  const raw = process.env.BENCHLOCAL_SIMULATE_DOCKER?.trim().toLowerCase();
+
+  if (!raw) {
+    return null;
+  }
+
+  if (raw === "not_installed" || raw === "missing") {
+    return {
+      state: "not_installed",
+      available: false,
+      details: "Simulated: Docker is not installed on this machine.",
+      simulated: true
+    };
+  }
+
+  if (raw === "not_running" || raw === "stopped") {
+    return {
+      state: "not_running",
+      available: false,
+      details: "Simulated: Docker is installed but not running.",
+      simulated: true
+    };
+  }
+
+  return null;
+}
+
+async function maybeDelayVerifierPreparation(): Promise<void> {
+  const raw = process.env.BENCHLOCAL_SIMULATE_VERIFIER_PREP_MS?.trim();
+
+  if (!raw) {
+    return;
+  }
+
+  const durationMs = Number(raw);
+
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
 async function runTarCommand(args: string[], options?: { cwd?: string }): Promise<string> {
   const { stdout } = await execFileAsync("tar", args, {
     cwd: options?.cwd,
@@ -195,17 +276,39 @@ async function runTarCommand(args: string[], options?: { cwd?: string }): Promis
   return stdout.trim();
 }
 
-async function detectDockerAvailability(): Promise<{ available: boolean; details?: string }> {
+async function detectDockerAvailability(): Promise<DockerRuntimeAvailability> {
+  const simulated = getSimulatedDockerAvailability();
+
+  if (simulated) {
+    return simulated;
+  }
+
   try {
     const version = await runDockerCommand(["version", "--format", "{{.Server.Version}}"]);
     return {
+      state: "ready",
       available: true,
       details: version || "Docker available"
     };
   } catch (error) {
+    const dockerCliInstalled = await runDockerCliVersionCheck();
+    const details = normalizeDockerErrorMessage(error);
+
+    if (!dockerCliInstalled) {
+      return {
+        state: "not_installed",
+        available: false,
+        details: "Docker is not installed."
+      };
+    }
+
     return {
+      state: "not_running",
       available: false,
-      details: error instanceof Error ? error.message : "Docker CLI is unavailable."
+      details:
+        /cannot connect to the docker daemon|is the docker daemon running|error during connect|connection refused/i.test(details)
+          ? "Docker is installed but not running."
+          : details
     };
   }
 }
@@ -1297,6 +1400,14 @@ function getVerifierUrl(spec: VerifierSpec, config?: BenchLocalVerifierConfig): 
   };
 }
 
+function formatDockerVerifierUnavailableMessage(benchPackId: string, availability: DockerRuntimeAvailability): string {
+  if (availability.state === "not_installed") {
+    return `Bench Pack "${benchPackId}" requires Local Docker, but Docker is not installed.`;
+  }
+
+  return `Bench Pack "${benchPackId}" requires Local Docker, but Docker is not running.`;
+}
+
 async function resolveDockerVerifierEndpoint(
   benchPackId: string,
   spec: VerifierSpec,
@@ -1310,7 +1421,7 @@ async function resolveDockerVerifierEndpoint(
       transport: spec.transport,
       mode: "docker",
       required: spec.required,
-      status: "missing_dependency",
+      status: docker.state === "not_running" ? "dependency_not_running" : "missing_dependency",
       details: docker.details
     };
   }
@@ -1386,10 +1497,7 @@ export type ConfiguredBenchPackVerifierStatus = {
   benchPackId: string;
   benchPackName: string;
   verifiers: VerifierEndpoint[];
-  docker: {
-    available: boolean;
-    details?: string;
-  };
+  docker: DockerRuntimeAvailability;
 };
 
 async function loadConfiguredBenchPackRuntime(
@@ -1438,7 +1546,11 @@ export async function getConfiguredBenchPackVerifierStatus(
 
 export async function startConfiguredBenchPackVerifiers(
   config: BenchLocalConfig,
-  benchPackId: string
+  benchPackId: string,
+  options?: {
+    abortSignal?: AbortSignal;
+    onProgress?: (progress: VerifierPreparationProgress) => Promise<void> | void;
+  }
 ): Promise<ConfiguredBenchPackVerifierStatus> {
   const { rootDir, benchPackConfig, manifest } = await loadConfiguredBenchPackRuntime(config, benchPackId);
   const verifierSpecs = getManifestVerifiers(manifest);
@@ -1452,7 +1564,19 @@ export async function startConfiguredBenchPackVerifiers(
       continue;
     }
 
+    throwIfAborted(options?.abortSignal);
+    await options?.onProgress?.({
+      verifierId: spec.id,
+      phase: "checking_docker",
+      message: docker.available
+        ? "Checking Local Docker availability."
+        : docker.details ?? "Checking Local Docker availability."
+    });
+
     if (!docker.available) {
+      if (spec.required) {
+        throw new Error(formatDockerVerifierUnavailableMessage(benchPackId, docker));
+      }
       continue;
     }
 
@@ -1465,16 +1589,43 @@ export async function startConfiguredBenchPackVerifiers(
       pullImage = false;
 
       if (!(await inspectDockerImage(image))) {
+        await options?.onProgress?.({
+          verifierId: spec.id,
+          phase: "building_image",
+          message: "Building the local verifier image."
+        });
+        await maybeDelayVerifierPreparation();
+        throwIfAborted(options?.abortSignal);
         await buildDockerVerifierImage(image, path.resolve(rootDir, spec.docker.buildContext));
       }
     }
 
     if (!image || !listenPort) {
+      if (spec.required) {
+        throw new Error(`Bench Pack "${benchPackId}" is missing Docker verifier metadata for "${spec.id}".`);
+      }
       continue;
     }
 
     const hostPort = await allocateLocalPort();
 
+    if (pullImage) {
+      await options?.onProgress?.({
+        verifierId: spec.id,
+        phase: "pulling_image",
+        message: `Pulling verifier image ${image}.`
+      });
+      await maybeDelayVerifierPreparation();
+      throwIfAborted(options?.abortSignal);
+    }
+
+    await options?.onProgress?.({
+      verifierId: spec.id,
+      phase: "starting_container",
+      message: `Starting verifier ${spec.id}.`
+    });
+    await maybeDelayVerifierPreparation();
+    throwIfAborted(options?.abortSignal);
     await startDockerVerifierContainer(
       getVerifierContainerName(benchPackId, spec.id),
       image,
@@ -1485,6 +1636,13 @@ export async function startConfiguredBenchPackVerifiers(
       }
     );
 
+    await options?.onProgress?.({
+      verifierId: spec.id,
+      phase: "waiting_for_healthcheck",
+      message: "Waiting for the verifier health check to pass."
+    });
+    await maybeDelayVerifierPreparation();
+    throwIfAborted(options?.abortSignal);
     await waitForVerifierReady(
       `http://127.0.0.1:${hostPort}`,
       spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath
@@ -1718,8 +1876,43 @@ export async function runConfiguredBenchPack(
 ): Promise<BenchPackRunSummary> {
   const artifacts = await createRunArtifacts(config, benchPackId);
   const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId);
-  await startConfiguredBenchPackVerifiers(config, benchPackId);
+  const events: ProgressEvent[] = [];
+  const emit = async (event: ProgressEvent) => {
+    events.push(event);
+    await appendJsonLine(artifacts.eventsPath, event);
+    await options?.onEvent?.(event);
+  };
+
+  await startConfiguredBenchPackVerifiers(config, benchPackId, {
+    abortSignal: options?.abortSignal,
+    onProgress: async (progress) => {
+      await emit({
+        type: "verifier_preparing",
+        benchPackId,
+        benchPackName: manifest.name,
+        verifierId: progress.verifierId,
+        phase: progress.phase,
+        message: progress.message
+      });
+    }
+  });
   const hostContext = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const blockingVerifier = hostContext.verifiers.find((verifier) => verifier.required && verifier.status !== "running");
+
+  if (blockingVerifier) {
+    if (blockingVerifier.status === "missing_dependency") {
+      throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker.`);
+    }
+
+    if (blockingVerifier.status === "dependency_not_running") {
+      throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker to be running.`);
+    }
+
+    throw new Error(
+      blockingVerifier.details ??
+        `Bench Pack "${manifest.name}" requires verifier "${blockingVerifier.id}" to be running before the test can start.`
+    );
+  }
   const enabledModels = hostContext.models.filter((model) => model.enabled);
   const selectedModels =
     options?.modelIds && options.modelIds.length > 0
@@ -1734,19 +1927,12 @@ export async function runConfiguredBenchPack(
 
   const scenarios = await benchPack.listScenarios();
   const prepared = await benchPack.prepare(hostContext);
-  const events: ProgressEvent[] = [];
   const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
   const startedAt = new Date().toISOString();
   const executionMode = options?.executionMode ?? "parallel_by_model";
   const generation = resolveBenchPackGeneration(manifest, options?.generation);
   let runErrorMessage: string | undefined;
   let cancelled = false;
-
-  const emit = async (event: ProgressEvent) => {
-    events.push(event);
-    await appendJsonLine(artifacts.eventsPath, event);
-    await options?.onEvent?.(event);
-  };
 
   await emit({
     type: "run_started",
