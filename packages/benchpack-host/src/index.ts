@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -42,6 +42,7 @@ export type LoadedBenchPackHandle = {
 };
 
 const execFileAsync = promisify(execFile);
+let dockerExecutablePathPromise: Promise<string | null> | null = null;
 
 type DockerRuntimeAvailability = {
   state: "ready" | "not_installed" | "not_running";
@@ -95,6 +96,71 @@ async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function isExecutableFile(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getNormalizedPathEnv(): string {
+  const pathEntries = new Set(
+    (process.env.PATH ?? "")
+      .split(path.delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+  );
+
+  for (const candidate of [
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/Applications/Docker.app/Contents/Resources/bin",
+    "/Applications/OrbStack.app/Contents/MacOS/bin"
+  ]) {
+    pathEntries.add(candidate);
+  }
+
+  return Array.from(pathEntries).join(path.delimiter);
+}
+
+async function resolveDockerExecutable(): Promise<string | null> {
+  if (!dockerExecutablePathPromise) {
+    dockerExecutablePathPromise = (async () => {
+      const candidates = [
+        ...getNormalizedPathEnv()
+          .split(path.delimiter)
+          .filter(Boolean)
+          .map((directory) => path.join(directory, "docker")),
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+        "/Applications/OrbStack.app/Contents/MacOS/bin/docker"
+      ];
+
+      const seen = new Set<string>();
+      for (const candidate of candidates) {
+        if (seen.has(candidate)) {
+          continue;
+        }
+        seen.add(candidate);
+        if (await isExecutableFile(candidate)) {
+          return candidate;
+        }
+      }
+
+      return null;
+    })();
+  }
+
+  return dockerExecutablePathPromise;
 }
 
 function getBenchLocalWorkspaceRoot(): string {
@@ -192,7 +258,18 @@ function sanitizeBenchPackVersion(input: string): string {
 }
 
 async function runDockerCommand(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("docker", args, {
+  const dockerExecutable = await resolveDockerExecutable();
+  if (!dockerExecutable) {
+    const error = new Error("Docker CLI is not installed.");
+    (error as NodeJS.ErrnoException).code = "ENOENT";
+    throw error;
+  }
+
+  const { stdout } = await execFileAsync(dockerExecutable, args, {
+    env: {
+      ...process.env,
+      PATH: getNormalizedPathEnv()
+    },
     maxBuffer: 4 * 1024 * 1024
   });
 
@@ -201,7 +278,16 @@ async function runDockerCommand(args: string[]): Promise<string> {
 
 async function runDockerCliVersionCheck(): Promise<boolean> {
   try {
-    await execFileAsync("docker", ["--version"], {
+    const dockerExecutable = await resolveDockerExecutable();
+    if (!dockerExecutable) {
+      return false;
+    }
+
+    await execFileAsync(dockerExecutable, ["--version"], {
+      env: {
+        ...process.env,
+        PATH: getNormalizedPathEnv()
+      },
       maxBuffer: 1024 * 1024
     });
     return true;
