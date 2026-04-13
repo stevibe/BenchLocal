@@ -247,7 +247,8 @@ const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: strin
   { value: "ollama", label: "Ollama" },
   { value: "llamacpp", label: "llama.cpp" },
   { value: "mlx", label: "MLX" },
-  { value: "lmstudio", label: "LM Studio" }
+  { value: "lmstudio", label: "LM Studio" },
+  { value: "pico", label: "Pico" }
 ];
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
@@ -331,6 +332,8 @@ function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
       return "http://127.0.0.1:8082/v1";
     case "lmstudio":
       return "http://127.0.0.1:1234/v1";
+    case "pico":
+      return "http://127.0.0.1:7426/v1";
     case "openai_compatible":
     default:
       return "https://api.example.com/v1";

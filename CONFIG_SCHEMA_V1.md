@@ -93,6 +93,7 @@ Supported provider kinds:
 - `llamacpp`
 - `mlx`
 - `lmstudio`
+- `pico`
 - `openai_compatible`
 
 Provider fields:
