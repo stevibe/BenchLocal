@@ -51,7 +51,6 @@ export interface BenchPackManifest {
     multiTurn: boolean;
     streamingProgress: boolean;
     verification: boolean;
-    standaloneWebApp: boolean;
     sidecars?: boolean;
   };
   verifiers?: VerifierSpec[];
@@ -81,7 +80,6 @@ export interface BenchPackRegistryEntry {
     tools?: boolean;
     multiTurn?: boolean;
     verification?: boolean;
-    standaloneWebApp?: boolean;
   };
 }
 

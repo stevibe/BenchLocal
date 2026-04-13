@@ -67,8 +67,7 @@ Representative shape:
     "tools": false,
     "multiTurn": false,
     "streamingProgress": true,
-    "verification": true,
-    "standaloneWebApp": false
+    "verification": true
   },
   "verifiers": [
     {

@@ -42,8 +42,7 @@ BenchLocal currently expects this top-level structure:
       "capabilities": {
         "tools": false,
         "multiTurn": false,
-        "verification": false,
-        "standaloneWebApp": false
+        "verification": false
       }
     }
   ]
