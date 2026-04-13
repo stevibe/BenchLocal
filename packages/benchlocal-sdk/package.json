@@ -1,9 +1,14 @@
 {
   "name": "@benchlocal/sdk",
   "version": "0.1.0",
-  "private": true,
+  "description": "BenchLocal SDK for authoring Bench Packs on top of the BenchLocal runtime contract.",
+  "author": "stevibe",
+  "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -11,6 +16,25 @@
       "import": "./dist/index.js"
     }
   },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevibe/BenchLocal.git"
+  },
+  "homepage": "https://github.com/stevibe/BenchLocal",
+  "bugs": {
+    "url": "https://github.com/stevibe/BenchLocal/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "benchlocal",
+    "benchpack",
+    "llm",
+    "benchmark",
+    "sdk"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"

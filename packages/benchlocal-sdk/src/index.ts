@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type {
   BenchPackRuntime,
   BenchmarkScore,
@@ -94,6 +96,12 @@ export function defineBenchPackManifest<const TManifest extends BenchPackManifes
 
 export function defineBenchPack<const TBenchPack extends BenchPackRuntime>(benchPack: TBenchPack): TBenchPack {
   return benchPack;
+}
+
+export function loadBenchPackManifest(moduleDir: string): BenchPackManifest {
+  const manifestPath = path.resolve(moduleDir, "..", "..", "benchlocal.pack.json");
+  const raw = readFileSync(manifestPath, "utf8");
+  return JSON.parse(raw) as BenchPackManifest;
 }
 
 export function createHostHelpers(context: HostContext): HostHelpers {

@@ -729,9 +729,15 @@ async function commitStagedBenchPackInstall(
   benchPackId: string,
   version: string,
   stagedDir: string,
-  stagingRoot?: string
+  stagingRoot?: string,
+  options?: {
+    replaceExisting?: boolean;
+  }
 ): Promise<string> {
   const baseDir = getBenchPackBaseDir(config, benchPackId);
+  if (options?.replaceExisting) {
+    await fs.rm(baseDir, { recursive: true, force: true });
+  }
   await fs.mkdir(baseDir, { recursive: true });
   await fs.mkdir(getBenchPackVersionsDir(baseDir), { recursive: true });
   await cleanupBenchPackStaging(baseDir);
@@ -820,7 +826,15 @@ export async function updateBenchPackFromRegistry(
     entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
   const baseDir = getBenchPackBaseDir(config, benchPackId);
   const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "update", benchPackId);
-  const rootDir = await commitStagedBenchPackInstall(config, benchPackId, entry.version, staged.stagedDir, staged.stagingRoot);
+  await reportInstallProgress(reporter, {
+    benchPackId,
+    action: "update",
+    phase: "removing",
+    message: "Replacing installed Bench Pack."
+  });
+  const rootDir = await commitStagedBenchPackInstall(config, benchPackId, entry.version, staged.stagedDir, staged.stagingRoot, {
+    replaceExisting: true
+  });
   const manifest = staged.manifest;
   await reportInstallProgress(reporter, {
     benchPackId,

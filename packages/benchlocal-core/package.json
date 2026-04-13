@@ -1,16 +1,39 @@
 {
   "name": "@benchlocal/core",
   "version": "0.1.0",
-  "private": true,
+  "description": "Core protocol, config, workspace, and theme types for BenchLocal and Bench Packs.",
+  "author": "stevibe",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevibe/BenchLocal.git"
+  },
+  "homepage": "https://github.com/stevibe/BenchLocal",
+  "bugs": {
+    "url": "https://github.com/stevibe/BenchLocal/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "benchlocal",
+    "benchpack",
+    "llm",
+    "benchmark"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"

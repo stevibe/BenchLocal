@@ -2803,6 +2803,20 @@ select.config-input {
   flex-wrap: nowrap;
 }
 
+.benchpack-version-cell {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.benchpack-version-line {
+  color: var(--muted);
+}
+
+.benchpack-upgrade-button {
+  min-height: 30px;
+}
+
 .settings-table-checkbox-cell {
   display: flex;
   align-items: center;

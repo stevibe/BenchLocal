@@ -50,7 +50,7 @@ Layout rules:
 
 - `lib/` owns the benchmark logic, scenario definitions, grading, and transport code.
 - `benchlocal/index.ts` is the only place that should depend on `@benchlocal/sdk`.
-- `benchlocal.pack.json` is the static install/discovery manifest and should mirror the runtime manifest metadata.
+- `benchlocal.pack.json` is the canonical Bench Pack metadata manifest used for install, inspection, and runtime metadata.
 - `verification/` is optional and only used when exact validation needs a helper runtime.
 - Scenario packs declare the verifier's internal `listenPort`; BenchLocal assigns the host port automatically.
 
@@ -92,20 +92,20 @@ export default defineBenchPack({
 
 Scenario pack repos should import from `@benchlocal/sdk` only in the BenchLocal adapter layer.
 
-During local development, Bench Pack repos can depend on the SDK and core packages with local `file:` dependencies, for example:
+Bench Pack repos should depend on the published SDK and core packages, for example:
 
 ```json
 {
   "dependencies": {
-    "@benchlocal/core": "file:../BenchLocal/packages/benchlocal-core",
-    "@benchlocal/sdk": "file:../BenchLocal/packages/benchlocal-sdk"
+    "@benchlocal/core": "0.1.0",
+    "@benchlocal/sdk": "0.1.0"
   }
 }
 ```
 
 Useful exports:
 
-- `defineBenchPackManifest(...)`
+- `loadBenchPackManifest(__dirname)`
 - `defineBenchPack(...)`
 - `createHostHelpers(context)`
 - `requireScoredResults(results)`
@@ -117,7 +117,7 @@ Useful exports:
 import {
   createHostHelpers,
   defineBenchPack,
-  defineBenchPackManifest,
+  loadBenchPackManifest,
   requireScoredResults,
   type ScenarioRunInput,
   type ScenarioResult
@@ -126,27 +126,7 @@ import {
 import { SCENARIOS, getScenarioCards, scoreModelResults } from "../lib/benchmark";
 import { runScenarioForModel } from "../lib/orchestrator";
 
-const manifest = defineBenchPackManifest({
-  id: "dataextract-15",
-  name: "DataExtract-15",
-  author: "Your Name",
-  version: "0.1.0",
-  description: "Deterministic LLM data extraction benchmark with 15 fixed scenarios.",
-  entry: "./dist/benchlocal/index.js",
-  samplingDefaults: {
-    temperature: 0
-  },
-  theme: {
-    accent: "#0891b2"
-  },
-  capabilities: {
-    tools: false,
-    multiTurn: false,
-    streamingProgress: true,
-    verification: false,
-    standaloneWebApp: true
-  }
-});
+const manifest = loadBenchPackManifest(__dirname);
 
 export { manifest };
 
@@ -250,7 +230,7 @@ BenchLocal merges Bench Pack sampling defaults with per-tab user overrides from 
 If a benchmark requires a verifier or helper service:
 
 - declare it in `benchlocal.pack.json`
-- declare it in the runtime manifest too
+- load it from `benchlocal.pack.json` in the runtime entry
 - do not hardcode host-side startup policy in the Bench Pack
 
 BenchLocal owns lifecycle:
@@ -268,7 +248,7 @@ When converting an existing benchmark repo:
 1. Keep standalone code intact.
 2. Reuse existing benchmark logic from `lib/`.
 3. Add a thin `benchlocal/index.ts`.
-4. Keep `benchlocal.pack.json` aligned with the runtime manifest metadata.
+4. Keep all Bench Pack metadata in `benchlocal.pack.json`; the runtime entry should load and export it.
 5. Map host context into the repo's existing runtime types.
 6. Compile that adapter to `dist/benchlocal/index.js`.
 

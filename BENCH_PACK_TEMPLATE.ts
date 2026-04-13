@@ -1,7 +1,7 @@
 import {
   createHostHelpers,
   defineBenchPack,
-  defineBenchPackManifest,
+  loadBenchPackManifest,
   requireScoredResults,
   type ProgressEmitter,
   type ScenarioResult,
@@ -18,24 +18,7 @@ const SCENARIOS = [
   }
 ] as const;
 
-export const manifest = defineBenchPackManifest({
-  id: "example-benchpack",
-  name: "Example Bench Pack",
-  author: "Your Name",
-  version: "0.1.0",
-  description: "Minimal BenchLocal Bench Pack template.",
-  entry: "./dist/benchlocal/index.js",
-  samplingDefaults: {
-    temperature: 0
-  },
-  capabilities: {
-    tools: false,
-    multiTurn: false,
-    streamingProgress: true,
-    verification: false,
-    standaloneWebApp: false
-  }
-});
+export const manifest = loadBenchPackManifest(__dirname);
 
 export default defineBenchPack({
   manifest,

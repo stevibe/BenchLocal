@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  ArrowRight,
+  ArrowUp,
   CircleAlert,
   Check,
   Bot,
@@ -5113,6 +5115,7 @@ function BenchPackRegistryView({
         name: entry.name,
         description: entry.description ?? "No description provided.",
         version: entry.version,
+        installedVersion: installed?.version,
         installed: Boolean(installed),
         status: installed ? inspection?.status ?? "not_installed" : "not_installed",
         mutation,
@@ -5188,16 +5191,26 @@ function BenchPackRegistryView({
                       </td>
                       <td>{row.description}</td>
                       <td>
-                        <div className="settings-table-actions settings-table-actions-inline">
-                          <span>v{row.version}</span>
+                        <div className="benchpack-version-cell">
+                          <div className="settings-table-actions settings-table-actions-inline benchpack-version-line">
+                            {row.installed && row.updateAvailable && row.installedVersion ? (
+                              <>
+                                <span>v{row.installedVersion}</span>
+                                <ArrowRight size={14} />
+                                <span>v{row.version}</span>
+                              </>
+                            ) : (
+                              <span>v{row.version}</span>
+                            )}
+                          </div>
                           {row.installed && row.isRegistryEntry && row.updateAvailable ? (
                             <button
                               type="button"
                               onClick={() => onUpdate(row.id)}
-                              className="ghost-button ghost-button-compact"
+                              className="button-warn ghost-button-compact benchpack-upgrade-button"
                               disabled={disableRowAction || isMutating}
                             >
-                              {row.mutation?.action === "update" ? <span className="spinner" /> : <RotateCcw size={14} />}
+                              {row.mutation?.action === "update" ? <span className="spinner" /> : <ArrowUp size={14} />}
                               {row.mutation?.action === "update" ? benchPackMutationLabel(row.mutation) : "Upgrade"}
                             </button>
                           ) : null}
