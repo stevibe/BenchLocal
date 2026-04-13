@@ -1,4 +1,8 @@
+![BenchLocal header](./header.png)
+
 # BenchLocal
+
+Practical benchmarks for LLMs. Run them, build them, share them.
 
 BenchLocal is a desktop app for running, comparing, and managing LLM Bench Packs.
 
@@ -63,3 +67,7 @@ Each Bench Pack owns its benchmark behavior:
   compile and package the production desktop app, including DMG and ZIP artifacts
 - `npm run build:dir`
   compile and produce an unpacked local app bundle
+
+## License
+
+MIT

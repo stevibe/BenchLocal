@@ -192,7 +192,7 @@ function getVerifierContainerName(benchPackId: string, verifierId: string): stri
 }
 
 function getGitHubArchiveUrl(repo: string, tag: string): string {
-  return `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
+  return `https://codeload.github.com/${repo}/tar.gz/refs/tags/${tag}`;
 }
 
 function getBenchPackBaseDir(config: BenchLocalConfig, benchPackId: string): string {
