@@ -2071,6 +2071,12 @@ export async function loadRunSummaryForBenchPack(
   return readJsonFile<BenchPackRunSummary>(summaryPath);
 }
 
+export async function clearRunHistoryForBenchPack(config: BenchLocalConfig, benchPackId: string): Promise<{ removed: boolean }> {
+  const runRoot = getBenchPackRunRoot(config, benchPackId);
+  await fs.rm(runRoot, { recursive: true, force: true });
+  return { removed: true };
+}
+
 export function createBenchPackHost() {
   let status: BenchPackHostStatus = "idle";
 

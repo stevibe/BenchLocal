@@ -3085,6 +3085,10 @@ select.config-input {
   gap: 16px;
 }
 
+.history-dialog-shell .dialog-footer {
+  margin-top: 16px;
+}
+
 .history-table-wrap {
   max-height: min(64vh, 720px);
   overflow: auto;

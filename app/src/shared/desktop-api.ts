@@ -93,6 +93,7 @@ export interface BenchLocalDesktopApi {
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;
     history(input: { benchPackId: string }): Promise<BenchPackRunHistoryEntry[]>;
     loadHistory(input: { benchPackId: string; runId: string }): Promise<BenchPackRunSummary>;
+    clearHistory(input: { benchPackId: string }): Promise<{ removed: boolean }>;
     onRunEvent(listener: (payload: { tabId: string; event: ProgressEvent }) => void): () => void;
   };
   verifiers: {

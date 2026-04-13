@@ -62,6 +62,7 @@ const api: BenchLocalDesktopApi = {
     stop: (input: { tabId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:stop", input),
     history: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history", input),
     loadHistory: (input: { benchPackId: string; runId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history-load", input),
+    clearHistory: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history-clear", input),
     onRunEvent: (listener: (payload: { tabId: string; event: ProgressEvent }) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: { tabId: string; event: ProgressEvent }) => {
         listener(payload);

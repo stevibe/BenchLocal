@@ -2175,6 +2175,58 @@ export function App() {
     });
   };
 
+  const clearLoadedHistoryForBenchPack = (benchPackId: string) => {
+    const affectedTabIds =
+      workspaceState
+        ? Object.values(workspaceState.tabs)
+            .filter((tab) => tab.benchPackId === benchPackId && Boolean(loadedHistoryRuns[tab.id]))
+            .map((tab) => tab.id)
+        : [];
+
+    if (affectedTabIds.length === 0) {
+      return;
+    }
+
+    setLoadedHistoryRuns((current) => {
+      const next = { ...current };
+      for (const tabId of affectedTabIds) {
+        delete next[tabId];
+      }
+      return next;
+    });
+
+    setRunSummaries((current) => {
+      const next = { ...current };
+      for (const tabId of affectedTabIds) {
+        delete next[tabId];
+      }
+      return next;
+    });
+
+    setLiveRuns((current) => {
+      const next = { ...current };
+      for (const tabId of affectedTabIds) {
+        delete next[tabId];
+      }
+      return next;
+    });
+  };
+
+  const removeAllHistoryForBenchPack = async (benchPackId: string, benchPackName: string) => {
+    try {
+      await window.benchlocal.benchPacks.clearHistory({ benchPackId });
+      setRunHistories((current) => ({
+        ...current,
+        [benchPackId]: []
+      }));
+      clearLoadedHistoryForBenchPack(benchPackId);
+      setHistoryModal(null);
+      setAppNotice(`Removed all test histories for ${benchPackName}.`);
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : "Failed to remove Bench Pack history.");
+    }
+  };
+
   const saveProviderModal = () => {
     if (!providerModal) {
       return;
@@ -3382,6 +3434,7 @@ export function App() {
 
       {historyModal ? (
         <HistoryModal
+          benchPackId={historyModal.benchPackId}
           benchPackName={historyModal.benchPackName}
           entries={historyModal.entries}
           onClose={() => setHistoryModal(null)}
@@ -3389,6 +3442,17 @@ export function App() {
             void restoreHistoryRun(historyModal.benchPackId, runId);
             setHistoryModal(null);
           }}
+          onRemoveAll={() =>
+            setConfirmDialog({
+              title: `Remove all histories for ${historyModal.benchPackName}?`,
+              subtitle: "This permanently deletes all saved test runs for this Bench Pack.",
+              confirmLabel: "Remove All Histories",
+              tone: "danger",
+              onConfirm: () => {
+                void removeAllHistoryForBenchPack(historyModal.benchPackId, historyModal.benchPackName);
+              }
+            })
+          }
         />
       ) : null}
 
@@ -5782,12 +5846,14 @@ function HistoryModal({
   benchPackName,
   entries,
   onClose,
-  onOpenRun
+  onOpenRun,
+  onRemoveAll
 }: {
   benchPackName: string;
   entries: BenchPackRunHistoryEntry[];
   onClose: () => void;
   onOpenRun: (runId: string) => void;
+  onRemoveAll: () => void;
 }) {
   return (
     <div className="dialog-backdrop">
@@ -5855,6 +5921,13 @@ function HistoryModal({
               </tbody>
             </table>
           </div>
+        </div>
+
+        <div className="dialog-footer">
+          <button type="button" className="button-warn" onClick={onRemoveAll} disabled={entries.length === 0}>
+            <Trash2 size={14} />
+            Remove All Histories
+          </button>
         </div>
       </div>
     </div>

@@ -15,6 +15,7 @@ import {
   installBenchPackFromRegistry,
   installBenchPackFromUrl,
   inspectConfiguredBenchPacks,
+  clearRunHistoryForBenchPack,
   listRunHistoryForBenchPack,
   loadBenchPackRegistry,
   loadRunSummaryForBenchPack,
@@ -49,6 +50,7 @@ const BENCH_PACK_RUN_CHANNEL = "benchlocal:benchpacks:run";
 const BENCH_PACK_STOP_CHANNEL = "benchlocal:benchpacks:stop";
 const BENCH_PACK_HISTORY_CHANNEL = "benchlocal:benchpacks:history";
 const BENCH_PACK_HISTORY_LOAD_CHANNEL = "benchlocal:benchpacks:history-load";
+const BENCH_PACK_HISTORY_CLEAR_CHANNEL = "benchlocal:benchpacks:history-clear";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const VERIFIERS_LIST_CHANNEL = "benchlocal:verifiers:list";
 const VERIFIERS_START_CHANNEL = "benchlocal:verifiers:start";
@@ -369,6 +371,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(BENCH_PACK_HISTORY_LOAD_CHANNEL, async (_event, input: { benchPackId: string; runId: string }) => {
     const { config } = await loadOrCreateConfig();
     return loadRunSummaryForBenchPack(config, input.benchPackId, input.runId);
+  });
+
+  ipcMain.handle(BENCH_PACK_HISTORY_CLEAR_CHANNEL, async (_event, input: { benchPackId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return clearRunHistoryForBenchPack(config, input.benchPackId);
   });
 
   ipcMain.handle(VERIFIERS_LIST_CHANNEL, async () => {
