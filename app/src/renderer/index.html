@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BenchLocal</title>
+    <style>
+      html {
+        background: #f3f3f3;
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #f3f3f3;
+      }
+
+      #root {
+        min-height: 100vh;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #1e1e1e;
+          color-scheme: dark;
+        }
+
+        body {
+          background: #1e1e1e;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

@@ -93,7 +93,7 @@
         "dmg",
         "zip"
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-apple-silicon.${ext}"
     },
     "dmg": {
       "sign": false

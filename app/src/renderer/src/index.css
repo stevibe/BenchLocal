@@ -2104,8 +2104,15 @@ pre {
 .dialog-shell,
 .settings-shell {
   width: min(780px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   border-radius: 24px;
   padding: 22px 24px;
+}
+
+.dialog-shell {
+  overflow: hidden;
 }
 
 .dialog-shell-wide {
@@ -2114,6 +2121,15 @@ pre {
 
 .verifier-preparation-shell {
   width: min(560px, calc(100vw - 48px));
+}
+
+.dialog-body {
+  margin-top: 20px;
+  display: grid;
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .verifier-preparation-header {
@@ -2596,11 +2612,28 @@ select.config-input {
   line-height: 1.55;
 }
 
+.helper-copy p {
+  margin: 0;
+}
+
+.helper-copy-compact {
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.advanced-filesystem-actions {
+  margin-top: 16px;
+}
+
 .tab-models-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
+  flex: 1 1 auto;
   min-height: min(60vh, 700px);
+  min-width: 0;
+  min-height: 0;
 }
 
 .tab-models-column {

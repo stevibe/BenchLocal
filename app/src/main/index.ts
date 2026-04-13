@@ -83,7 +83,7 @@ async function createMainWindow(): Promise<void> {
       ? (nativeTheme.shouldUseDarkColors ? "dark" : "light")
       : loadState.config.ui.theme;
   const theme = await loadAvailableTheme(effectiveThemeId);
-  const backgroundColor = theme?.variables["--bg"] ?? "#f1f2f4";
+  const backgroundColor = theme?.variables["--bg"] ?? "#1f2227";
 
   const window = new BrowserWindow({
     width: 1500,
@@ -91,6 +91,7 @@ async function createMainWindow(): Promise<void> {
     minWidth: 1280,
     minHeight: 820,
     title: "BenchLocal",
+    show: false,
     backgroundColor,
     titleBarStyle: process.platform === "darwin" ? "hidden" : undefined,
     trafficLightPosition:
@@ -109,6 +110,10 @@ async function createMainWindow(): Promise<void> {
 
   window.webContents.on("console-message", (_event, level, message) => {
     console.log(`[renderer:${level}] ${message}`);
+  });
+
+  window.once("ready-to-show", () => {
+    window.show();
   });
 
   if (!isDev) {

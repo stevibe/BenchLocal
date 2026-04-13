@@ -50,6 +50,7 @@ export async function openDetachedLogsWindow(preloadPath: string): Promise<void>
     minWidth: 760,
     minHeight: 260,
     title: buildDetachedLogsWindowTitle(latestDetachedLogsState),
+    show: false,
     backgroundColor: "#111827",
     titleBarStyle: process.platform === "darwin" ? "hidden" : undefined,
     trafficLightPosition:
@@ -69,6 +70,10 @@ export async function openDetachedLogsWindow(preloadPath: string): Promise<void>
   detachedLogsWindow.on("closed", () => {
     detachedLogsWindow = null;
     broadcastWindowClosed();
+  });
+
+  detachedLogsWindow.once("ready-to-show", () => {
+    detachedLogsWindow?.show();
   });
 
   detachedLogsWindow.webContents.on("did-finish-load", () => {

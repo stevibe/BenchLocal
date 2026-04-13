@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Cog,
-  FolderCog,
   FolderOpen,
   GripVertical,
   LayoutList,
@@ -23,7 +22,6 @@ import {
   Save,
   Square,
   Server,
-  Settings2,
   Sidebar,
   SlidersHorizontal,
   Trash2,
@@ -256,8 +254,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
   { id: "models", label: "Models", blurb: "Shared model registry across Bench Packs.", icon: <Bot size={16} /> },
   { id: "benchPacks", label: "Bench Packs", blurb: "Browse, install, update, and remove official Bench Packs.", icon: <PlugZap size={16} /> },
-  { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
-  { id: "advanced", label: "Advanced", blurb: "Storage paths and registry options.", icon: <FolderCog size={16} /> }
+  { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> }
 ];
 
 const SAMPLING_FIELDS: Array<{
@@ -276,6 +273,29 @@ const SAMPLING_FIELDS: Array<{
 
 function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
   return structuredClone(config);
+}
+
+const FILESYSTEM_CONFIG_KEYS = [
+  "run_storage_dir",
+  "benchpack_storage_dir",
+  "log_storage_dir",
+  "cache_dir"
+] as const satisfies Array<keyof BenchLocalConfig>;
+
+function reapplyPendingFilesystemDraft(
+  baseConfig: BenchLocalConfig,
+  currentDraft: BenchLocalConfig,
+  persistedConfig: BenchLocalConfig
+): BenchLocalConfig {
+  const nextConfig = cloneConfig(baseConfig);
+
+  for (const key of FILESYSTEM_CONFIG_KEYS) {
+    if (currentDraft[key] !== persistedConfig[key]) {
+      nextConfig[key] = currentDraft[key];
+    }
+  }
+
+  return nextConfig;
 }
 
 function providerKindLabel(kind: BenchLocalProviderKind): string {
@@ -1086,7 +1106,7 @@ export function App() {
       return;
     }
 
-    void loadThemes();
+    setSettingsTab("providers");
   }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
@@ -1283,8 +1303,16 @@ export function App() {
     };
   }, [activeTab?.id, workspaceTabs, sidebarOpen, tabStripOverflow]);
 
-  const save = async (): Promise<boolean> => {
-    if (!draft) {
+  const persistConfig = async (
+    nextConfig: BenchLocalConfig,
+    options?: {
+      notice?: string | null;
+      preserveFilesystemDraft?: boolean;
+      previousDraft?: BenchLocalConfig | null;
+      previousLoadConfig?: BenchLocalConfig | null;
+    }
+  ): Promise<boolean> => {
+    if (!nextConfig) {
       return false;
     }
 
@@ -1292,13 +1320,17 @@ export function App() {
     setError(null);
 
     try {
-      const result = await window.benchlocal.config.save(draft);
+      const result = await window.benchlocal.config.save(nextConfig);
       setLoadState(result);
-      setDraft(cloneConfig(result.config));
+      setDraft(
+        options?.preserveFilesystemDraft && options.previousDraft && options.previousLoadConfig
+          ? reapplyPendingFilesystemDraft(result.config, options.previousDraft, options.previousLoadConfig)
+          : cloneConfig(result.config)
+      );
       await loadBenchPackInspections();
       await loadRegistryEntries();
-      if (settingsOpenRef.current) {
-        setSettingsNotice("Saved ~/.benchlocal/config.toml");
+      if (settingsOpenRef.current && options?.notice) {
+        setSettingsNotice(options.notice);
       }
       return true;
     } catch (saveError) {
@@ -1307,6 +1339,14 @@ export function App() {
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const save = async (): Promise<boolean> => {
+    if (!draft) {
+      return false;
+    }
+
+    return persistConfig(draft, { notice: "Saved ~/.benchlocal/config.toml" });
   };
 
   const refreshBenchPackState = async (result?: LoadState) => {
@@ -1511,6 +1551,57 @@ export function App() {
       setSettingsNotice("Reverted unsaved changes.");
     }
     setError(null);
+  };
+
+  const saveThemeSelection = async (themeId: string) => {
+    if (!draft) {
+      return;
+    }
+
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    nextConfig.ui.theme = themeId;
+    setDraft(nextConfig);
+
+    const saved = await persistConfig(nextConfig, {
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
+    });
+    if (!saved) {
+      setDraft(previousDraft);
+    }
+  };
+
+  const saveVerifierConfig = async (
+    benchPackId: string,
+    verifierId: string,
+    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig
+  ) => {
+    if (!draft) {
+      return;
+    }
+
+    const currentVerifier = draft.benchpacks[benchPackId]?.verifiers?.[verifierId];
+    if (!currentVerifier) {
+      return;
+    }
+
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    nextConfig.benchpacks[benchPackId].verifiers![verifierId] = updater(currentVerifier);
+    setDraft(nextConfig);
+
+    const saved = await persistConfig(nextConfig, {
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
+    });
+    if (!saved) {
+      setDraft(previousDraft);
+    }
   };
 
   const scrollTabStrip = (delta: number) => {
@@ -2227,39 +2318,61 @@ export function App() {
     }
   };
 
-  const saveProviderModal = () => {
-    if (!providerModal) {
+  const saveProviderModal = async () => {
+    if (!providerModal || !draft) {
       return;
     }
 
     const providerId = providerModal.form.id.trim();
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
 
-    updateDraft((current) => {
-      current.providers[providerId] = {
-        kind: providerModal.form.kind,
-        name: providerModal.form.name.trim() || defaultProviderName(providerModal.form.kind),
-        enabled: providerModal.form.enabled,
-        base_url: providerModal.form.base_url.trim(),
-        api_key: providerModal.form.api_key.trim() || undefined
-      };
+    nextConfig.providers[providerId] = {
+      kind: providerModal.form.kind,
+      name: providerModal.form.name.trim() || defaultProviderName(providerModal.form.kind),
+      enabled: providerModal.form.enabled,
+      base_url: providerModal.form.base_url.trim(),
+      api_key: providerModal.form.api_key.trim() || undefined
+    };
 
-      return current;
+    const saved = await persistConfig(nextConfig, {
+      notice: providerModal.mode === "create" ? "Added provider." : "Updated provider.",
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
     });
+
+    if (!saved) {
+      return;
+    }
 
     setProviderModal(null);
-    if (settingsOpenRef.current) {
-      setSettingsNotice(providerModal.mode === "create" ? "Added provider draft entry." : "Updated provider draft entry.");
-    }
   };
 
-  const deleteProvider = (providerId: string) => {
-    const removedModelIds = new Set((draft?.models ?? []).filter((model) => model.provider === providerId).map((model) => model.id));
+  const deleteProvider = async (providerId: string): Promise<boolean> => {
+    if (!draft) {
+      return false;
+    }
 
-    updateDraft((current) => {
-      delete current.providers[providerId];
-      current.models = current.models.filter((model) => model.provider !== providerId);
-      return current;
+    const removedModelIds = new Set((draft?.models ?? []).filter((model) => model.provider === providerId).map((model) => model.id));
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+
+    delete nextConfig.providers[providerId];
+    nextConfig.models = nextConfig.models.filter((model) => model.provider !== providerId);
+
+    const saved = await persistConfig(nextConfig, {
+      notice: `Deleted provider "${providerId}".`,
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
     });
+
+    if (!saved) {
+      return false;
+    }
 
     if (removedModelIds.size > 0) {
       updateWorkspaceState((current) => {
@@ -2270,9 +2383,7 @@ export function App() {
       });
     }
 
-    if (settingsOpenRef.current) {
-      setSettingsNotice(`Deleted provider "${providerId}".`);
-    }
+    return true;
   };
 
   const confirmDeleteProvider = (providerId: string) => {
@@ -2288,8 +2399,11 @@ export function App() {
       confirmLabel: "Delete Provider",
       tone: "danger",
       onConfirm: () => {
-        deleteProvider(providerId);
-        setProviderModal(null);
+        void deleteProvider(providerId).then((deleted) => {
+          if (deleted) {
+            setProviderModal(null);
+          }
+        });
       }
     });
   };
@@ -2357,8 +2471,8 @@ export function App() {
     }
   };
 
-  const saveModelModal = () => {
-    if (!modelModal) {
+  const saveModelModal = async () => {
+    if (!modelModal || !draft) {
       return;
     }
 
@@ -2375,16 +2489,26 @@ export function App() {
     }
 
     const previousModelId = modelModal.mode === "edit" ? draft?.models[modelModal.index]?.id ?? null : null;
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
 
-    updateDraft((current) => {
-      if (modelModal.mode === "create") {
-        current.models.push(modelConfig);
-      } else {
-        current.models[modelModal.index] = modelConfig;
-      }
+    if (modelModal.mode === "create") {
+      nextConfig.models.push(modelConfig);
+    } else {
+      nextConfig.models[modelModal.index] = modelConfig;
+    }
 
-      return current;
+    const saved = await persistConfig(nextConfig, {
+      notice: modelModal.mode === "create" ? "Added model." : "Updated model.",
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
     });
+
+    if (!saved) {
+      return;
+    }
 
     if (previousModelId && previousModelId !== modelConfig.id) {
       updateWorkspaceState((current) => {
@@ -2398,18 +2522,29 @@ export function App() {
     }
 
     setModelModal(null);
-    if (settingsOpenRef.current) {
-      setSettingsNotice(modelModal.mode === "create" ? "Added model draft entry." : "Updated model draft entry.");
-    }
   };
 
-  const deleteModel = (index: number) => {
-    const removedModelId = draft?.models[index]?.id ?? null;
+  const deleteModel = async (index: number): Promise<boolean> => {
+    if (!draft) {
+      return false;
+    }
 
-    updateDraft((current) => {
-      current.models.splice(index, 1);
-      return current;
+    const removedModelId = draft?.models[index]?.id ?? null;
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    nextConfig.models.splice(index, 1);
+
+    const saved = await persistConfig(nextConfig, {
+      notice: "Deleted model.",
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
     });
+
+    if (!saved) {
+      return false;
+    }
 
     if (removedModelId) {
       updateWorkspaceState((current) => {
@@ -2420,9 +2555,7 @@ export function App() {
       });
     }
 
-    if (settingsOpenRef.current) {
-      setSettingsNotice("Deleted model.");
-    }
+    return true;
   };
 
   const confirmDeleteModel = (index: number) => {
@@ -2446,8 +2579,11 @@ export function App() {
       confirmLabel: "Delete Model",
       tone: "danger",
       onConfirm: () => {
-        deleteModel(index);
-        setModelModal(null);
+        void deleteModel(index).then((deleted) => {
+          if (deleted) {
+            setModelModal(null);
+          }
+        });
       }
     });
   };
@@ -2525,11 +2661,8 @@ export function App() {
                             aria-checked={draft.ui.theme === themeId}
                             className={`run-mode-menu-item${draft.ui.theme === themeId ? " is-active" : ""}`}
                             onClick={() => {
-                              updateDraft((current) => {
-                                current.ui.theme = themeId;
-                                return current;
-                              });
                               setThemeMenuOpen(false);
+                              void saveThemeSelection(themeId);
                             }}
                           >
                             {resolveThemeLabel(themeId, availableThemes, systemPrefersDark)}
@@ -2563,8 +2696,8 @@ export function App() {
                 setSettingsOpen(false);
               }}
               onDismissNotice={() => setSettingsNotice(null)}
-              onSave={() => void save()}
-              onReset={reset}
+              onSaveAdvanced={() => void save()}
+              onResetAdvanced={reset}
               onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
               onEditProvider={(providerId) =>
                 setProviderModal({
@@ -2596,6 +2729,9 @@ export function App() {
               onUpdateBenchPack={(benchPackId) => void updateBenchPack(benchPackId)}
               onUninstallBenchPack={(benchPackId) => void uninstallInstalledBenchPack(benchPackId)}
               updateDraft={updateDraft}
+              onUpdateVerifier={(benchPackId, verifierId, updater) => {
+                void saveVerifierConfig(benchPackId, verifierId, updater);
+              }}
             />
           ) : (
             <div className={`desktop-layout${sidebarOpen ? "" : " sidebar-collapsed"}`}>
@@ -4993,8 +5129,8 @@ function SettingsScene({
   verifierStatuses,
   onBack,
   onDismissNotice,
-  onSave,
-  onReset,
+  onSaveAdvanced,
+  onResetAdvanced,
   onCreateProvider,
   onEditProvider,
   onCreateModel,
@@ -5005,7 +5141,8 @@ function SettingsScene({
   onInstallBenchPack,
   onUpdateBenchPack,
   onUninstallBenchPack,
-  updateDraft
+  updateDraft,
+  onUpdateVerifier
 }: {
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
@@ -5022,8 +5159,8 @@ function SettingsScene({
   verifierStatuses: Record<string, BenchPackVerifierStatus>;
   onBack: () => void;
   onDismissNotice: () => void;
-  onSave: () => void;
-  onReset: () => void;
+  onSaveAdvanced: () => void;
+  onResetAdvanced: () => void;
   onCreateProvider: () => void;
   onEditProvider: (providerId: string) => void;
   onCreateModel: () => void;
@@ -5035,6 +5172,11 @@ function SettingsScene({
   onUpdateBenchPack: (benchPackId: string) => void;
   onUninstallBenchPack: (benchPackId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
+  onUpdateVerifier: (
+    benchPackId: string,
+    verifierId: string,
+    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig
+  ) => void;
 }) {
   return (
     <section className="settings-scene">
@@ -5062,29 +5204,6 @@ function SettingsScene({
             </button>
           ))}
         </div>
-
-        {hasUnsavedChanges ? (
-          <div className="settings-sidebar-footer">
-            <button
-              type="button"
-              onClick={onReset}
-              disabled={isBusy}
-              className="ghost-button settings-scene-action"
-            >
-              <RotateCcw size={14} />
-              Reset
-            </button>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={isBusy}
-              className="primary-button settings-scene-action"
-            >
-              <Save size={14} />
-              Save
-            </button>
-          </div>
-        ) : null}
       </aside>
 
       <div className="settings-scene-content">
@@ -5142,12 +5261,7 @@ function SettingsScene({
               <VerificationView
                 draft={draft}
                 statuses={verifierStatuses}
-                onUpdate={(benchPackId, verifierId, updater) =>
-                  updateDraft((current) => {
-                    current.benchpacks[benchPackId].verifiers![verifierId] = updater(current.benchpacks[benchPackId].verifiers![verifierId]);
-                    return current;
-                  })
-                }
+                onUpdate={onUpdateVerifier}
                 onStart={async (benchPackId) => {
                   await onStartVerifier(benchPackId);
                 }}
@@ -5177,17 +5291,28 @@ function SettingsScene({
                     current.cache_dir = value;
                     return current;
                   })} />
-                  <div className="helper-copy">
-                    <p>Durable settings live in <strong>config.toml</strong>.</p>
+                  <div className="helper-copy helper-copy-compact">
+                    <p>These paths are saved to <strong>~/.benchlocal/config.toml</strong>.</p>
                   </div>
-                </Panel>
-                <Panel title="Registry" subtitle="Official registry source for Bench Pack installs." tone="orange" icon={<Settings2 size={16} />}>
-                  <Field label="Official Registry URL" value={draft.registry.official_url} onChange={(value) => updateDraft((current) => {
-                    current.registry.official_url = value;
-                    return current;
-                  })} />
-                  <div className="helper-copy">
-                    <p>Custom theme JSON files can be added under <strong>~/.benchlocal/themes/</strong>.</p>
+                  <div className="settings-actions advanced-filesystem-actions">
+                    <button
+                      type="button"
+                      onClick={onResetAdvanced}
+                      disabled={isBusy || !hasUnsavedChanges}
+                      className="ghost-button"
+                    >
+                      <RotateCcw size={14} />
+                      Reset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onSaveAdvanced}
+                      disabled={isBusy || !hasUnsavedChanges}
+                      className="primary-button"
+                    >
+                      <Save size={14} />
+                      Save
+                    </button>
                   </div>
                 </Panel>
               </section>
@@ -6066,7 +6191,7 @@ function Modal({
           </button>
         </div>
 
-        {hasBody ? <div style={{ marginTop: "20px", display: "grid", gap: "16px" }}>{children}</div> : null}
+        {hasBody ? <div className="dialog-body">{children}</div> : null}
 
         <div className={`modal-actions${hasBody ? "" : " modal-actions-compact"}`}>
           <div className="modal-actions-leading">{leadingActions}</div>
