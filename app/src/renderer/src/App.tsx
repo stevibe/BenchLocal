@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import benchlocalIcon from "../../../assets/benchlocal-icon.png";
 import {
   ArrowRight,
   ArrowUp,
@@ -51,6 +52,7 @@ import type {
   BenchPackRunSummary
 } from "@core";
 import type {
+  BenchLocalAppMetadata,
   BenchPackMutationProgress,
   BenchLocalDiscoveredModel,
   DetachedLogsState,
@@ -719,6 +721,7 @@ export function App() {
     return <DetachedLogsWindow />;
   }
 
+  const isMacPlatform = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
   const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
@@ -742,6 +745,8 @@ export function App() {
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
+  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
+  const [appMetadata, setAppMetadata] = useState<BenchLocalAppMetadata | null>(null);
   const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
   const [modelBrowserModal, setModelBrowserModal] = useState<ModelBrowserModalState | null>(null);
@@ -1225,6 +1230,21 @@ export function App() {
       window.removeEventListener("keydown", handleEscape);
     };
   }, [themeMenuOpen]);
+
+  useEffect(() => {
+    return window.benchlocal.app.onOpenAbout(() => {
+      setAboutDialogOpen(true);
+
+      if (!appMetadata) {
+        void window.benchlocal.app
+          .metadata()
+          .then((metadata) => {
+            setAppMetadata(metadata);
+          })
+          .catch(() => undefined);
+      }
+    });
+  }, [appMetadata]);
 
   useEffect(() => {
     return window.benchlocal.app.onOpenSettings(() => {
@@ -2595,7 +2615,7 @@ export function App() {
     <div>
       <main className="page-shell">
         <section className="desktop-shell">
-          <header className="topbar">
+          <header className={`topbar${isMacPlatform ? "" : " topbar-nonmac"}`}>
             <div className="topbar-leading">
               <button
                 type="button"
@@ -2606,12 +2626,19 @@ export function App() {
               >
                 <Sidebar size={16} />
               </button>
+              {!isMacPlatform ? (
+                <div className="app-brand">
+                  <h1>BenchLocal</h1>
+                </div>
+              ) : null}
             </div>
 
             <div className="topbar-main">
-	              <div className="app-brand">
-	                <h1>BenchLocal</h1>
-	              </div>
+              {isMacPlatform ? (
+                <div className="app-brand">
+                  <h1>BenchLocal</h1>
+                </div>
+              ) : null}
 
               {!settingsOpen ? (
                 <div className="toolbar-cluster">
@@ -3545,6 +3572,10 @@ export function App() {
             }
           />
         </Modal>
+      ) : null}
+
+      {aboutDialogOpen ? (
+        <AboutDialog metadata={appMetadata} onClose={() => setAboutDialogOpen(false)} />
       ) : null}
 
       {workspaceModal ? (
@@ -6103,6 +6134,59 @@ function Banner({ tone, children }: { tone: "success" | "danger" | "neutral" | "
           ? "banner-warning"
           : "banner-neutral";
   return <div className={`banner ${toneClass}`}>{children}</div>;
+}
+
+function AboutDialog({
+  metadata,
+  onClose
+}: {
+  metadata: BenchLocalAppMetadata | null;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const productName = metadata?.productName ?? "BenchLocal";
+  const version = metadata?.version?.trim();
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key === "Enter") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="dialog-backdrop">
+      <div ref={dialogRef} className="about-dialog-shell" tabIndex={-1}>
+        <button type="button" onClick={onClose} className="dialog-close-button about-dialog-close" aria-label="Close dialog">
+          <X size={16} />
+        </button>
+        <div className="about-dialog-body">
+          <img src={benchlocalIcon} alt="" className="about-dialog-icon" />
+          <h3 className="about-dialog-app-name">{productName}</h3>
+          {version ? <p className="about-dialog-version">Version {version}</p> : null}
+          {metadata?.copyright ? <p className="about-dialog-copyright">{metadata.copyright}</p> : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Modal({

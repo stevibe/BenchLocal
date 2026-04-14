@@ -58,6 +58,7 @@ Each Bench Pack owns its benchmark behavior:
 - [CONFIG_SCHEMA_V1.md](./CONFIG_SCHEMA_V1.md)
 - [BENCHLOCAL_REGISTRY_V1.md](./BENCHLOCAL_REGISTRY_V1.md)
 - [docs/macos-release.md](./docs/macos-release.md)
+- [docs/windows-release.md](./docs/windows-release.md)
 
 ## Build commands
 
@@ -67,6 +68,8 @@ Each Bench Pack owns its benchmark behavior:
   compile and package the production desktop app, including DMG and ZIP artifacts
 - `npm run build:dir`
   compile and produce an unpacked local app bundle
+- `npm run build:win`
+  compile and package unsigned Windows NSIS and ZIP artifacts
 
 ## License
 

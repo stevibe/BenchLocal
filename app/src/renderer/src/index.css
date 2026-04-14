@@ -189,6 +189,19 @@ pre {
   align-self: center;
 }
 
+.topbar-nonmac {
+  padding-left: 18px;
+}
+
+.topbar-nonmac .topbar-leading {
+  gap: 14px;
+  justify-content: flex-start;
+}
+
+.topbar-nonmac .topbar-main {
+  justify-content: flex-end;
+}
+
 .topbar-main {
   min-width: 0;
   flex: 1 1 auto;
@@ -3116,6 +3129,62 @@ select.config-input {
   margin-top: 20px;
   display: grid;
   gap: 16px;
+}
+
+.about-dialog-shell {
+  position: relative;
+  width: min(360px, calc(100vw - 48px));
+  padding: 18px 20px 26px;
+  border-radius: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.24);
+}
+
+.about-dialog-body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding-top: 36px;
+}
+
+.about-dialog-icon {
+  width: 104px;
+  height: 104px;
+  object-fit: contain;
+}
+
+.about-dialog-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
+
+.about-dialog-app-name {
+  margin: 8px 0 0;
+  font-size: 2rem;
+  line-height: 1.05;
+  letter-spacing: -0.05em;
+}
+
+.about-dialog-version,
+.about-dialog-copyright {
+  margin: 0;
+  text-align: center;
+  color: var(--ink);
+}
+
+.about-dialog-version {
+  font-size: 0.92rem;
+  font-weight: 560;
+  opacity: 0.86;
+}
+
+.about-dialog-copyright {
+  margin-top: 6px;
+  font-size: 0.9rem;
+  font-weight: 560;
+  opacity: 0.86;
 }
 
 .history-dialog-shell .dialog-footer {

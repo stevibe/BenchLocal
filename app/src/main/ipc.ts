@@ -26,10 +26,13 @@ import {
   updateBenchPackFromRegistry
 } from "@benchpack-host";
 import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
+import { loadAppMetadata } from "./app-metadata";
 import { listAvailableThemes, loadAvailableTheme } from "./themes";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
+const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
+export const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 export const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
@@ -195,6 +198,10 @@ export function registerIpcHandlers(): void {
       created: false,
       config: saved
     };
+  });
+
+  ipcMain.handle(APP_METADATA_CHANNEL, async () => {
+    return loadAppMetadata();
   });
 
   ipcMain.handle(MODELS_DISCOVER_CHANNEL, async (_event, input: { provider: BenchLocalProviderConfig }) => {

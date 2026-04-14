@@ -4,6 +4,8 @@ import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-a
 
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
+const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
+const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
@@ -13,6 +15,15 @@ const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
 
 const api: BenchLocalDesktopApi = {
   app: {
+    metadata: () => ipcRenderer.invoke(APP_METADATA_CHANNEL),
+    onOpenAbout: (listener) => {
+      const wrapped = () => {
+        listener();
+      };
+
+      ipcRenderer.on(APP_OPEN_ABOUT_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(APP_OPEN_ABOUT_CHANNEL, wrapped);
+    },
     onOpenSettings: (listener) => {
       const wrapped = () => {
         listener();

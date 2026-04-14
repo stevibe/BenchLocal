@@ -19,6 +19,15 @@ export type DetachedLogsState = {
   events: ProgressEvent[];
 };
 
+export type BenchLocalAppMetadata = {
+  productName: string;
+  description: string;
+  version: string;
+  author: string;
+  license?: string;
+  copyright?: string;
+};
+
 export type ConfigLoadResult = {
   path: string;
   created: boolean;
@@ -55,6 +64,8 @@ export type BenchLocalDiscoveredModel = {
 
 export interface BenchLocalDesktopApi {
   app: {
+    metadata(): Promise<BenchLocalAppMetadata>;
+    onOpenAbout(listener: () => void): () => void;
     onOpenSettings(listener: () => void): () => void;
   };
   config: {

@@ -16,6 +16,7 @@
     "build": "npm run build:compile",
     "pack": "npm run build:compile && npm run package --workspace app",
     "build:mac": "npm run build:compile && npm run build:mac --workspace app",
+    "build:win": "npm run build:compile && npm run build:win --workspace app",
     "build:dir": "npm run build:compile && npm run build:dir --workspace app",
     "release:setup:mac": "node scripts/setup-macos-release.mjs",
     "release:doctor:mac": "node scripts/check-macos-release.mjs",

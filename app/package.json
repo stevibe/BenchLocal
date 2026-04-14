@@ -12,10 +12,12 @@
     "build:compile": "electron-vite build",
     "package": "electron-builder",
     "package:mac": "electron-builder --mac dmg zip",
+    "package:win": "electron-builder --win nsis zip --x64",
     "build": "npm run build:compile",
     "pack": "npm run build:compile && npm run package",
     "build:dir": "npm run build:compile && electron-builder --dir",
     "build:mac": "npm run build:compile && npm run package:mac",
+    "build:win": "npm run build:compile && npm run package:win",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -50,6 +52,10 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "../LICENSE",
+        "to": "LICENSE"
+      },
       {
         "from": "../packages/benchlocal-sdk",
         "to": "benchlocal-runtime/packages/benchlocal-sdk",
@@ -97,6 +103,17 @@
     },
     "dmg": {
       "sign": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "${productName}-${version}-windows-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }

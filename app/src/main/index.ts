@@ -1,27 +1,42 @@
 import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import { loadOrCreateConfig } from "@core";
-import { APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers } from "./ipc";
+import { loadAppMetadata } from "./app-metadata";
+import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers } from "./ipc";
 import { loadAvailableTheme } from "./themes";
 
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
+const isMac = process.platform === "darwin";
 
-if (process.platform === "darwin") {
+if (isMac) {
   app.setName("BenchLocal");
 }
 
-function buildApplicationMenu(): void {
-  const appSubmenu: MenuItemConstructorOptions[] = process.platform === "darwin"
+function buildApplicationMenu(appName: string): void {
+  const openAbout = () => {
+    if (isMac) {
+      app.showAboutPanel();
+      return;
+    }
+
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    target?.webContents.send(APP_OPEN_ABOUT_CHANNEL);
+  };
+
+  const openSettings = () => {
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    target?.webContents.send(APP_OPEN_SETTINGS_CHANNEL);
+  };
+
+  const appSubmenu: MenuItemConstructorOptions[] = isMac
     ? [
         { role: "about" },
         { type: "separator" },
         {
           label: "Settings",
           accelerator: "CmdOrCtrl+,",
-          click: () => {
-            BrowserWindow.getFocusedWindow()?.webContents.send(APP_OPEN_SETTINGS_CHANNEL);
-          }
+          click: openSettings
         },
         { role: "services" },
         { type: "separator" },
@@ -31,19 +46,33 @@ function buildApplicationMenu(): void {
         { type: "separator" },
         { role: "quit" }
       ]
-    : [];
-  const windowSubmenu: MenuItemConstructorOptions[] = process.platform === "darwin"
+    : [
+        {
+          label: `About ${appName}`,
+          click: openAbout
+        },
+        {
+          label: "Settings",
+          accelerator: "CmdOrCtrl+,",
+          click: openSettings
+        },
+        ...(isDev
+          ? [
+              { type: "separator" as const },
+              { role: "toggleDevTools" as const }
+            ]
+          : []),
+        { type: "separator" },
+        { role: "quit" }
+      ];
+  const windowSubmenu: MenuItemConstructorOptions[] = isMac
     ? [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }]
     : [{ role: "minimize" }, { role: "zoom" }, { role: "close" }];
   const template: MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin"
-      ? [
-          {
-            label: "BenchLocal",
-            submenu: appSubmenu
-          }
-        ]
-      : []),
+    {
+      label: appName,
+      submenu: appSubmenu
+    },
     {
       label: "Edit",
       submenu: [
@@ -56,17 +85,21 @@ function buildApplicationMenu(): void {
         { role: "selectAll" }
       ]
     },
-    {
-      label: "View",
-      submenu: [
-        ...(isDev ? [{ role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" }, { type: "separator" }] : []),
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" }
-      ]
-    },
+    ...(isMac
+      ? [
+          {
+            label: "View",
+            submenu: [
+              ...(isDev ? [{ role: "reload" as const }, { role: "forceReload" as const }, { role: "toggleDevTools" as const }, { type: "separator" as const }] : []),
+              { role: "resetZoom" as const },
+              { role: "zoomIn" as const },
+              { role: "zoomOut" as const },
+              { type: "separator" as const },
+              { role: "togglefullscreen" as const }
+            ]
+          }
+        ]
+      : []),
     {
       label: "Window",
       submenu: windowSubmenu
@@ -93,9 +126,9 @@ async function createMainWindow(): Promise<void> {
     title: "BenchLocal",
     show: false,
     backgroundColor,
-    titleBarStyle: process.platform === "darwin" ? "hidden" : undefined,
+    titleBarStyle: isMac ? "hidden" : undefined,
     trafficLightPosition:
-      process.platform === "darwin"
+      isMac
         ? {
             x: 18,
             y: 25
@@ -147,12 +180,14 @@ async function createMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  const appMetadata = await loadAppMetadata();
   app.setAboutPanelOptions({
-    applicationName: "BenchLocal",
-    applicationVersion: app.getVersion()
+    applicationName: appMetadata.productName,
+    applicationVersion: appMetadata.version,
+    ...(appMetadata.copyright ? { copyright: appMetadata.copyright } : {})
   });
   registerIpcHandlers();
-  buildApplicationMenu();
+  buildApplicationMenu(appMetadata.productName);
   await createMainWindow();
 
   app.on("activate", async () => {
@@ -163,7 +198,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (!isMac) {
     app.quit();
   }
 });
