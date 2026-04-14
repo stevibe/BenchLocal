@@ -5270,6 +5270,7 @@ function SettingsScene({
             {settingsTab === "models" ? (
               <ModelsView
                 models={draft.models}
+                providers={draft.providers}
                 providerIds={providerIds}
                 onCreate={onCreateModel}
                 onEdit={onEditModel}
@@ -5429,11 +5430,13 @@ function ProvidersView({
 
 function ModelsView({
   models,
+  providers,
   providerIds,
   onCreate,
   onEdit
 }: {
   models: BenchLocalModelConfig[];
+  providers: Record<string, BenchLocalProviderConfig>;
   providerIds: string[];
   onCreate: () => void;
   onEdit: (index: number) => void;
@@ -5480,7 +5483,7 @@ function ModelsView({
                     {model.enabled ? "active" : "inactive"}
                   </span>
                 </td>
-                <td>{model.provider}</td>
+                <td>{providers[model.provider]?.name ?? model.provider.split("-")[0] ?? model.provider}</td>
                 <td className="settings-mono-cell">{model.model}</td>
                 <td>{model.group}</td>
                 <td>
