@@ -10,6 +10,7 @@ export type BenchLocalProviderKind =
   | "llamacpp"
   | "mlx"
   | "lmstudio"
+  | "pico"
   | "openai_compatible";
 
 export type BenchLocalProviderConfig = {
@@ -83,7 +84,7 @@ export type LoadedBenchLocalConfig = {
 
 const ProviderSchema = z.object({
   kind: z
-    .enum(["openrouter", "ollama", "llamacpp", "mlx", "lmstudio", "openai_compatible"])
+    .enum(["openrouter", "ollama", "llamacpp", "mlx", "lmstudio", "pico", "openai_compatible"])
     .optional(),
   name: z.string().trim().min(1).optional(),
   enabled: z.boolean().default(true),
@@ -203,6 +204,8 @@ function inferProviderKind(providerId: string): BenchLocalProviderKind {
       return "mlx";
     case "lmstudio":
       return "lmstudio";
+    case "pico":
+      return "pico";
     default:
       return "openai_compatible";
   }
@@ -220,6 +223,8 @@ function inferProviderName(providerId: string, kind: BenchLocalProviderKind): st
       return "MLX";
     case "lmstudio":
       return "LM Studio";
+    case "pico":
+      return "Pico";
     case "openai_compatible":
     default: {
       const cleaned = providerId.replace(/[_-]+/g, " ").trim();
