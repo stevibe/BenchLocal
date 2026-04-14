@@ -1,7 +1,7 @@
 {
   "name": "benchlocal-workspace",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "workspaces": [
     "app",
     "packages/*"
@@ -19,6 +19,7 @@
     "build:win": "npm run build:compile && npm run build:win --workspace app",
     "build:linux": "npm run build:compile && npm run build:linux --workspace app",
     "build:dir": "npm run build:compile && npm run build:dir --workspace app",
+    "release:all": "npm run release:mac && npm run build:win && npm run build:linux",
     "release:setup:mac": "node scripts/setup-macos-release.mjs",
     "release:doctor:mac": "node scripts/check-macos-release.mjs",
     "release:mac": "node scripts/build-macos-release.mjs",

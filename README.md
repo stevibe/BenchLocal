@@ -73,6 +73,8 @@ Each Bench Pack owns its benchmark behavior:
   compile and package unsigned Windows NSIS and ZIP artifacts
 - `npm run build:linux`
   compile and package Linux AppImage and tar.gz artifacts
+- `npm run release:all`
+  build the signed macOS release plus Windows and Linux desktop artifacts in one command
 
 ## License
 

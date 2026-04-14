@@ -16,6 +16,12 @@ cd BenchLocal
 npm run build:linux
 ```
 
+Or build all release artifacts from the repo root:
+
+```bash
+npm run release:all
+```
+
 Artifacts are written to:
 
 - `app/dist/`

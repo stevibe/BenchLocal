@@ -2,8 +2,8 @@
 
 BenchLocal ships a standard macOS desktop release as:
 
-- `BenchLocal-<version>-arm64.dmg`
-- `BenchLocal-<version>-arm64.zip`
+- `BenchLocal-<version>-apple-silicon.dmg`
+- `BenchLocal-<version>-apple-silicon.zip`
 
 This repo uses a local signing workflow. Apple credentials stay on the release machine and are not committed to the repo.
 
@@ -43,6 +43,12 @@ npm run build:mac
 ```
 
 Compile and package the macOS DMG and ZIP explicitly through the app workspace.
+
+```bash
+npm run release:all
+```
+
+Build the signed macOS release, then package Windows and Linux artifacts from the repo root.
 
 For a real signed release, use:
 
@@ -161,6 +167,6 @@ app/dist/
 
 Typical output:
 
-- `BenchLocal-0.1.0-arm64.dmg`
-- `BenchLocal-0.1.0-arm64.zip`
+- `BenchLocal-<version>-apple-silicon.dmg`
+- `BenchLocal-<version>-apple-silicon.zip`
 - `mac-arm64/BenchLocal.app`

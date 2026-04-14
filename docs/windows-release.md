@@ -15,6 +15,12 @@ cd BenchLocal
 npm run build:win
 ```
 
+Or build all release artifacts from the repo root:
+
+```bash
+npm run release:all
+```
+
 Expected outputs:
 
 - `app/dist/BenchLocal-<version>-windows-x64.exe`
