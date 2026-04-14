@@ -13,11 +13,13 @@
     "package": "electron-builder",
     "package:mac": "electron-builder --mac dmg zip",
     "package:win": "electron-builder --win nsis zip --x64",
+    "package:linux": "electron-builder --linux AppImage tar.gz --x64",
     "build": "npm run build:compile",
     "pack": "npm run build:compile && npm run package",
     "build:dir": "npm run build:compile && electron-builder --dir",
     "build:mac": "npm run build:compile && npm run package:mac",
     "build:win": "npm run build:compile && npm run package:win",
+    "build:linux": "npm run build:compile && npm run package:linux",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -110,6 +112,15 @@
         "zip"
       ],
       "artifactName": "${productName}-${version}-windows-x64.${ext}"
+    },
+    "linux": {
+      "icon": "assets/benchlocal-icon.png",
+      "category": "Development",
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "artifactName": "${productName}-${version}-linux-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,

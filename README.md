@@ -59,6 +59,7 @@ Each Bench Pack owns its benchmark behavior:
 - [BENCHLOCAL_REGISTRY_V1.md](./BENCHLOCAL_REGISTRY_V1.md)
 - [docs/macos-release.md](./docs/macos-release.md)
 - [docs/windows-release.md](./docs/windows-release.md)
+- [docs/linux-release.md](./docs/linux-release.md)
 
 ## Build commands
 
@@ -70,6 +71,8 @@ Each Bench Pack owns its benchmark behavior:
   compile and produce an unpacked local app bundle
 - `npm run build:win`
   compile and package unsigned Windows NSIS and ZIP artifacts
+- `npm run build:linux`
+  compile and package Linux AppImage and tar.gz artifacts
 
 ## License
 
