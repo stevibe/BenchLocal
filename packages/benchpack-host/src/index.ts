@@ -2554,6 +2554,67 @@ async function executeParallelModelsMode(
   runId: string,
   abortSignal?: AbortSignal
 ): Promise<void> {
+  const startedScenarios = new Set<string>();
+  const finishedCounts = new Map<string, number>();
+
+  for (const model of selectedModels) {
+    throwIfAborted(abortSignal);
+
+    await Promise.all(
+      scenarios.map(async (scenario, index) => {
+        throwIfAborted(abortSignal);
+
+        if (!startedScenarios.has(scenario.id)) {
+          startedScenarios.add(scenario.id);
+          await emit({
+            type: "scenario_started",
+            scenarioId: scenario.id,
+            title: scenario.title,
+            index: index + 1,
+            total: scenarios.length
+          });
+        }
+
+        const result = await prepared.runScenario(
+          {
+            runId,
+            benchPackId,
+            scenario,
+            model,
+            abortSignal,
+            generation
+          },
+          emit
+        );
+
+        resultsByModel[model.id].push(result);
+        await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
+
+        const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
+        finishedCounts.set(scenario.id, completedCount);
+
+        if (completedCount >= selectedModels.length) {
+          await emit({
+            type: "scenario_finished",
+            scenarioId: scenario.id
+          });
+        }
+      })
+    );
+  }
+}
+
+async function executeParallelTestCasesMode(
+  scenarios: ScenarioMeta[],
+  selectedModels: RegisteredModel[],
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
+  generation: GenerationRequest,
+  emit: (event: ProgressEvent) => Promise<void>,
+  resultsByModel: Record<string, ScenarioResult[]>,
+  runId: string,
+  abortSignal?: AbortSignal
+): Promise<void> {
   for (const [index, scenario] of scenarios.entries()) {
     throwIfAborted(abortSignal);
     await emit({
@@ -2568,12 +2629,12 @@ async function executeParallelModelsMode(
       selectedModels.map(async (model) => {
         const result = await prepared.runScenario(
           {
-          runId,
-          benchPackId,
-          scenario,
-          model,
-          abortSignal,
-          generation
+            runId,
+            benchPackId,
+            scenario,
+            model,
+            abortSignal,
+            generation
           },
           emit
         );
@@ -2592,53 +2653,6 @@ async function executeParallelModelsMode(
       scenarioId: scenario.id
     });
   }
-}
-
-async function executeParallelScenariosMode(
-  scenarios: ScenarioMeta[],
-  selectedModels: RegisteredModel[],
-  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
-  benchPackId: string,
-  generation: GenerationRequest,
-  emit: (event: ProgressEvent) => Promise<void>,
-  resultsByModel: Record<string, ScenarioResult[]>,
-  runId: string,
-  abortSignal?: AbortSignal
-): Promise<void> {
-  await Promise.all(
-    scenarios.map(async (scenario, index) => {
-      throwIfAborted(abortSignal);
-      await emit({
-        type: "scenario_started",
-        scenarioId: scenario.id,
-        title: scenario.title,
-        index: index + 1,
-        total: scenarios.length
-      });
-
-      for (const model of selectedModels) {
-        const result = await prepared.runScenario(
-          {
-          runId,
-          benchPackId,
-          scenario,
-          model,
-          abortSignal,
-          generation
-          },
-          emit
-        );
-
-        resultsByModel[model.id].push(result);
-        await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
-      }
-
-      await emit({
-        type: "scenario_finished",
-        scenarioId: scenario.id
-      });
-    })
-  );
 }
 
 async function executeFullParallelMode(
@@ -2793,7 +2807,7 @@ export async function runConfiguredBenchPack(
             await executeSerialMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
             break;
           case "parallel_by_test_case":
-            await executeParallelScenariosMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
             break;
           case "full_parallel":
             await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
