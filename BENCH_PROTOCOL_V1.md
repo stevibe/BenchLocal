@@ -156,10 +156,25 @@ Key fields:
   - resolved provider secrets from config or environment
 - `verifiers`
   - resolved verifier endpoints and status
+- `inferenceEndpoints`
+  - optional host-owned OpenAI-compatible model endpoints for selected Bench Packs
 - `logger`
   - host logging bridge
 
 Bench Packs should usually use the helpers from `@benchlocal/sdk` instead of reading the raw context manually.
+
+`inferenceEndpoints` is additive and optional. Existing packs can continue using direct provider/model access. Packs that need a host-managed model transport can use the inference endpoint helpers from `@benchlocal/sdk`.
+
+Running inference endpoints expose:
+
+- `baseUrl`
+  - host-reachable URL for the Bench Pack runtime
+- `dockerBaseUrl`
+  - optional container-reachable URL for Docker verifiers
+- `apiKey`
+  - ephemeral BenchLocal-issued bearer token when auth is required
+- `exposedModel`
+  - stable model identifier the pack should send to the endpoint
 
 ## Generation settings
 

@@ -190,6 +190,29 @@ export interface VerifierEndpoint {
 
 export type SidecarEndpoint = VerifierEndpoint;
 
+export interface RunningInferenceEndpoint {
+  modelId: string;
+  providerId: string;
+  transport: "openai_compatible";
+  status: "running";
+  baseUrl: string;
+  dockerBaseUrl?: string;
+  authMode: "none" | "bearer";
+  apiKey?: string;
+  exposedModel: string;
+  details?: string;
+}
+
+export interface FailedInferenceEndpoint {
+  modelId: string;
+  providerId: string;
+  transport: "openai_compatible";
+  status: "failed";
+  details?: string;
+}
+
+export type InferenceEndpoint = RunningInferenceEndpoint | FailedInferenceEndpoint;
+
 export interface HostContext {
   protocolVersion: 1;
   benchPack: {
@@ -205,6 +228,7 @@ export interface HostContext {
   secrets: SecretResolution[];
   verifiers: VerifierEndpoint[];
   sidecars?: SidecarEndpoint[];
+  inferenceEndpoints?: InferenceEndpoint[];
   logger: HostLogger;
 }
 

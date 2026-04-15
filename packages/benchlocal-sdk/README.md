@@ -42,11 +42,12 @@ export default defineBenchPack({
     return {
       async runScenario(input) {
         const provider = helpers.getRequiredProvider(input.model.provider, { enabledOnly: true });
+        const inference = helpers.getInferenceEndpoint(input.model.id);
 
         return {
           scenarioId: input.scenario.id,
           status: "pass",
-          summary: provider.baseUrl
+          summary: inference?.status === "running" ? inference.baseUrl : provider.baseUrl
         };
       },
       async dispose() {}
@@ -70,6 +71,14 @@ export default defineBenchPack({
 - `defineBenchPackManifest(...)`
 - `createHostHelpers(context)`
 - `requireScoredResults(results)`
+
+Useful host lookups:
+
+- `getRequiredProvider(providerId, { enabledOnly: true })`
+- `getRequiredInferenceEndpoint(modelId)`
+- `getRequiredVerifier(verifierId)`
+
+When a pack uses a Docker verifier, the returned inference endpoint may also include `dockerBaseUrl`. Forward `dockerBaseUrl ?? baseUrl` to the verifier-side runtime.
 
 `@benchlocal/sdk` also re-exports the main public types from `@benchlocal/core`.
 

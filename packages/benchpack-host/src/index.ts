@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import type {
@@ -16,6 +19,7 @@ import type {
   BenchLocalVerifierConfig,
   GenerationRequest,
   HostContext,
+  InferenceEndpoint,
   BenchPackRunHistoryEntry,
   BenchPackRunSummary,
   ProgressEvent,
@@ -55,6 +59,26 @@ type VerifierPreparationProgress = {
   verifierId: string;
   phase: "checking_docker" | "building_image" | "pulling_image" | "starting_container" | "waiting_for_healthcheck";
   message: string;
+};
+
+type InferenceRoute = {
+  modelId: string;
+  providerId: string;
+  upstreamBaseUrl: string;
+  upstreamModel: string;
+  upstreamAuthMode: "none" | "bearer";
+  upstreamApiKey?: string;
+  exposedModel: string;
+};
+
+type InferenceRelay = {
+  endpoints: InferenceEndpoint[];
+  dispose(): Promise<void>;
+};
+
+type HostContextResources = {
+  context: HostContext;
+  dispose(): Promise<void>;
 };
 
 async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
@@ -517,15 +541,17 @@ async function startDockerVerifierContainer(
   if (options?.pullImage !== false) {
     await runDockerCommand(["pull", image]);
   }
-  await runDockerCommand([
+  const dockerArgs = [
     "run",
     "-d",
     "--name",
     containerName,
+    ...(process.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
     "-p",
     `${hostPort}:${listenPort}`,
     image
-  ]);
+  ];
+  await runDockerCommand(dockerArgs);
 }
 
 async function buildDockerVerifierImage(tag: string, contextPath: string): Promise<void> {
@@ -1303,14 +1329,462 @@ function resolveBenchPackGeneration(
   });
 }
 
+function createHostLogger(benchPackId: string, hostLogPath: string): HostContext["logger"] {
+  return {
+    debug(message, meta) {
+      console.debug(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
+      void appendTextLine(hostLogPath, `[debug] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
+    },
+    info(message, meta) {
+      console.info(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
+      void appendTextLine(hostLogPath, `[info] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
+    },
+    warn(message, meta) {
+      console.warn(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
+      void appendTextLine(hostLogPath, `[warn] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
+    },
+    error(message, meta) {
+      console.error(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
+      void appendTextLine(hostLogPath, `[error] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
+    }
+  };
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+}
+
+function normalizeInferencePath(pathname: string): string {
+  if (pathname === "/v1") {
+    return "/";
+  }
+
+  if (pathname.startsWith("/v1/")) {
+    return pathname.slice(3);
+  }
+
+  return pathname.startsWith("/") ? pathname : `/${pathname}`;
+}
+
+async function readIncomingBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function writeJsonResponse(
+  response: ServerResponse,
+  statusCode: number,
+  payload: unknown,
+  headers?: Record<string, string>
+): void {
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": String(body.byteLength),
+    ...headers
+  });
+  response.end(body);
+}
+
+function createUpstreamHeaders(request: IncomingMessage, route: InferenceRoute): Headers {
+  const headers = new Headers();
+
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey === "authorization" || normalizedKey === "content-length" || normalizedKey === "host") {
+      continue;
+    }
+
+    headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+  }
+
+  if (route.upstreamAuthMode === "bearer" && route.upstreamApiKey) {
+    headers.set("authorization", `Bearer ${route.upstreamApiKey}`);
+  }
+
+  return headers;
+}
+
+function toNodeHeaders(headers: Headers, overrides?: Record<string, string | undefined>): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  headers.forEach((value, key) => {
+    if (overrides && key in overrides && overrides[key] === undefined) {
+      return;
+    }
+
+    result[key] = value;
+  });
+
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (value === undefined) {
+      delete result[key];
+      continue;
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+function rewriteResponseModel(payload: unknown, route: InferenceRoute): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const record = payload as Record<string, unknown>;
+  if (record.model !== route.upstreamModel) {
+    return payload;
+  }
+
+  return {
+    ...record,
+    model: route.exposedModel
+  };
+}
+
+async function startInferenceRelay(
+  providers: HostContext["providers"],
+  models: HostContext["models"],
+  secrets: HostContext["secrets"],
+  logger: HostContext["logger"]
+): Promise<InferenceRelay> {
+  if (models.length === 0) {
+    return {
+      endpoints: [],
+      async dispose() {}
+    };
+  }
+
+  const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
+  const secretMap = new Map(secrets.map((secret) => [secret.providerId, secret]));
+  const failedEndpoints: InferenceEndpoint[] = [];
+  const routes: InferenceRoute[] = [];
+
+  for (const model of models) {
+    const provider = providerMap.get(model.provider);
+
+    if (!provider) {
+      failedEndpoints.push({
+        modelId: model.id,
+        providerId: model.provider,
+        transport: "openai_compatible",
+        status: "failed",
+        details: `Provider "${model.provider}" was not found.`
+      });
+      continue;
+    }
+
+    if (!provider.enabled) {
+      failedEndpoints.push({
+        modelId: model.id,
+        providerId: model.provider,
+        transport: "openai_compatible",
+        status: "failed",
+        details: `Provider "${model.provider}" is configured but disabled.`
+      });
+      continue;
+    }
+
+    const upstreamApiKey = secretMap.get(provider.id)?.value;
+    if (provider.authMode === "bearer" && !upstreamApiKey) {
+      failedEndpoints.push({
+        modelId: model.id,
+        providerId: model.provider,
+        transport: "openai_compatible",
+        status: "failed",
+        details: `Provider "${model.provider}" requires an API key, but no secret is available.`
+      });
+      continue;
+    }
+
+    routes.push({
+      modelId: model.id,
+      providerId: provider.id,
+      upstreamBaseUrl: normalizeBaseUrl(provider.baseUrl),
+      upstreamModel: model.model,
+      upstreamAuthMode: provider.authMode,
+      upstreamApiKey,
+      exposedModel: model.id
+    });
+  }
+
+  if (routes.length === 0) {
+    return {
+      endpoints: failedEndpoints,
+      async dispose() {}
+    };
+  }
+
+  const relayToken = `benchlocal_${randomUUID()}`;
+  const routeMap = new Map(routes.map((route) => [route.exposedModel, route]));
+  const runningModelPayload = routes.map((route) => ({
+    id: route.exposedModel,
+    object: "model",
+    created: 0,
+    owned_by: route.providerId
+  }));
+
+  const server = createServer(async (request, response) => {
+    const requestId = randomUUID().slice(0, 8);
+
+    try {
+      const authorization = request.headers.authorization;
+      const providedToken = typeof authorization === "string" ? authorization.replace(/^Bearer\s+/i, "").trim() : "";
+
+      if (providedToken !== relayToken) {
+        writeJsonResponse(
+          response,
+          401,
+          {
+            error: {
+              message: "BenchLocal inference relay rejected the request.",
+              type: "invalid_request_error"
+            }
+          },
+          {
+            "www-authenticate": "Bearer"
+          }
+        );
+        return;
+      }
+
+      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      const normalizedPath = normalizeInferencePath(requestUrl.pathname);
+
+      if (request.method === "GET" && (normalizedPath === "/models" || normalizedPath === "/")) {
+        writeJsonResponse(response, 200, {
+          object: "list",
+          data: runningModelPayload
+        });
+        return;
+      }
+
+      const rawBody = await readIncomingBody(request);
+      let route: InferenceRoute | undefined;
+      let outboundBody = rawBody;
+
+      if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "DELETE") {
+        const contentType = String(request.headers["content-type"] ?? "");
+        if (!contentType.toLowerCase().includes("application/json")) {
+          writeJsonResponse(response, 415, {
+            error: {
+              message: "BenchLocal inference relay currently supports JSON request bodies only.",
+              type: "invalid_request_error"
+            }
+          });
+          return;
+        }
+
+        let parsedBody: unknown;
+        try {
+          parsedBody = rawBody.length > 0 ? JSON.parse(rawBody.toString("utf8")) : {};
+        } catch {
+          writeJsonResponse(response, 400, {
+            error: {
+              message: "BenchLocal inference relay received invalid JSON.",
+              type: "invalid_request_error"
+            }
+          });
+          return;
+        }
+
+        if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+          writeJsonResponse(response, 400, {
+            error: {
+              message: "BenchLocal inference relay expected a JSON object request body.",
+              type: "invalid_request_error"
+            }
+          });
+          return;
+        }
+
+        const modelId = typeof (parsedBody as Record<string, unknown>).model === "string" ? String((parsedBody as Record<string, unknown>).model) : "";
+        route = routeMap.get(modelId);
+
+        if (!route) {
+          writeJsonResponse(response, 404, {
+            error: {
+              message: `Model "${modelId || "unknown"}" is not exposed by the BenchLocal inference relay.`,
+              type: "invalid_request_error"
+            }
+          });
+          return;
+        }
+
+        outboundBody = Buffer.from(
+          JSON.stringify({
+            ...(parsedBody as Record<string, unknown>),
+            model: route.upstreamModel
+          }),
+          "utf8"
+        );
+      } else {
+        const queryModelId = requestUrl.searchParams.get("model");
+        route = queryModelId ? routeMap.get(queryModelId) : routes[0];
+
+        if (!route) {
+          writeJsonResponse(response, 503, {
+            error: {
+              message: "No running models are currently exposed by the BenchLocal inference relay.",
+              type: "server_error"
+            }
+          });
+          return;
+        }
+      }
+
+      const upstreamUrl = new URL(normalizedPath.replace(/^\//, ""), route.upstreamBaseUrl);
+      upstreamUrl.search = requestUrl.search;
+
+      const upstreamResponse = await fetch(upstreamUrl, {
+        method: request.method ?? "GET",
+        headers: createUpstreamHeaders(request, route),
+        body: outboundBody.length > 0 ? outboundBody.toString("utf8") : undefined
+      });
+
+      const contentType = upstreamResponse.headers.get("content-type") ?? "";
+      if (contentType.toLowerCase().includes("application/json")) {
+        const rawText = await upstreamResponse.text();
+        let responseBody = rawText;
+
+        try {
+          const parsed = JSON.parse(rawText);
+          responseBody = JSON.stringify(rewriteResponseModel(parsed, route));
+        } catch {
+          responseBody = rawText;
+        }
+
+        response.writeHead(
+          upstreamResponse.status,
+          toNodeHeaders(upstreamResponse.headers, {
+            "content-length": String(Buffer.byteLength(responseBody)),
+            "transfer-encoding": undefined
+          })
+        );
+        response.end(responseBody);
+        return;
+      }
+
+      response.writeHead(upstreamResponse.status, toNodeHeaders(upstreamResponse.headers));
+      if (!upstreamResponse.body) {
+        response.end();
+        return;
+      }
+
+      await pipeline(Readable.fromWeb(upstreamResponse.body as never), response);
+    } catch (error) {
+      logger.error("Inference relay request failed.", {
+        error: toErrorMessage(error),
+        requestId
+      });
+
+      if (response.headersSent) {
+        response.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+
+      writeJsonResponse(response, 502, {
+        error: {
+          message: "BenchLocal inference relay failed to reach the upstream provider.",
+          type: "server_error",
+          details: toErrorMessage(error)
+        }
+      });
+    }
+  });
+
+  try {
+    const address = await new Promise<ReturnType<typeof server.address>>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "0.0.0.0", () => resolve(server.address()));
+    });
+
+    if (!address || typeof address === "string") {
+      throw new Error("BenchLocal inference relay failed to bind to a local TCP port.");
+    }
+
+    const baseUrl = `http://127.0.0.1:${address.port}/v1/`;
+    const dockerBaseUrl = `http://host.docker.internal:${address.port}/v1/`;
+    logger.info("Started BenchLocal inference relay.", {
+      baseUrl,
+      dockerBaseUrl,
+      modelCount: routes.length
+    });
+
+    return {
+      endpoints: [
+        ...routes.map((route) => ({
+          modelId: route.modelId,
+          providerId: route.providerId,
+          transport: "openai_compatible" as const,
+          status: "running" as const,
+          baseUrl,
+          dockerBaseUrl,
+          authMode: "bearer" as const,
+          apiKey: relayToken,
+          exposedModel: route.exposedModel
+        })),
+        ...failedEndpoints
+      ],
+      async dispose() {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            resolve();
+          });
+        });
+        logger.info("Stopped BenchLocal inference relay.", {
+          baseUrl,
+          dockerBaseUrl
+        });
+      }
+    };
+  } catch (error) {
+    logger.error("Failed to start BenchLocal inference relay.", {
+      error: toErrorMessage(error)
+    });
+
+    return {
+      endpoints: [
+        ...routes.map((route) => ({
+          modelId: route.modelId,
+          providerId: route.providerId,
+          transport: "openai_compatible" as const,
+          status: "failed" as const,
+          details: `BenchLocal inference relay failed to start: ${toErrorMessage(error)}`
+        })),
+        ...failedEndpoints
+      ],
+      async dispose() {}
+    };
+  }
+}
+
 async function createHostContext(
   config: BenchLocalConfig,
   benchPackId: string,
   rootDir: string,
   manifest: BenchPackManifest,
   artifacts: RunArtifacts
-): Promise<HostContext> {
+): Promise<HostContextResources> {
   const benchPackConfig = config.benchpacks[benchPackId];
+  const logger = createHostLogger(benchPackId, artifacts.hostLogPath);
   const providers = Object.entries(config.providers).map(([id, provider]) => ({
     id,
     kind: provider.kind,
@@ -1345,40 +1819,28 @@ async function createHostContext(
   );
 
   const verifiers = await resolveVerifierEndpoints(benchPackId, benchPackConfig, manifest);
+  const inferenceRelay = await startInferenceRelay(providers, models, secrets, logger);
 
   return {
-    protocolVersion: 1,
-    benchPack: {
-      id: benchPackId,
-      version: manifest.version,
-      installDir: rootDir,
-      dataDir: path.join(expandHomePath(config.cache_dir), "benchpack-data", benchPackId),
-      cacheDir: path.join(expandHomePath(config.cache_dir), "benchpacks", benchPackId),
-      runsDir: artifacts.runDir
+    context: {
+      protocolVersion: 1,
+      benchPack: {
+        id: benchPackId,
+        version: manifest.version,
+        installDir: rootDir,
+        dataDir: path.join(expandHomePath(config.cache_dir), "benchpack-data", benchPackId),
+        cacheDir: path.join(expandHomePath(config.cache_dir), "benchpacks", benchPackId),
+        runsDir: artifacts.runDir
+      },
+      providers,
+      models,
+      secrets,
+      verifiers,
+      sidecars: verifiers,
+      inferenceEndpoints: inferenceRelay.endpoints,
+      logger
     },
-    providers,
-    models,
-    secrets,
-    verifiers,
-    sidecars: verifiers,
-    logger: {
-      debug(message, meta) {
-        console.debug(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
-        void appendTextLine(artifacts.hostLogPath, `[debug] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
-      },
-      info(message, meta) {
-        console.info(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
-        void appendTextLine(artifacts.hostLogPath, `[info] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
-      },
-      warn(message, meta) {
-        console.warn(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
-        void appendTextLine(artifacts.hostLogPath, `[warn] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
-      },
-      error(message, meta) {
-        console.error(`[benchpack:${benchPackId}] ${message}`, meta ?? "");
-        void appendTextLine(artifacts.hostLogPath, `[error] ${message}${meta ? ` ${JSON.stringify(meta)}` : ""}`);
-      }
-    }
+    dispose: inferenceRelay.dispose
   };
 }
 
@@ -1982,122 +2444,140 @@ export async function runConfiguredBenchPack(
       });
     }
   });
-  const hostContext = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
-  const blockingVerifier = hostContext.verifiers.find((verifier) => verifier.required && verifier.status !== "running");
-
-  if (blockingVerifier) {
-    if (blockingVerifier.status === "missing_dependency") {
-      throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker.`);
+  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const hostContext = hostResources.context;
+  let hostDisposed = false;
+  const disposeHostResources = async () => {
+    if (hostDisposed) {
+      return;
     }
 
-    if (blockingVerifier.status === "dependency_not_running") {
-      throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker to be running.`);
-    }
-
-    throw new Error(
-      blockingVerifier.details ??
-        `Bench Pack "${manifest.name}" requires verifier "${blockingVerifier.id}" to be running before the test can start.`
-    );
-  }
-  const enabledModels = hostContext.models.filter((model) => model.enabled);
-  const selectedModels =
-    options?.modelIds && options.modelIds.length > 0
-      ? options.modelIds
-          .map((modelId) => enabledModels.find((model) => model.id === modelId))
-          .filter((model): model is (typeof enabledModels)[number] => Boolean(model))
-      : enabledModels;
-
-  if (selectedModels.length === 0) {
-    throw new Error("No enabled models are configured in BenchLocal.");
-  }
-
-  const scenarios = await benchPack.listScenarios();
-  const prepared = await benchPack.prepare(hostContext);
-  const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
-  const startedAt = new Date().toISOString();
-  const executionMode = options?.executionMode ?? "parallel_by_model";
-  const generation = resolveBenchPackGeneration(manifest, options?.generation);
-  let runErrorMessage: string | undefined;
-  let cancelled = false;
-
-  await emit({
-    type: "run_started",
-    models: selectedModels.map((model) => ({ id: model.id, label: model.label })),
-    totalScenarios: scenarios.length
-  });
-
-  try {
-    try {
-      throwIfAborted(options?.abortSignal);
-      switch (executionMode) {
-        case "serial":
-          await executeSerialMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
-          break;
-        case "parallel_by_test_case":
-          await executeParallelScenariosMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
-          break;
-        case "full_parallel":
-          await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
-          break;
-        case "parallel_by_model":
-        default:
-          await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
-          break;
-      }
-    } catch (error) {
-      runErrorMessage = toErrorMessage(error);
-      cancelled = isAbortError(error) || Boolean(options?.abortSignal?.aborted);
-      await emit({
-        type: "run_error",
-        message: runErrorMessage
-      });
-    }
-  } finally {
-    await prepared.dispose();
-  }
-
-  const scores = Object.fromEntries(
-    Object.entries(resultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
-  );
-
-  if (!runErrorMessage) {
-    await emit({
-      type: "run_finished",
-      scores
-    });
-  }
-
-  const summary: BenchPackRunSummary = {
-    runId: artifacts.runId,
-    runDir: artifacts.runDir,
-    benchPackId,
-    benchPackName: manifest.name,
-    executionMode,
-    startedAt,
-    completedAt: new Date().toISOString(),
-    modelCount: selectedModels.length,
-    scenarioCount: scenarios.length,
-    cancelled,
-    error: runErrorMessage,
-    events,
-    resultsByModel,
-    scores
+    hostDisposed = true;
+    await hostResources.dispose();
   };
 
-  await fs.writeFile(
-    artifacts.summaryPath,
-    JSON.stringify(
-      {
-        ...summary,
-        error: runErrorMessage
-      },
-      null,
-      2
-    ),
-    "utf8"
-  );
+  try {
+    const blockingVerifier = hostContext.verifiers.find((verifier) => verifier.required && verifier.status !== "running");
 
-  return summary;
+    if (blockingVerifier) {
+      if (blockingVerifier.status === "missing_dependency") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker.`);
+      }
+
+      if (blockingVerifier.status === "dependency_not_running") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker to be running.`);
+      }
+
+      throw new Error(
+        blockingVerifier.details ??
+          `Bench Pack "${manifest.name}" requires verifier "${blockingVerifier.id}" to be running before the test can start.`
+      );
+    }
+
+    const enabledModels = hostContext.models.filter((model) => model.enabled);
+    const selectedModels =
+      options?.modelIds && options.modelIds.length > 0
+        ? options.modelIds
+            .map((modelId) => enabledModels.find((model) => model.id === modelId))
+            .filter((model): model is (typeof enabledModels)[number] => Boolean(model))
+        : enabledModels;
+
+    if (selectedModels.length === 0) {
+      throw new Error("No enabled models are configured in BenchLocal.");
+    }
+
+    const scenarios = await benchPack.listScenarios();
+    const prepared = await benchPack.prepare(hostContext);
+    const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
+    const startedAt = new Date().toISOString();
+    const executionMode = options?.executionMode ?? "parallel_by_model";
+    const generation = resolveBenchPackGeneration(manifest, options?.generation);
+    let runErrorMessage: string | undefined;
+    let cancelled = false;
+
+    await emit({
+      type: "run_started",
+      models: selectedModels.map((model) => ({ id: model.id, label: model.label })),
+      totalScenarios: scenarios.length
+    });
+
+    try {
+      try {
+        throwIfAborted(options?.abortSignal);
+        switch (executionMode) {
+          case "serial":
+            await executeSerialMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            break;
+          case "parallel_by_test_case":
+            await executeParallelScenariosMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            break;
+          case "full_parallel":
+            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            break;
+          case "parallel_by_model":
+          default:
+            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            break;
+        }
+      } catch (error) {
+        runErrorMessage = toErrorMessage(error);
+        cancelled = isAbortError(error) || Boolean(options?.abortSignal?.aborted);
+        await emit({
+          type: "run_error",
+          message: runErrorMessage
+        });
+      }
+
+      const scores = Object.fromEntries(
+        Object.entries(resultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
+      );
+
+      if (!runErrorMessage) {
+        await emit({
+          type: "run_finished",
+          scores
+        });
+      }
+
+      const summary: BenchPackRunSummary = {
+        runId: artifacts.runId,
+        runDir: artifacts.runDir,
+        benchPackId,
+        benchPackName: manifest.name,
+        executionMode,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        modelCount: selectedModels.length,
+        scenarioCount: scenarios.length,
+        cancelled,
+        error: runErrorMessage,
+        events,
+        resultsByModel,
+        scores
+      };
+
+      await fs.writeFile(
+        artifacts.summaryPath,
+        JSON.stringify(
+          {
+            ...summary,
+            error: runErrorMessage
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+
+      return summary;
+    } finally {
+      await prepared.dispose();
+      await disposeHostResources();
+    }
+  } catch (error) {
+    await disposeHostResources();
+    throw error;
+  }
 }
 
 export async function listRunHistoryForBenchPack(

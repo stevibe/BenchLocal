@@ -101,8 +101,8 @@ Bench Packs should depend on the published public packages:
 ```json
 {
   "dependencies": {
-    "@benchlocal/core": "0.1.0",
-    "@benchlocal/sdk": "0.1.0"
+    "@benchlocal/core": "0.2.0",
+    "@benchlocal/sdk": "0.2.0"
   }
 }
 ```
@@ -197,6 +197,10 @@ These packs:
 - do not declare `verifiers`
 - do not ship `verification/`
 - rely only on provider/model access from `HostContext`
+
+If your pack embeds an external agent runtime that expects its own OpenAI-compatible base URL, prefer `createHostHelpers(context).getRequiredInferenceEndpoint(modelId)` over wiring provider secrets into the pack runtime directly. This keeps model selection and upstream credentials owned by BenchLocal.
+
+If that runtime lives inside a Docker verifier, forward `dockerBaseUrl ?? baseUrl` to the verifier rather than the upstream provider credentials.
 
 ### Verifier-dependent packs
 

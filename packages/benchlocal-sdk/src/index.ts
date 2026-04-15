@@ -5,11 +5,13 @@ import type {
   BenchmarkScore,
   GenerationRequest,
   HostContext,
+  InferenceEndpoint,
   BenchPackManifest,
   ProgressEmitter,
   ProgressEvent,
   ProviderConfig,
   RegisteredModel,
+  RunningInferenceEndpoint,
   ScenarioResult,
   ScenarioRunInput,
   ScenarioMeta,
@@ -21,11 +23,13 @@ export type {
   BenchmarkScore,
   GenerationRequest,
   HostContext,
+  InferenceEndpoint,
   BenchPackManifest,
   ProgressEmitter,
   ProgressEvent,
   ProviderConfig,
   RegisteredModel,
+  RunningInferenceEndpoint,
   ScenarioResult,
   ScenarioRunInput,
   ScenarioMeta,
@@ -58,6 +62,8 @@ export type HostHelpers = {
   getRequiredSecretValue: (providerId: string) => string;
   getRegisteredModel: (modelId: string) => RegisteredModel | undefined;
   getRequiredModel: (modelId: string) => RegisteredModel;
+  getInferenceEndpoint: (modelId: string) => InferenceEndpoint | undefined;
+  getRequiredInferenceEndpoint: (modelId: string) => RunningInferenceEndpoint;
   getVerifier: (verifierId: string, options?: VerifierLookupOptions) => VerifierEndpoint | undefined;
   getRequiredVerifier: (verifierId: string, options?: Omit<VerifierLookupOptions, "required">) => VerifierEndpoint;
   getSidecar: (sidecarId: string, options?: SidecarLookupOptions) => VerifierEndpoint | undefined;
@@ -108,6 +114,7 @@ export function createHostHelpers(context: HostContext): HostHelpers {
   const providerMap = new Map(context.providers.map((provider) => [provider.id, provider]));
   const secretMap = new Map(context.secrets.map((secret) => [secret.providerId, secret]));
   const modelMap = new Map(context.models.map((model) => [model.id, model]));
+  const inferenceEndpointMap = new Map((context.inferenceEndpoints ?? []).map((endpoint) => [endpoint.modelId, endpoint]));
   const verifierMap = new Map((context.verifiers ?? context.sidecars ?? []).map((verifier) => [verifier.id, verifier]));
 
   return {
@@ -170,6 +177,24 @@ export function createHostHelpers(context: HostContext): HostHelpers {
       }
 
       return model;
+    },
+
+    getInferenceEndpoint(modelId) {
+      return inferenceEndpointMap.get(modelId);
+    },
+
+    getRequiredInferenceEndpoint(modelId) {
+      const endpoint = inferenceEndpointMap.get(modelId);
+
+      if (!endpoint) {
+        throw createLookupError("Inference endpoint", modelId);
+      }
+
+      if (endpoint.status !== "running") {
+        throw createLookupError("Inference endpoint", modelId, endpoint.details ?? "is present but not running.");
+      }
+
+      return endpoint;
     },
 
     getVerifier(verifierId, options) {
