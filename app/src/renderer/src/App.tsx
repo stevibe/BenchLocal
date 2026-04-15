@@ -2756,6 +2756,7 @@ export function App() {
               }}
               onRefreshRegistry={() => void loadRegistryEntries()}
               onInstallBenchPack={(benchPackId) => void installBenchPack(benchPackId)}
+              onInstallBenchPackFromUrl={(url) => installBenchPackFromUrl(url)}
               onUpdateBenchPack={(benchPackId) => void updateBenchPack(benchPackId)}
               onUninstallBenchPack={(benchPackId) => void uninstallInstalledBenchPack(benchPackId)}
               updateDraft={updateDraft}
@@ -5173,6 +5174,7 @@ function SettingsScene({
   onStopVerifier,
   onRefreshRegistry,
   onInstallBenchPack,
+  onInstallBenchPackFromUrl,
   onUpdateBenchPack,
   onUninstallBenchPack,
   updateDraft,
@@ -5203,6 +5205,7 @@ function SettingsScene({
   onStopVerifier: (benchPackId: string) => Promise<void>;
   onRefreshRegistry: () => void;
   onInstallBenchPack: (benchPackId: string) => void;
+  onInstallBenchPackFromUrl: (url: string) => Promise<boolean | void>;
   onUpdateBenchPack: (benchPackId: string) => void;
   onUninstallBenchPack: (benchPackId: string) => void;
   updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
@@ -5286,7 +5289,7 @@ function SettingsScene({
                 benchPackMutations={benchPackMutations}
                 onRefresh={onRefreshRegistry}
                 onInstall={onInstallBenchPack}
-                onInstallFromUrl={(url) => void installBenchPackFromUrl(url)}
+                onInstallFromUrl={onInstallBenchPackFromUrl}
                 onUpdate={onUpdateBenchPack}
                 onUninstall={onUninstallBenchPack}
               />

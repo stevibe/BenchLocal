@@ -2855,8 +2855,8 @@ select.config-input {
 }
 
 .benchpack-url-install-row .benchpack-action-button {
-  height: 32px;
-  min-height: 32px;
+  height: 40px;
+  min-height: 40px;
   align-self: end;
 }
 

@@ -588,7 +588,12 @@ async function resolveConfiguredBenchPackRoot(config: BenchLocalConfig, benchPac
     return benchPack.path ? expandHomePath(benchPack.path) : undefined;
   }
 
-  if (benchPack.source === "registry" || benchPack.source === "github" || benchPack.source === "git") {
+  if (
+    benchPack.source === "registry" ||
+    benchPack.source === "archive" ||
+    benchPack.source === "github" ||
+    benchPack.source === "git"
+  ) {
     return resolveInstalledBenchPackRoot(config, benchPackId);
   }
 
