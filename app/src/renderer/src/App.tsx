@@ -525,6 +525,40 @@ function resolveTabModels(tab: BenchLocalWorkspaceTab | null, models: BenchLocal
     }, []);
 }
 
+function resolveHistoryModels(
+  runSummary: BenchPackRunSummary | null,
+  models: BenchLocalModelConfig[]
+): ResolvedTabModel[] {
+  if (!runSummary) {
+    return [];
+  }
+
+  const modelMap = new Map(models.map((model) => [model.id, model]));
+  const runStartedEvent = runSummary.events.find(
+    (event): event is Extract<ProgressEvent, { type: "run_started" }> => event.type === "run_started"
+  );
+  const orderedModelIds = [
+    ...(runStartedEvent?.models.map((model) => model.id) ?? []),
+    ...Object.keys(runSummary.resultsByModel)
+  ].filter((modelId, index, all) => modelId && all.indexOf(modelId) === index);
+
+  return orderedModelIds.map((modelId) => {
+    const currentModel = modelMap.get(modelId);
+    const historicalLabel = runStartedEvent?.models.find((model) => model.id === modelId)?.label;
+    const label = currentModel?.label ?? historicalLabel ?? modelId;
+
+    return {
+      id: modelId,
+      provider: currentModel?.provider ?? "history",
+      model: currentModel?.model ?? modelId,
+      label,
+      group: currentModel?.group ?? "history",
+      enabled: currentModel?.enabled ?? false,
+      displayLabel: label
+    };
+  });
+}
+
 function upsertTabModelAlias(
   tab: BenchLocalWorkspaceTab,
   models: BenchLocalModelConfig[],
@@ -844,6 +878,17 @@ export function App() {
     () => (activeTab ? loadedHistoryRuns[activeTab.id] ?? null : null),
     [loadedHistoryRuns, activeTab]
   );
+  const activeDisplayModels = useMemo(() => {
+    if (!draft) {
+      return [];
+    }
+
+    if (activeLoadedHistory) {
+      return resolveHistoryModels(activeRunSummary, draft.models);
+    }
+
+    return activeTabModels;
+  }, [draft, activeLoadedHistory, activeRunSummary, activeTabModels]);
   const activeLogEvents = activeLiveRun?.events ?? activeRunSummary?.events ?? [];
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const tabStripShellRef = useRef<HTMLDivElement | null>(null);
@@ -3170,7 +3215,7 @@ export function App() {
 	                            inspection={activeInspection}
                               verifierStatus={activeVerifierStatus}
                               runBlocker={activeRunBlocker}
-	                            selectedModels={activeTabModels}
+	                            selectedModels={activeDisplayModels}
 	                            runSummary={activeRunSummary}
                               historyEntries={runHistories[activeInspection.id] ?? []}
 	                            liveRun={activeLiveRun}
@@ -3214,14 +3259,14 @@ export function App() {
                                   entries: runHistories[activeInspection.id] ?? []
                                 })
                               }
-                              onEditModelAlias={(model) =>
-                                setModelAliasModal({
-                                  tabId: activeTab.id,
-                                  modelId: model.id,
-                                  baseLabel: model.label,
-                                  alias: model.alias ?? ""
-                                })
-                              }
+                            onEditModelAlias={(model) =>
+                              setModelAliasModal({
+                                tabId: activeTab.id,
+                                modelId: model.id,
+                                baseLabel: model.label,
+                                alias: model.alias ?? ""
+                              })
+                            }
 	                            onChangeExecutionMode={(executionMode) =>
 	                              updateWorkspaceState((current) => {
 	                                const tab = activeTab ? current.tabs[activeTab.id] : null;
@@ -4515,10 +4560,16 @@ function BenchmarkSection({
                   <h3 className="table-empty-callout-title">No models selected</h3>
                   <p className="muted-copy">Add one or more models to start running this Bench Pack.</p>
                 </div>
-                <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
-                  <Bot size={14} />
-                  Add Models
-                </button>
+                <div className="table-empty-callout-actions">
+                  <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
+                    <RotateCcw size={14} />
+                    Test Histories
+                  </button>
+                  <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
+                    <Bot size={14} />
+                    Add Models
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -4552,14 +4603,23 @@ function BenchmarkSection({
                     {selectedModels.map((model) => (
                       <tr key={model.id}>
                         <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
-                          <button
-                            type="button"
-                            className="model-badge-button"
-                            onClick={() => onEditModelAlias(model)}
-                            title="Edit model alias"
-                          >
-                            <div className="model-badge">{model.displayLabel}</div>
-                          </button>
+                          {isViewingHistory ? (
+                            <div
+                              className="model-badge model-badge-history"
+                              title="This history view uses the models from the saved run."
+                            >
+                              {model.displayLabel}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="model-badge-button"
+                              onClick={() => onEditModelAlias(model)}
+                              title="Edit model alias"
+                            >
+                              <div className="model-badge">{model.displayLabel}</div>
+                            </button>
+                          )}
                         </td>
                         {scenarios.map((scenario) => (
                           <td

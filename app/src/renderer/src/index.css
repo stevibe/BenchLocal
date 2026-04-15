@@ -1660,6 +1660,11 @@ pre {
   margin: 0 auto;
 }
 
+.model-badge-history {
+  opacity: 0.72;
+  filter: saturate(0.82);
+}
+
 .model-badge-button {
   border: none;
   background: transparent;
@@ -2772,6 +2777,13 @@ select.config-input {
 .table-empty-callout .muted-copy {
   margin: 0;
   max-width: 36ch;
+}
+
+.table-empty-callout-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 @media (max-width: 1100px) {
