@@ -2659,7 +2659,8 @@ async function executeSerialTestCasesMode(
 
     for (const model of selectedModels) {
       throwIfAborted(abortSignal);
-      const result = await prepared.runScenario(
+      const result = await runScenarioSafely(
+        prepared,
         {
           runId,
           benchPackId,
@@ -2679,6 +2680,59 @@ async function executeSerialTestCasesMode(
       type: "scenario_finished",
       scenarioId: scenario.id
     });
+  }
+}
+
+function buildScenarioExecutionFailureResult(
+  scenario: ScenarioMeta,
+  error: unknown,
+  startedAt: number
+): ScenarioResult {
+  const message = toErrorMessage(error);
+  const completedAt = Date.now();
+
+  return {
+    scenarioId: scenario.id,
+    status: "fail",
+    score: 0,
+    summary: "BenchLocal could not complete this scenario run.",
+    note: message,
+    rawLog: `error=${message}`,
+    verifier: {
+      status: "fail",
+      summary: "Scenario execution failed before a verifier result was returned.",
+      details: { error: message }
+    },
+    timings: {
+      startedAt: new Date(startedAt).toISOString(),
+      completedAt: new Date(completedAt).toISOString(),
+      durationMs: completedAt - startedAt
+    }
+  };
+}
+
+async function runScenarioSafely(
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  input: {
+    runId: string;
+    benchPackId: string;
+    scenario: ScenarioMeta;
+    model: RegisteredModel;
+    abortSignal?: AbortSignal;
+    generation: GenerationRequest;
+  },
+  emit: (event: ProgressEvent) => Promise<void>
+): Promise<ScenarioResult> {
+  const startedAt = Date.now();
+
+  try {
+    return await prepared.runScenario(input, emit);
+  } catch (error) {
+    if (isAbortError(error) || input.abortSignal?.aborted) {
+      throw error;
+    }
+
+    return buildScenarioExecutionFailureResult(input.scenario, error, startedAt);
   }
 }
 
@@ -2713,7 +2767,8 @@ async function executeSerialByModelMode(
         });
       }
 
-      const result = await prepared.runScenario(
+      const result = await runScenarioSafely(
+        prepared,
         {
           runId,
           benchPackId,
@@ -2773,7 +2828,8 @@ async function executeParallelModelsMode(
           });
         }
 
-        const result = await prepared.runScenario(
+        const result = await runScenarioSafely(
+          prepared,
           {
             runId,
             benchPackId,
@@ -2825,7 +2881,8 @@ async function executeParallelTestCasesMode(
 
     const scenarioResults = await Promise.all(
       selectedModels.map(async (model) => {
-        const result = await prepared.runScenario(
+        const result = await runScenarioSafely(
+          prepared,
           {
             runId,
             benchPackId,
@@ -2877,14 +2934,15 @@ async function executeFullParallelMode(
 
       const scenarioResults = await Promise.all(
         selectedModels.map(async (model) => {
-          const result = await prepared.runScenario(
+          const result = await runScenarioSafely(
+            prepared,
             {
-            runId,
-            benchPackId,
-            scenario,
-            model,
-            abortSignal,
-            generation
+              runId,
+              benchPackId,
+              scenario,
+              model,
+              abortSignal,
+              generation
             },
             emit
           );
