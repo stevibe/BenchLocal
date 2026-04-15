@@ -48,6 +48,7 @@ export type LoadedBenchPackHandle = {
 
 const execFileAsync = promisify(execFile);
 let dockerExecutablePathPromise: Promise<string | null> | null = null;
+const verifierContainerLocks = new Map<string, Promise<void>>();
 
 type DockerRuntimeAvailability = {
   state: "ready" | "not_installed" | "not_running";
@@ -743,6 +744,30 @@ async function stopDockerVerifierContainer(containerName: string): Promise<void>
     await runDockerCommand(["rm", "-f", containerName]);
   } catch {
     // Treat missing containers as already stopped.
+  }
+}
+
+async function withVerifierContainerLock<T>(
+  containerName: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = verifierContainerLocks.get(containerName) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  verifierContainerLocks.set(containerName, tail);
+
+  await previous.catch(() => undefined);
+
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (verifierContainerLocks.get(containerName) === tail) {
+      verifierContainerLocks.delete(containerName);
+    }
   }
 }
 
@@ -2440,46 +2465,60 @@ export async function startConfiguredBenchPackVerifiers(
       continue;
     }
 
-    const hostPort = await allocateLocalPort();
+    const containerName = getVerifierContainerName(benchPackId, spec.id);
+    await withVerifierContainerLock(containerName, async () => {
+      const existingEndpoint = await resolveDockerVerifierEndpoint(benchPackId, spec, runtime);
 
-    if (pullImage) {
+      if (existingEndpoint.status === "running" && existingEndpoint.url) {
+        await options?.onProgress?.({
+          verifierId: spec.id,
+          phase: "waiting_for_healthcheck",
+          message: "Reusing the running verifier."
+        });
+        return;
+      }
+
+      const hostPort = await allocateLocalPort();
+
+      if (pullImage) {
+        await options?.onProgress?.({
+          verifierId: spec.id,
+          phase: "pulling_image",
+          message: `Pulling verifier image ${image}.`
+        });
+        await maybeDelayVerifierPreparation();
+        throwIfAborted(options?.abortSignal);
+      }
+
       await options?.onProgress?.({
         verifierId: spec.id,
-        phase: "pulling_image",
-        message: `Pulling verifier image ${image}.`
+        phase: "starting_container",
+        message: `Starting verifier ${spec.id}.`
       });
       await maybeDelayVerifierPreparation();
       throwIfAborted(options?.abortSignal);
-    }
+      await startDockerVerifierContainer(
+        containerName,
+        image,
+        hostPort,
+        listenPort,
+        {
+          pullImage
+        }
+      );
 
-    await options?.onProgress?.({
-      verifierId: spec.id,
-      phase: "starting_container",
-      message: `Starting verifier ${spec.id}.`
+      await options?.onProgress?.({
+        verifierId: spec.id,
+        phase: "waiting_for_healthcheck",
+        message: "Waiting for the verifier health check to pass."
+      });
+      await maybeDelayVerifierPreparation();
+      throwIfAborted(options?.abortSignal);
+      await waitForVerifierReady(
+        `http://127.0.0.1:${hostPort}`,
+        spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath
+      );
     });
-    await maybeDelayVerifierPreparation();
-    throwIfAborted(options?.abortSignal);
-    await startDockerVerifierContainer(
-      getVerifierContainerName(benchPackId, spec.id),
-      image,
-      hostPort,
-      listenPort,
-      {
-        pullImage
-      }
-    );
-
-    await options?.onProgress?.({
-      verifierId: spec.id,
-      phase: "waiting_for_healthcheck",
-      message: "Waiting for the verifier health check to pass."
-    });
-    await maybeDelayVerifierPreparation();
-    throwIfAborted(options?.abortSignal);
-    await waitForVerifierReady(
-      `http://127.0.0.1:${hostPort}`,
-      spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath
-    );
   }
 
   return getConfiguredBenchPackVerifierStatus(config, benchPackId);
