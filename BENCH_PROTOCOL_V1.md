@@ -212,7 +212,8 @@ type GenerationRequest = {
 Behavior:
 
 - if a field is present, the pack may forward it to the provider client
-- if a field is omitted, the pack should not send that value
+- if a field is omitted, BenchLocal may still supply a platform default before the pack receives the request
+- BenchLocal currently applies `request_timeout_seconds: 300` unless the pack or user overrides it
 
 This allows:
 

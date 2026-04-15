@@ -251,6 +251,12 @@ export interface GenerationRequest {
   request_timeout_seconds?: number;
 }
 
+export const DEFAULT_BENCHLOCAL_REQUEST_TIMEOUT_SECONDS = 300;
+
+export const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = {
+  request_timeout_seconds: DEFAULT_BENCHLOCAL_REQUEST_TIMEOUT_SECONDS
+};
+
 export interface ScenarioRunInput {
   runId: string;
   benchPackId: string;

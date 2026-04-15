@@ -225,6 +225,7 @@ type BenchPackRunBlocker = {
 
 type BenchPackMutationState = BenchPackMutationProgress;
 const THIRD_PARTY_INSTALL_MUTATION_ID = "__third_party_install__";
+const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = { request_timeout_seconds: 300 };
 
 function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
   if (themeId === "system") {
@@ -3087,7 +3088,10 @@ export function App() {
                                   tabId: activeTab.id,
                                   benchPackId: activeInspection.id,
                                   benchPackName: activeInspection.manifest?.name ?? activeInspection.id,
-                                  defaults: activeInspection.manifest?.samplingDefaults ?? {},
+                                  defaults: {
+                                    ...DEFAULT_BENCHLOCAL_GENERATION,
+                                    ...(activeInspection.manifest?.samplingDefaults ?? {})
+                                  },
                                   form: createSamplingForm(activeTab.samplingOverrides)
                                 })
                               }
@@ -4864,12 +4868,12 @@ function SamplingModal({
   onClose: () => void;
   onSubmit: () => void;
 }) {
-  const hasPackDefaults = Object.values(defaults).some((value) => value !== undefined);
+  const hasEffectiveDefaults = Object.values(defaults).some((value) => value !== undefined);
 
   return (
     <Modal
       title="Bench Pack Samplings"
-      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the Bench Pack defaults, and BenchLocal will omit values that are still unset.`}
+      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the effective defaults from BenchLocal and the Bench Pack.`}
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Samplings"
@@ -4885,10 +4889,10 @@ function SamplingModal({
         </button>
       }
     >
-      {hasPackDefaults ? (
+      {hasEffectiveDefaults ? (
         <div className="helper-copy">
           <p>
-            Bench Pack defaults:
+            Effective defaults:
             {" "}
             {SAMPLING_FIELDS.map((field) => {
               const value = defaults[field.key as keyof GenerationRequest];
@@ -4908,7 +4912,7 @@ function SamplingModal({
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will not send those sampling values.</p>
+          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will use its platform defaults and omit any values that are still unset.</p>
         </div>
       )}
       <div className="entry-grid two-col">

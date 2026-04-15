@@ -37,6 +37,7 @@ import {
   type BenchPackInspection,
   type BenchPackManifest
 } from "@benchlocal/core";
+import { DEFAULT_BENCHLOCAL_GENERATION } from "@benchlocal/core";
 
 export type BenchPackHostStatus = "idle" | "loading" | "ready" | "error";
 
@@ -1607,6 +1608,7 @@ function resolveBenchPackGeneration(
   overrides?: GenerationRequest
 ): GenerationRequest {
   return compactGenerationRequest({
+    ...DEFAULT_BENCHLOCAL_GENERATION,
     ...(manifest.samplingDefaults ?? {}),
     ...(overrides ?? {})
   });
