@@ -29,6 +29,14 @@ export interface VerifierSpec {
 
 export type SidecarSpec = VerifierSpec;
 
+export interface BenchPackCompatibilityRequirements {
+  benchlocal?: {
+    minVersion?: string;
+    maxVersionExclusive?: string;
+  };
+  hostFeatures?: string[];
+}
+
 export interface BenchPackManifest {
   schemaVersion: 1;
   protocolVersion: 1;
@@ -46,6 +54,7 @@ export interface BenchPackManifest {
     accent?: string;
   };
   samplingDefaults?: GenerationRequest;
+  requirements?: BenchPackCompatibilityRequirements;
   capabilities: {
     tools: boolean;
     multiTurn: boolean;
@@ -91,6 +100,7 @@ export interface BenchPackRegistry {
 export type BenchPackInspectionStatus =
   | "ready"
   | "not_installed"
+  | "incompatible"
   | "manifest_missing"
   | "entry_missing"
   | "invalid_manifest"

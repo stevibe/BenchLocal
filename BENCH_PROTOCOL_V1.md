@@ -60,6 +60,12 @@ Representative shape:
   "version": "1.0.0",
   "description": "Execution-backed benchmark for bug finding and bug fixing.",
   "entry": "./dist/benchlocal/index.js",
+  "requirements": {
+    "benchlocal": {
+      "minVersion": "0.2.0"
+    },
+    "hostFeatures": ["inferenceEndpoints", "dockerInferenceEndpoints"]
+  },
   "samplingDefaults": {
     "temperature": 0
   },
@@ -99,8 +105,20 @@ Common optional fields:
 - `description`
 - `repository`
 - `theme`
+- `requirements`
 - `samplingDefaults`
 - `verifiers`
+
+Compatibility requirements are optional and are enforced by the BenchLocal client at install, inspect, and run time.
+
+Supported requirement fields:
+
+- `requirements.benchlocal.minVersion`
+  - minimum BenchLocal client version required
+- `requirements.benchlocal.maxVersionExclusive`
+  - exclusive upper bound for BenchLocal client version
+- `requirements.hostFeatures`
+  - optional host feature flags required by the pack
 
 ## Runtime entrypoint
 

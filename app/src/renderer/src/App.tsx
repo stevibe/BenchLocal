@@ -6414,6 +6414,8 @@ function statusClasses(status: BenchPackInspection["status"]): string {
       return "status-ready";
     case "not_installed":
       return "status-not-installed";
+    case "incompatible":
+      return "status-load-error";
     case "manifest_missing":
     case "entry_missing":
       return "status-entry-missing";

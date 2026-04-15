@@ -186,6 +186,29 @@ Behavior:
 - if a Bench Pack provides a default, BenchLocal uses it unless the user overrides it in that tab
 - if a field is omitted, BenchLocal does not send that field
 
+## Compatibility requirements
+
+If your pack depends on a newer BenchLocal client feature, declare that in `benchlocal.pack.json` so older clients fail early and clearly.
+
+Example:
+
+```json
+{
+  "requirements": {
+    "benchlocal": {
+      "minVersion": "0.2.0"
+    },
+    "hostFeatures": ["inferenceEndpoints", "dockerInferenceEndpoints"]
+  }
+}
+```
+
+Use this when your pack requires:
+
+- a minimum BenchLocal client release
+- a host-managed runtime feature such as inference endpoints
+- an upper client-version bound for a future breaking change
+
 ## Non-verifier vs verifier-dependent packs
 
 ### Non-verifier packs

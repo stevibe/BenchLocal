@@ -74,6 +74,14 @@ function providerSupportsModelDiscovery(provider: BenchLocalProviderConfig): boo
   return provider.kind === "openrouter" || provider.kind === "openai_compatible";
 }
 
+async function getBenchLocalRuntimeCompatibility() {
+  const metadata = await loadAppMetadata();
+
+  return {
+    benchLocalVersion: metadata.version
+  };
+}
+
 function providerModelsUrl(baseUrl: string): string {
   const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   return new URL("models", normalizedBaseUrl).toString();
@@ -307,7 +315,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(BENCH_PACK_LIST_CHANNEL, async () => {
     const { config } = await loadOrCreateConfig();
-    return inspectConfiguredBenchPacks(config);
+    return inspectConfiguredBenchPacks(config, await getBenchLocalRuntimeCompatibility());
   });
 
   ipcMain.handle(BENCH_PACK_REGISTRY_CHANNEL, async () => {
@@ -319,7 +327,7 @@ export function registerIpcHandlers(): void {
     const { config } = await loadOrCreateConfig();
     const saved = await installBenchPackFromRegistry(config, input.benchPackId, (progress) => {
       _event.sender.send(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, progress);
-    });
+    }, await getBenchLocalRuntimeCompatibility());
     return {
       path: getConfigPath(),
       created: false,
@@ -331,7 +339,7 @@ export function registerIpcHandlers(): void {
     const { config } = await loadOrCreateConfig();
     const saved = await installBenchPackFromUrl(config, input.url, (progress) => {
       _event.sender.send(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, progress);
-    });
+    }, await getBenchLocalRuntimeCompatibility());
     return {
       path: getConfigPath(),
       created: false,
@@ -343,7 +351,7 @@ export function registerIpcHandlers(): void {
     const { config } = await loadOrCreateConfig();
     const saved = await updateBenchPackFromRegistry(config, input.benchPackId, (progress) => {
       _event.sender.send(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, progress);
-    });
+    }, await getBenchLocalRuntimeCompatibility());
     return {
       path: getConfigPath(),
       created: false,
@@ -387,7 +395,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(VERIFIERS_LIST_CHANNEL, async () => {
     const { config } = await loadOrCreateConfig();
-    const inspections = await inspectConfiguredBenchPacks(config);
+    const inspections = await inspectConfiguredBenchPacks(config, await getBenchLocalRuntimeCompatibility());
     const relevant = inspections.filter((inspection) => inspection.manifest?.capabilities.verification || inspection.manifest?.capabilities.sidecars);
     return Promise.all(relevant.map((inspection) => getConfiguredBenchPackVerifierStatus(config, inspection.id)));
   });
@@ -450,7 +458,7 @@ export function registerIpcHandlers(): void {
               event: progressEvent
             });
           }
-        });
+        }, await getBenchLocalRuntimeCompatibility());
       } finally {
         activeBenchPackRuns.delete(input.tabId);
       }

@@ -81,9 +81,226 @@ type HostContextResources = {
   dispose(): Promise<void>;
 };
 
+type BenchLocalRuntimeCompatibility = {
+  benchLocalVersion?: string;
+  hostFeatures?: string[];
+};
+
+type BenchPackManifestRequirements = {
+  benchlocal?: {
+    minVersion?: string;
+    maxVersionExclusive?: string;
+  };
+  hostFeatures?: string[];
+};
+
+type BenchPackManifestWithRequirements = BenchPackManifest & {
+  requirements?: BenchPackManifestRequirements;
+};
+
+const SUPPORTED_BENCHLOCAL_HOST_FEATURES = ["inferenceEndpoints", "dockerInferenceEndpoints"] as const;
+
 async function readJsonFile<TValue>(targetPath: string): Promise<TValue> {
   const raw = await fs.readFile(targetPath, "utf8");
   return JSON.parse(raw) as TValue;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isBenchPackCompatibilityRequirements(value: unknown): value is BenchPackManifestRequirements {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const benchlocal = candidate.benchlocal;
+
+  if (benchlocal !== undefined) {
+    if (typeof benchlocal !== "object" || benchlocal === null) {
+      return false;
+    }
+
+    const runtime = benchlocal as Record<string, unknown>;
+    if (runtime.minVersion !== undefined && typeof runtime.minVersion !== "string") {
+      return false;
+    }
+
+    if (runtime.maxVersionExclusive !== undefined && typeof runtime.maxVersionExclusive !== "string") {
+      return false;
+    }
+  }
+
+  if (candidate.hostFeatures !== undefined && !isStringArray(candidate.hostFeatures)) {
+    return false;
+  }
+
+  return true;
+}
+
+type ParsedSemanticVersion = {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+};
+
+function parseSemanticVersion(input: string): ParsedSemanticVersion | null {
+  const normalized = input.trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const [coreAndPrerelease] = normalized.split("+", 1);
+  const [core, prereleaseRaw] = coreAndPrerelease.split("-", 2);
+  const parts = core.split(".");
+
+  if (parts.length > 3 || parts.length === 0) {
+    return null;
+  }
+
+  const [majorRaw, minorRaw = "0", patchRaw = "0"] = parts;
+  if (![majorRaw, minorRaw, patchRaw].every((entry) => /^\d+$/.test(entry))) {
+    return null;
+  }
+
+  return {
+    major: Number(majorRaw),
+    minor: Number(minorRaw),
+    patch: Number(patchRaw),
+    prerelease: prereleaseRaw ? prereleaseRaw.split(".").filter(Boolean) : []
+  };
+}
+
+function comparePrereleaseIdentifiers(left: string[], right: string[]): number {
+  const maxLength = Math.max(left.length, right.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftValue = left[index];
+    const rightValue = right[index];
+
+    if (leftValue === undefined) {
+      return -1;
+    }
+
+    if (rightValue === undefined) {
+      return 1;
+    }
+
+    const leftNumeric = /^\d+$/.test(leftValue);
+    const rightNumeric = /^\d+$/.test(rightValue);
+
+    if (leftNumeric && rightNumeric) {
+      const difference = Number(leftValue) - Number(rightValue);
+      if (difference !== 0) {
+        return difference < 0 ? -1 : 1;
+      }
+      continue;
+    }
+
+    if (leftNumeric !== rightNumeric) {
+      return leftNumeric ? -1 : 1;
+    }
+
+    const comparison = leftValue.localeCompare(rightValue);
+    if (comparison !== 0) {
+      return comparison < 0 ? -1 : 1;
+    }
+  }
+
+  return 0;
+}
+
+function compareSemanticVersions(leftRaw: string, rightRaw: string): number | null {
+  const left = parseSemanticVersion(leftRaw);
+  const right = parseSemanticVersion(rightRaw);
+
+  if (!left || !right) {
+    return null;
+  }
+
+  for (const key of ["major", "minor", "patch"] as const) {
+    if (left[key] !== right[key]) {
+      return left[key] < right[key] ? -1 : 1;
+    }
+  }
+
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) {
+    return 0;
+  }
+
+  if (left.prerelease.length === 0) {
+    return 1;
+  }
+
+  if (right.prerelease.length === 0) {
+    return -1;
+  }
+
+  return comparePrereleaseIdentifiers(left.prerelease, right.prerelease);
+}
+
+function getBenchLocalHostFeatures(runtime?: BenchLocalRuntimeCompatibility): Set<string> {
+  return new Set(runtime?.hostFeatures?.length ? runtime.hostFeatures : SUPPORTED_BENCHLOCAL_HOST_FEATURES);
+}
+
+function getBenchPackCompatibilityError(
+  manifest: BenchPackManifest,
+  runtime?: BenchLocalRuntimeCompatibility
+): string | undefined {
+  const requirements = (manifest as BenchPackManifestWithRequirements).requirements;
+
+  if (!requirements) {
+    return undefined;
+  }
+
+  const benchLocalVersion = runtime?.benchLocalVersion?.trim();
+  const minVersion = requirements.benchlocal?.minVersion?.trim();
+  const maxVersionExclusive = requirements.benchlocal?.maxVersionExclusive?.trim();
+
+  if (minVersion) {
+    if (!benchLocalVersion) {
+      return `This Bench Pack requires BenchLocal >= ${minVersion}.`;
+    }
+
+    const comparison = compareSemanticVersions(benchLocalVersion, minVersion);
+    if (comparison === null) {
+      return `This Bench Pack declares an invalid minimum BenchLocal version requirement: ${minVersion}.`;
+    }
+
+    if (comparison < 0) {
+      return `This Bench Pack requires BenchLocal >= ${minVersion}. Current client: ${benchLocalVersion}.`;
+    }
+  }
+
+  if (maxVersionExclusive) {
+    if (!benchLocalVersion) {
+      return `This Bench Pack requires BenchLocal < ${maxVersionExclusive}.`;
+    }
+
+    const comparison = compareSemanticVersions(benchLocalVersion, maxVersionExclusive);
+    if (comparison === null) {
+      return `This Bench Pack declares an invalid maximum BenchLocal version requirement: ${maxVersionExclusive}.`;
+    }
+
+    if (comparison >= 0) {
+      return `This Bench Pack requires BenchLocal < ${maxVersionExclusive}. Current client: ${benchLocalVersion}.`;
+    }
+  }
+
+  const requiredHostFeatures = requirements.hostFeatures?.map((feature: string) => feature.trim()).filter(Boolean) ?? [];
+  if (requiredHostFeatures.length > 0) {
+    const availableFeatures = getBenchLocalHostFeatures(runtime);
+    const missingFeatures = requiredHostFeatures.filter((feature: string) => !availableFeatures.has(feature));
+
+    if (missingFeatures.length > 0) {
+      return `This Bench Pack requires unsupported BenchLocal host features: ${missingFeatures.join(", ")}.`;
+    }
+  }
+
+  return undefined;
 }
 
 function isBenchPackRegistryEntry(value: unknown): value is BenchPackRegistryEntry {
@@ -613,6 +830,7 @@ function isBenchPackManifest(value: unknown): value is BenchPackManifest {
     typeof candidate.name === "string" &&
     typeof candidate.version === "string" &&
     typeof candidate.entry === "string" &&
+    (candidate.requirements === undefined || isBenchPackCompatibilityRequirements(candidate.requirements)) &&
     typeof candidate.capabilities === "object" &&
     candidate.capabilities !== null &&
     ("verification" in (candidate.capabilities as Record<string, unknown>) ||
@@ -654,7 +872,12 @@ async function importFreshModule(entryPath: string): Promise<Record<string, unkn
   return (await import(url.href)) as Record<string, unknown>;
 }
 
-async function inspectBenchPack(benchPackId: string, config: BenchLocalConfig, benchPackConfig: BenchLocalBenchPackConfig): Promise<BenchPackInspection> {
+async function inspectBenchPack(
+  benchPackId: string,
+  config: BenchLocalConfig,
+  benchPackConfig: BenchLocalBenchPackConfig,
+  runtime?: BenchLocalRuntimeCompatibility
+): Promise<BenchPackInspection> {
   const rootDir = await resolveConfiguredBenchPackRoot(config, benchPackId, benchPackConfig);
 
   if (!rootDir) {
@@ -702,6 +925,19 @@ async function inspectBenchPack(benchPackId: string, config: BenchLocalConfig, b
     };
   }
 
+  const compatibilityError = getBenchPackCompatibilityError(manifest, runtime);
+
+  if (compatibilityError) {
+    return {
+      id: benchPackId,
+      source: benchPackConfig.source,
+      rootDir,
+      status: "incompatible" as BenchPackInspection["status"],
+      manifest,
+      error: compatibilityError
+    };
+  }
+
   const entryPath = path.resolve(rootDir, manifest.entry);
 
   if (!(await pathExists(entryPath))) {
@@ -719,6 +955,18 @@ async function inspectBenchPack(benchPackId: string, config: BenchLocalConfig, b
     const loaded = normalizeBenchPackModule(await importFreshModule(entryPath));
     const listScenarios = loaded.listScenarios;
     const runtimeManifest = isBenchPackManifest(loaded.manifest) ? loaded.manifest : manifest;
+    const runtimeCompatibilityError = getBenchPackCompatibilityError(runtimeManifest, runtime);
+
+    if (runtimeCompatibilityError) {
+      return {
+        id: benchPackId,
+        source: benchPackConfig.source,
+        rootDir,
+        status: "incompatible" as BenchPackInspection["status"],
+        manifest: runtimeManifest,
+        error: runtimeCompatibilityError
+      };
+    }
 
     if (typeof listScenarios !== "function") {
       return {
@@ -754,9 +1002,14 @@ async function inspectBenchPack(benchPackId: string, config: BenchLocalConfig, b
   }
 }
 
-export async function inspectConfiguredBenchPacks(config: BenchLocalConfig): Promise<BenchPackInspection[]> {
+export async function inspectConfiguredBenchPacks(
+  config: BenchLocalConfig,
+  runtime?: BenchLocalRuntimeCompatibility
+): Promise<BenchPackInspection[]> {
   return Promise.all(
-    Object.entries(config.benchpacks).map(async ([benchPackId, benchPackConfig]) => inspectBenchPack(benchPackId, config, benchPackConfig))
+    Object.entries(config.benchpacks).map(async ([benchPackId, benchPackConfig]) =>
+      inspectBenchPack(benchPackId, config, benchPackConfig, runtime)
+    )
   );
 }
 
@@ -884,7 +1137,8 @@ async function stageBenchPackArchiveInstall(
   archiveUrl: string,
   reporter?: InstallProgressReporter,
   action: BenchPackInstallAction = "install",
-  progressBenchPackId = "benchpack"
+  progressBenchPackId = "benchpack",
+  runtime?: BenchLocalRuntimeCompatibility
 ): Promise<{ stagingRoot: string; stagedDir: string; manifest: BenchPackManifest }> {
   const stagingRoot = path.join(os.tmpdir(), `benchlocal-benchpack-${randomUUID().slice(0, 8)}`);
   const archivePath = path.join(stagingRoot, "package.tar.gz");
@@ -927,6 +1181,12 @@ async function stageBenchPackArchiveInstall(
     });
 
     const manifest = await readBenchPackManifest(versionStageDir);
+    const compatibilityError = getBenchPackCompatibilityError(manifest, runtime);
+
+    if (compatibilityError) {
+      throw new Error(compatibilityError);
+    }
+
     const entryPath = path.resolve(versionStageDir, manifest.entry);
 
     if (!(await pathExists(entryPath))) {
@@ -974,7 +1234,8 @@ async function commitStagedBenchPackInstall(
 export async function installBenchPackFromRegistry(
   config: BenchLocalConfig,
   benchPackId: string,
-  reporter?: InstallProgressReporter
+  reporter?: InstallProgressReporter,
+  runtime?: BenchLocalRuntimeCompatibility
 ): Promise<BenchLocalConfig> {
   await reportInstallProgress(reporter, {
     benchPackId,
@@ -992,7 +1253,7 @@ export async function installBenchPackFromRegistry(
   const archiveUrl =
     entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
   const baseDir = getBenchPackBaseDir(config, benchPackId);
-  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "install", benchPackId);
+  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "install", benchPackId, runtime);
   const rootDir = await commitStagedBenchPackInstall(config, benchPackId, entry.version, staged.stagedDir, staged.stagingRoot);
   const manifest = staged.manifest;
   await reportInstallProgress(reporter, {
@@ -1023,7 +1284,8 @@ export async function installBenchPackFromRegistry(
 export async function updateBenchPackFromRegistry(
   config: BenchLocalConfig,
   benchPackId: string,
-  reporter?: InstallProgressReporter
+  reporter?: InstallProgressReporter,
+  runtime?: BenchLocalRuntimeCompatibility
 ): Promise<BenchLocalConfig> {
   if (!config.benchpacks[benchPackId]) {
     throw new Error(`Bench Pack "${benchPackId}" is not installed.`);
@@ -1045,7 +1307,7 @@ export async function updateBenchPackFromRegistry(
   const archiveUrl =
     entry.source.type === "github" ? getGitHubArchiveUrl(entry.source.repo, entry.source.tag) : entry.source.url;
   const baseDir = getBenchPackBaseDir(config, benchPackId);
-  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "update", benchPackId);
+  const staged = await stageBenchPackArchiveInstall(entry.version, archiveUrl, reporter, "update", benchPackId, runtime);
   await reportInstallProgress(reporter, {
     benchPackId,
     action: "update",
@@ -1080,7 +1342,8 @@ export async function updateBenchPackFromRegistry(
 export async function installBenchPackFromUrl(
   config: BenchLocalConfig,
   archiveUrl: string,
-  reporter?: InstallProgressReporter
+  reporter?: InstallProgressReporter,
+  runtime?: BenchLocalRuntimeCompatibility
 ): Promise<BenchLocalConfig> {
   const normalizedUrl = archiveUrl.trim();
 
@@ -1105,7 +1368,7 @@ export async function installBenchPackFromUrl(
     message: "Resolving Bench Pack from URL."
   });
 
-  const staged = await stageBenchPackArchiveInstall("url", normalizedUrl, reporter, "install", "third-party");
+  const staged = await stageBenchPackArchiveInstall("url", normalizedUrl, reporter, "install", "third-party", runtime);
   const manifest = staged.manifest;
   const benchPackId = manifest.id;
   const rootDir = await commitStagedBenchPackInstall(config, benchPackId, manifest.version, staged.stagedDir, staged.stagingRoot);
@@ -1222,7 +1485,11 @@ function normalizeLoadedBenchPack(module: Record<string, unknown>): LoadedBenchP
   return normalized as unknown as LoadedBenchPackRuntime;
 }
 
-async function loadConfiguredBenchPack(config: BenchLocalConfig, benchPackId: string): Promise<{
+async function loadConfiguredBenchPack(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  runtime?: BenchLocalRuntimeCompatibility
+): Promise<{
   rootDir: string;
   manifest: BenchPackManifest;
   benchPack: LoadedBenchPackRuntime;
@@ -1240,6 +1507,12 @@ async function loadConfiguredBenchPack(config: BenchLocalConfig, benchPackId: st
   }
 
   const manifest = await readBenchPackManifest(rootDir);
+  const compatibilityError = getBenchPackCompatibilityError(manifest, runtime);
+
+  if (compatibilityError) {
+    throw new Error(compatibilityError);
+  }
+
   const entryPath = path.resolve(rootDir, manifest.entry);
 
   if (!(await pathExists(entryPath))) {
@@ -1249,6 +1522,11 @@ async function loadConfiguredBenchPack(config: BenchLocalConfig, benchPackId: st
   const imported = await importFreshModule(entryPath);
   const benchPack = normalizeLoadedBenchPack(imported);
   const runtimeManifest = isBenchPackManifest(benchPack.manifest) ? benchPack.manifest : manifest;
+  const runtimeCompatibilityError = getBenchPackCompatibilityError(runtimeManifest, runtime);
+
+  if (runtimeCompatibilityError) {
+    throw new Error(runtimeCompatibilityError);
+  }
 
   return {
     rootDir,
@@ -2425,10 +2703,11 @@ export async function runConfiguredBenchPack(
     generation?: GenerationRequest;
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
-  }
+  },
+  runtime?: BenchLocalRuntimeCompatibility
 ): Promise<BenchPackRunSummary> {
   const artifacts = await createRunArtifacts(config, benchPackId);
-  const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId);
+  const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId, runtime);
   const events: ProgressEvent[] = [];
   const emit = async (event: ProgressEvent) => {
     events.push(event);
