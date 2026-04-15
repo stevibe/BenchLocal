@@ -49,6 +49,7 @@ export type LoadedBenchPackHandle = {
 const execFileAsync = promisify(execFile);
 let dockerExecutablePathPromise: Promise<string | null> | null = null;
 const verifierContainerLocks = new Map<string, Promise<void>>();
+const runSummaryLocks = new Map<string, Promise<void>>();
 
 type DockerRuntimeAvailability = {
   state: "ready" | "not_installed" | "not_running";
@@ -767,6 +768,30 @@ async function withVerifierContainerLock<T>(
     release();
     if (verifierContainerLocks.get(containerName) === tail) {
       verifierContainerLocks.delete(containerName);
+    }
+  }
+}
+
+async function withRunSummaryLock<T>(
+  runKey: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const previous = runSummaryLocks.get(runKey) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.catch(() => undefined).then(() => gate);
+  runSummaryLocks.set(runKey, tail);
+
+  await previous.catch(() => undefined);
+
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (runSummaryLocks.get(runKey) === tail) {
+      runSummaryLocks.delete(runKey);
     }
   }
 }
@@ -1584,6 +1609,16 @@ async function createRunArtifacts(config: BenchLocalConfig, benchPackId: string)
   };
 }
 
+function getRunArtifactsForExistingRun(summary: BenchPackRunSummary): RunArtifacts {
+  return {
+    runId: summary.runId,
+    runDir: summary.runDir,
+    eventsPath: path.join(summary.runDir, "events.jsonl"),
+    summaryPath: path.join(summary.runDir, "summary.json"),
+    hostLogPath: path.join(summary.runDir, "host.log")
+  };
+}
+
 function getBenchPackRunRoot(config: BenchLocalConfig, benchPackId: string): string {
   return path.join(expandHomePath(config.run_storage_dir), benchPackId);
 }
@@ -1594,6 +1629,10 @@ async function appendJsonLine(targetPath: string, value: unknown): Promise<void>
 
 async function appendTextLine(targetPath: string, value: string): Promise<void> {
   await fs.appendFile(targetPath, `${value}\n`, "utf8");
+}
+
+async function writeRunSummary(summaryPath: string, summary: BenchPackRunSummary): Promise<void> {
+  await fs.writeFile(summaryPath, JSON.stringify(summary, null, 2), "utf8");
 }
 
 function toErrorMessage(error: unknown): string {
@@ -1637,6 +1676,65 @@ function resolveBenchPackGeneration(
     ...(manifest.samplingDefaults ?? {}),
     ...(overrides ?? {})
   });
+}
+
+function upsertScenarioResult(results: ScenarioResult[], result: ScenarioResult): ScenarioResult[] {
+  const next = [...results];
+  const existingIndex = next.findIndex((candidate) => candidate.scenarioId === result.scenarioId);
+
+  if (existingIndex >= 0) {
+    next[existingIndex] = result;
+    return next;
+  }
+
+  next.push(result);
+  return next;
+}
+
+function mergeResultsByModel(
+  preferred: Record<string, ScenarioResult[]>,
+  fallback: Record<string, ScenarioResult[]>
+): Record<string, ScenarioResult[]> {
+  const modelIds = new Set([...Object.keys(fallback), ...Object.keys(preferred)]);
+  const merged: Record<string, ScenarioResult[]> = {};
+
+  for (const modelId of modelIds) {
+    const preferredResults = preferred[modelId] ?? [];
+    const fallbackResults = fallback[modelId] ?? [];
+    const next = [...fallbackResults];
+
+    for (const result of preferredResults) {
+      const existingIndex = next.findIndex((candidate) => candidate.scenarioId === result.scenarioId);
+
+      if (existingIndex >= 0) {
+        next[existingIndex] = result;
+      } else {
+        next.push(result);
+      }
+    }
+
+    merged[modelId] = next;
+  }
+
+  return merged;
+}
+
+function hasCompleteRunResults(summary: BenchPackRunSummary): boolean {
+  const modelIds = Object.keys(summary.resultsByModel);
+
+  if (modelIds.length !== summary.modelCount) {
+    return false;
+  }
+
+  return modelIds.every((modelId) => summary.resultsByModel[modelId]?.length === summary.scenarioCount);
+}
+
+function mergeSummaryEvents(current: ProgressEvent[], persisted?: ProgressEvent[]): ProgressEvent[] {
+  if (!persisted || persisted.length <= current.length) {
+    return current;
+  }
+
+  return [...current, ...persisted.slice(current.length)];
 }
 
 function createHostLogger(benchPackId: string, hostLogPath: string): HostContext["logger"] {
@@ -2895,8 +2993,26 @@ export async function runConfiguredBenchPack(
 
     await emit({
       type: "run_started",
+      runId: artifacts.runId,
       models: selectedModels.map((model) => ({ id: model.id, label: model.label })),
       totalScenarios: scenarios.length
+    });
+
+    await writeRunSummary(artifacts.summaryPath, {
+      runId: artifacts.runId,
+      runDir: artifacts.runDir,
+      benchPackId,
+      benchPackName: manifest.name,
+      executionMode,
+      startedAt,
+      completedAt: startedAt,
+      modelCount: selectedModels.length,
+      scenarioCount: scenarios.length,
+      cancelled: false,
+      error: undefined,
+      events,
+      resultsByModel,
+      scores: Object.fromEntries(selectedModels.map((model) => [model.id, benchPack.scoreModelResults([])]))
     });
 
     try {
@@ -2949,8 +3065,14 @@ export async function runConfiguredBenchPack(
         });
       }
 
+      const persistedSummary = await loadRunSummaryForBenchPack(config, benchPackId, artifacts.runId).catch(() => null);
+      const mergedResultsByModel = mergeResultsByModel(
+        persistedSummary?.resultsByModel ?? {},
+        resultsByModel
+      );
+      const mergedEvents = mergeSummaryEvents(events, persistedSummary?.events);
       const scores = Object.fromEntries(
-        Object.entries(resultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
+        Object.entries(mergedResultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
       );
 
       if (!runErrorMessage) {
@@ -2972,25 +3094,175 @@ export async function runConfiguredBenchPack(
         scenarioCount: scenarios.length,
         cancelled,
         error: runErrorMessage,
-        events,
-        resultsByModel,
+        events: mergedEvents,
+        resultsByModel: mergedResultsByModel,
         scores
       };
 
-      await fs.writeFile(
-        artifacts.summaryPath,
-        JSON.stringify(
-          {
-            ...summary,
-            error: runErrorMessage
-          },
-          null,
-          2
-        ),
-        "utf8"
-      );
+      await writeRunSummary(artifacts.summaryPath, summary);
 
       return summary;
+    } finally {
+      await prepared.dispose();
+      await disposeHostResources();
+    }
+  } catch (error) {
+    await disposeHostResources();
+    throw error;
+  }
+}
+
+export async function retryScenarioForBenchPackRun(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  options: {
+    runId: string;
+    scenarioId: string;
+    modelId: string;
+    generation?: GenerationRequest;
+    abortSignal?: AbortSignal;
+    onEvent?: (event: ProgressEvent) => Promise<void> | void;
+  },
+  runtime?: BenchLocalRuntimeCompatibility
+): Promise<BenchPackRunSummary> {
+  const existingSummary = await loadRunSummaryForBenchPack(config, benchPackId, options.runId);
+  const artifacts = getRunArtifactsForExistingRun(existingSummary);
+  const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId, runtime);
+  const retryEvents: ProgressEvent[] = [];
+  const emit = async (event: ProgressEvent) => {
+    retryEvents.push(event);
+    await appendJsonLine(artifacts.eventsPath, event);
+    await options.onEvent?.(event);
+  };
+
+  await startConfiguredBenchPackVerifiers(config, benchPackId, {
+    abortSignal: options.abortSignal,
+    onProgress: async (progress) => {
+      await emit({
+        type: "verifier_preparing",
+        benchPackId,
+        benchPackName: manifest.name,
+        verifierId: progress.verifierId,
+        phase: progress.phase,
+        message: progress.message
+      });
+    }
+  });
+
+  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const hostContext = hostResources.context;
+  let hostDisposed = false;
+  const disposeHostResources = async () => {
+    if (hostDisposed) {
+      return;
+    }
+
+    hostDisposed = true;
+    await hostResources.dispose();
+  };
+
+  try {
+    const blockingVerifier = hostContext.verifiers.find((verifier) => verifier.required && verifier.status !== "running");
+
+    if (blockingVerifier) {
+      if (blockingVerifier.status === "missing_dependency") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker.`);
+      }
+
+      if (blockingVerifier.status === "dependency_not_running") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker to be running.`);
+      }
+
+      throw new Error(
+        blockingVerifier.details ??
+          `Bench Pack "${manifest.name}" requires verifier "${blockingVerifier.id}" to be running before the test can start.`
+      );
+    }
+
+    const scenarioList = await benchPack.listScenarios();
+    const scenarioIndex = scenarioList.findIndex((candidate) => candidate.id === options.scenarioId);
+    const scenario = scenarioIndex >= 0 ? scenarioList[scenarioIndex] : null;
+
+    if (!scenario) {
+      throw new Error(`Scenario "${options.scenarioId}" was not found for Bench Pack "${benchPackId}".`);
+    }
+
+    const model = hostContext.models.find((candidate) => candidate.id === options.modelId);
+
+    if (!model) {
+      throw new Error(`Model "${options.modelId}" is not currently enabled in BenchLocal.`);
+    }
+
+    const prepared = await benchPack.prepare(hostContext);
+    const generation = resolveBenchPackGeneration(manifest, options.generation);
+
+    try {
+      await emit({
+        type: "scenario_started",
+        scenarioId: scenario.id,
+        title: scenario.title,
+        index: scenarioIndex + 1,
+        total: scenarioList.length
+      });
+      await emit({
+        type: "model_progress",
+        modelId: model.id,
+        scenarioId: scenario.id,
+        message: `Retrying ${scenario.title} for ${model.label}.`
+      });
+
+      const result = await prepared.runScenario(
+        {
+          runId: existingSummary.runId,
+          benchPackId,
+          scenario,
+          model,
+          abortSignal: options.abortSignal,
+          generation
+        },
+        emit
+      );
+
+      await emit({
+        type: "scenario_result",
+        modelId: model.id,
+        scenarioId: scenario.id,
+        result
+      });
+      await emit({
+        type: "scenario_finished",
+        scenarioId: scenario.id
+      });
+
+      return await withRunSummaryLock(`${benchPackId}:${existingSummary.runId}`, async () => {
+        const latestSummary = await loadRunSummaryForBenchPack(config, benchPackId, existingSummary.runId);
+        const nextResultsByModel: Record<string, ScenarioResult[]> = {
+          ...latestSummary.resultsByModel,
+          [model.id]: upsertScenarioResult(latestSummary.resultsByModel[model.id] ?? [], result)
+        };
+
+        const nextSnapshot: BenchPackRunSummary = {
+          ...latestSummary,
+          resultsByModel: nextResultsByModel
+        };
+        const isComplete = hasCompleteRunResults(nextSnapshot);
+        const scores = Object.fromEntries(
+          Object.entries(nextResultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
+        );
+
+        const nextSummary: BenchPackRunSummary = {
+          ...latestSummary,
+          completedAt: new Date().toISOString(),
+          cancelled: isComplete ? false : latestSummary.cancelled,
+          error: isComplete ? undefined : latestSummary.error,
+          events: [...latestSummary.events, ...retryEvents],
+          resultsByModel: nextResultsByModel,
+          scores
+        };
+
+        await writeRunSummary(artifacts.summaryPath, nextSummary);
+        return nextSummary;
+      });
     } finally {
       await prepared.dispose();
       await disposeHostResources();

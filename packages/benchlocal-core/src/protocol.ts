@@ -330,6 +330,7 @@ export interface BenchmarkScore {
 
 export interface RunStartedEvent {
   type: "run_started";
+  runId: string;
   models: Array<{ id: string; label: string }>;
   totalScenarios: number;
 }

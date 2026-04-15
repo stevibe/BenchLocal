@@ -122,6 +122,8 @@ type ModelBrowserModalState = {
 };
 
 type DetailModalState = {
+  tabId: string;
+  runId: string | null;
   benchPackId: string;
   modelId: string;
   scenarioId: string;
@@ -196,6 +198,7 @@ type ResolvedTabModel = BenchLocalModelConfig & {
 };
 
 type LiveRunState = {
+  runId?: string;
   events: ProgressEvent[];
   resultsByModel: Record<string, ScenarioResult[]>;
   activeCellKeys: string[];
@@ -580,6 +583,10 @@ function updateLiveRunState(
 
   next.events = [...next.events, event];
 
+  if (event.type === "run_started") {
+    next.runId = event.runId;
+  }
+
   if (event.type === "model_progress" && eventKey && !next.activeCellKeys.includes(eventKey)) {
     next.activeCellKeys = [...next.activeCellKeys, eventKey];
   }
@@ -594,6 +601,14 @@ function updateLiveRunState(
   }
 
   return next;
+}
+
+function detailModalKey(detail: Pick<DetailModalState, "tabId" | "modelId" | "scenarioId">): string {
+  return `${detail.tabId}::${detail.modelId}::${detail.scenarioId}`;
+}
+
+function getCellKey(modelId: string, scenarioId: string): string {
+  return `${modelId}::${scenarioId}`;
 }
 
 const REGISTRY_UNAVAILABLE_MESSAGE =
@@ -1064,9 +1079,7 @@ export function App() {
           tabId,
           progress: event
         });
-      }
-
-      if (event.type === "run_started" || event.type === "run_finished" || event.type === "run_error") {
+      } else {
         setVerifierPreparationModal((current) => (current?.tabId === tabId ? null : current));
       }
 
@@ -2265,6 +2278,100 @@ export function App() {
     }
   };
 
+  const retryScenarioFromDetail = async (detail: DetailModalState) => {
+    if (!workspaceState) {
+      return;
+    }
+
+    if (!detail.runId) {
+      setError("This scenario does not belong to a saved test run yet.");
+      return;
+    }
+
+    const tab = workspaceState.tabs[detail.tabId];
+
+    if (!tab || tab.benchPackId !== detail.benchPackId) {
+      setError("The original tab for this test is no longer available.");
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      const saved = await save();
+
+      if (!saved) {
+        return;
+      }
+    }
+
+    const retryKey = detailModalKey(detail);
+    const retryCellKey = getCellKey(detail.modelId, detail.scenarioId);
+    setDetailModal((current) => (current && detailModalKey(current) === retryKey ? null : current));
+    setLiveRuns((current) => {
+      const existing = current[detail.tabId];
+
+      if (existing) {
+        return {
+          ...current,
+          [detail.tabId]: {
+            ...existing,
+            runId: existing.runId ?? detail.runId ?? undefined,
+            activeCellKeys: existing.activeCellKeys.includes(retryCellKey)
+              ? existing.activeCellKeys
+              : [...existing.activeCellKeys, retryCellKey]
+          }
+        };
+      }
+
+      return {
+        ...current,
+        [detail.tabId]: {
+          runId: detail.runId ?? undefined,
+          events: [],
+          resultsByModel: {},
+          activeCellKeys: [retryCellKey]
+        }
+      };
+    });
+
+    try {
+      const summary = await window.benchlocal.benchPacks.retryScenario({
+        tabId: detail.tabId,
+        benchPackId: detail.benchPackId,
+        runId: detail.runId,
+        scenarioId: detail.scenarioId,
+        modelId: detail.modelId,
+        generation: tab.samplingOverrides
+      });
+      const updatedResult = summary.resultsByModel[detail.modelId]?.find((candidate) => candidate.scenarioId === detail.scenarioId);
+
+      if (!activeRuns[detail.tabId]) {
+        setRunSummaries((current) => ({
+          ...current,
+          [detail.tabId]: summary
+        }));
+      }
+      await loadHistoryForBenchPack(detail.benchPackId);
+      setAppNotice(`Retested ${detail.scenarioId} for ${detail.modelId}.`);
+    } catch (retryError) {
+      setLiveRuns((current) => {
+        const existing = current[detail.tabId];
+
+        if (!existing || !existing.activeCellKeys.includes(retryCellKey)) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [detail.tabId]: {
+            ...existing,
+            activeCellKeys: existing.activeCellKeys.filter((key) => key !== retryCellKey)
+          }
+        };
+      });
+      setError(retryError instanceof Error ? retryError.message : "Failed to retry the selected test.");
+    }
+  };
+
   const clearLoadedHistoryRun = (tabId: string) => {
     setLoadedHistoryRuns((current) => {
       if (!current[tabId]) {
@@ -2901,6 +3008,8 @@ export function App() {
 	                          {workspaceTabs.map((tab) => {
 	                            const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
                               const isTabRunning = Boolean(activeRuns[tab.id]);
+                              const hasTabRetryActivity = (liveRuns[tab.id]?.activeCellKeys.length ?? 0) > 0;
+                              const showTabSpinner = isTabRunning || hasTabRetryActivity;
                               const showWarning = !isTabRunning && inspection && inspection.status !== "ready";
                               const isEditingTab = editingTab?.tabId === tab.id;
 
@@ -2979,7 +3088,7 @@ export function App() {
                                   ) : (
 	                                  <span className="tab-chip-title">{tab.title}</span>
                                   )}
-                                    {isTabRunning ? (
+                                    {showTabSpinner ? (
                                       <span className="tab-chip-spinner" title="Scenario pack running">
                                         <span className="spinner" />
                                       </span>
@@ -3057,6 +3166,7 @@ export function App() {
 	                      <div className="tabbed-workspace-content">
 	                        {activeInspection && activeTab ? (
 	                          <BenchmarkSection
+                                tabId={activeTab.id}
 	                            inspection={activeInspection}
                               verifierStatus={activeVerifierStatus}
                               runBlocker={activeRunBlocker}
@@ -3707,6 +3817,17 @@ export function App() {
           onClose={() => setDetailModal(null)}
           onSubmit={() => setDetailModal(null)}
           submitLabel="Close"
+          leadingActions={
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => void retryScenarioFromDetail(detailModal)}
+              disabled={!detailModal.runId}
+            >
+              <RotateCcw size={14} />
+              Retry
+            </button>
+          }
         >
           <div className="dialog-summary">
             <div className="dialog-summary-copy">
@@ -3947,6 +4068,7 @@ function BenchPackPickerTrigger({
 }
 
 function BenchmarkSection({
+  tabId,
   inspection,
   verifierStatus,
   runBlocker,
@@ -3973,6 +4095,7 @@ function BenchmarkSection({
   onStop,
   onOpenDetail
 }: {
+  tabId: string;
   inspection: BenchPackInspection;
   verifierStatus: BenchPackVerifierStatus | null;
   runBlocker: BenchPackRunBlocker | null;
@@ -4167,10 +4290,18 @@ function BenchmarkSection({
   }
 
   function renderResultCell(modelId: string, scenarioId: string) {
-    const result =
-      liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId) ??
-      runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const liveResult = liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const persistedResult = runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const result = liveResult ?? persistedResult;
     const isActive = liveRun?.activeCellKeys.includes(`${modelId}::${scenarioId}`) ?? false;
+
+    if (isActive) {
+      return (
+        <div className="result-icon-shell result-loading">
+          <span className="spinner" />
+        </div>
+      );
+    }
 
     if (!result) {
       return (
@@ -4188,6 +4319,8 @@ function BenchmarkSection({
         type="button"
         onClick={() =>
           onOpenDetail({
+            tabId,
+            runId: liveRun?.runId ?? runSummary?.runId ?? null,
             benchPackId: inspection.id,
             modelId,
             scenarioId,

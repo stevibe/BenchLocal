@@ -98,7 +98,15 @@ export interface BenchLocalDesktopApi {
       tabId: string;
       benchPackId: string;
       modelIds?: string[];
-      executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+      executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+      generation?: GenerationRequest;
+    }): Promise<BenchPackRunSummary>;
+    retryScenario(input: {
+      tabId: string;
+      benchPackId: string;
+      runId: string;
+      scenarioId: string;
+      modelId: string;
       generation?: GenerationRequest;
     }): Promise<BenchPackRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;

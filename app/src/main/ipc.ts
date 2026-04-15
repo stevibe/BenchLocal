@@ -19,6 +19,7 @@ import {
   listRunHistoryForBenchPack,
   loadBenchPackRegistry,
   loadRunSummaryForBenchPack,
+  retryScenarioForBenchPackRun,
   runConfiguredBenchPack,
   startConfiguredBenchPackVerifiers,
   stopConfiguredBenchPackVerifiers,
@@ -50,6 +51,7 @@ const BENCH_PACK_UNINSTALL_CHANNEL = "benchlocal:benchpacks:uninstall";
 const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-progress";
 const BENCH_PACK_ACTIVE_RUNS_CHANNEL = "benchlocal:benchpacks:active-runs";
 const BENCH_PACK_RUN_CHANNEL = "benchlocal:benchpacks:run";
+const BENCH_PACK_RETRY_SCENARIO_CHANNEL = "benchlocal:benchpacks:retry-scenario";
 const BENCH_PACK_STOP_CHANNEL = "benchlocal:benchpacks:stop";
 const BENCH_PACK_HISTORY_CHANNEL = "benchlocal:benchpacks:history";
 const BENCH_PACK_HISTORY_LOAD_CHANNEL = "benchlocal:benchpacks:history-load";
@@ -431,7 +433,7 @@ export function registerIpcHandlers(): void {
         tabId: string;
         benchPackId: string;
         modelIds?: string[];
-        executionMode?: "serial" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+        executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
         generation?: GenerationRequest;
       }
     ) => {
@@ -462,6 +464,41 @@ export function registerIpcHandlers(): void {
       } finally {
         activeBenchPackRuns.delete(input.tabId);
       }
+    }
+  );
+
+  ipcMain.handle(
+    BENCH_PACK_RETRY_SCENARIO_CHANNEL,
+    async (
+      event,
+      input: {
+        tabId: string;
+        benchPackId: string;
+        runId: string;
+        scenarioId: string;
+        modelId: string;
+        generation?: GenerationRequest;
+      }
+    ) => {
+      const { config } = await loadOrCreateConfig();
+
+      return await retryScenarioForBenchPackRun(
+        config,
+        input.benchPackId,
+        {
+          runId: input.runId,
+          scenarioId: input.scenarioId,
+          modelId: input.modelId,
+          generation: input.generation,
+          onEvent: (progressEvent) => {
+            event.sender.send(BENCH_PACK_RUN_EVENT_CHANNEL, {
+              tabId: input.tabId,
+              event: progressEvent
+            });
+          }
+        },
+        await getBenchLocalRuntimeCompatibility()
+      );
     }
   );
 
