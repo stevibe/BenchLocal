@@ -597,21 +597,25 @@ function updateLiveRunState(
 const REGISTRY_UNAVAILABLE_MESSAGE =
   "Official Bench Pack registry is unavailable right now. Installed Bench Packs remain usable.";
 
-function isRegistryConnectivityError(error: unknown): boolean {
+function formatDesktopErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
-    return false;
+    return "";
   }
 
-  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
+  return error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
+}
+
+function isRegistryConnectivityError(error: unknown): boolean {
+  const message = formatDesktopErrorMessage(error);
   return /fetch failed/i.test(message);
 }
 
 function formatRegistryWarning(error: unknown): string {
-  if (!(error instanceof Error)) {
+  const message = formatDesktopErrorMessage(error);
+
+  if (!message) {
     return REGISTRY_UNAVAILABLE_MESSAGE;
   }
-
-  const message = error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
 
   if (!message || /fetch failed/i.test(message)) {
     return REGISTRY_UNAVAILABLE_MESSAGE;
@@ -629,7 +633,7 @@ function formatRegistryMutationError(
     return `Failed to ${action} ${benchPackId}. Official Bench Pack registry is unavailable right now.`;
   }
 
-  return error instanceof Error ? error.message : `Failed to ${action} ${benchPackId}.`;
+  return formatDesktopErrorMessage(error) || `Failed to ${action} ${benchPackId}.`;
 }
 
 function getRequiredVerifierRunBlocker(
@@ -1471,7 +1475,7 @@ export function App() {
       }
       return true;
     } catch (installError) {
-      setError(installError instanceof Error ? installError.message : "Failed to install Bench Pack from URL.");
+      setError(formatDesktopErrorMessage(installError) || "Failed to install Bench Pack from URL.");
       return false;
     } finally {
       setIsBusy(false);
@@ -2711,6 +2715,7 @@ export function App() {
               settingsTab={settingsTab}
               setSettingsTab={setSettingsTab}
               settingsNotice={settingsNotice}
+              error={error}
               draft={draft}
               loadState={loadState}
               hasUnsavedChanges={hasUnsavedChanges}
@@ -2726,6 +2731,7 @@ export function App() {
                 setSettingsOpen(false);
               }}
               onDismissNotice={() => setSettingsNotice(null)}
+              onDismissError={() => setError(null)}
               onSaveAdvanced={() => void save()}
               onResetAdvanced={reset}
               onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
@@ -5152,6 +5158,7 @@ function SettingsScene({
   settingsTab,
   setSettingsTab,
   settingsNotice,
+  error,
   draft,
   loadState,
   hasUnsavedChanges,
@@ -5164,6 +5171,7 @@ function SettingsScene({
   verifierStatuses,
   onBack,
   onDismissNotice,
+  onDismissError,
   onSaveAdvanced,
   onResetAdvanced,
   onCreateProvider,
@@ -5183,6 +5191,7 @@ function SettingsScene({
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   settingsNotice: string | null;
+  error: string | null;
   draft: BenchLocalConfig;
   loadState: LoadState | null;
   hasUnsavedChanges: boolean;
@@ -5195,6 +5204,7 @@ function SettingsScene({
   verifierStatuses: Record<string, BenchPackVerifierStatus>;
   onBack: () => void;
   onDismissNotice: () => void;
+  onDismissError: () => void;
   onSaveAdvanced: () => void;
   onResetAdvanced: () => void;
   onCreateProvider: () => void;
@@ -5253,6 +5263,22 @@ function SettingsScene({
                 className="banner-dismiss"
                 onClick={onDismissNotice}
                 aria-label="Dismiss notice"
+                title="Dismiss"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </Banner>
+        ) : null}
+        {error ? (
+          <Banner tone="danger">
+            <div className="banner-row">
+              <span>{error}</span>
+              <button
+                type="button"
+                className="banner-dismiss"
+                onClick={onDismissError}
+                aria-label="Dismiss error"
                 title="Dismiss"
               >
                 <X size={14} />
