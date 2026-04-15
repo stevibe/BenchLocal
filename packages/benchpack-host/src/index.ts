@@ -2497,7 +2497,7 @@ export async function stopConfiguredBenchPackVerifiers(
   return getConfiguredBenchPackVerifierStatus(config, benchPackId);
 }
 
-async function executeSerialMode(
+async function executeSerialTestCasesMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
@@ -2540,6 +2540,65 @@ async function executeSerialMode(
       type: "scenario_finished",
       scenarioId: scenario.id
     });
+  }
+}
+
+async function executeSerialByModelMode(
+  scenarios: ScenarioMeta[],
+  selectedModels: RegisteredModel[],
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  benchPackId: string,
+  generation: GenerationRequest,
+  emit: (event: ProgressEvent) => Promise<void>,
+  resultsByModel: Record<string, ScenarioResult[]>,
+  runId: string,
+  abortSignal?: AbortSignal
+): Promise<void> {
+  const startedScenarios = new Set<string>();
+  const finishedCounts = new Map<string, number>();
+
+  for (const model of selectedModels) {
+    throwIfAborted(abortSignal);
+
+    for (const [index, scenario] of scenarios.entries()) {
+      throwIfAborted(abortSignal);
+
+      if (!startedScenarios.has(scenario.id)) {
+        startedScenarios.add(scenario.id);
+        await emit({
+          type: "scenario_started",
+          scenarioId: scenario.id,
+          title: scenario.title,
+          index: index + 1,
+          total: scenarios.length
+        });
+      }
+
+      const result = await prepared.runScenario(
+        {
+          runId,
+          benchPackId,
+          scenario,
+          model,
+          abortSignal,
+          generation
+        },
+        emit
+      );
+
+      resultsByModel[model.id].push(result);
+      await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
+
+      const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
+      finishedCounts.set(scenario.id, completedCount);
+
+      if (completedCount >= selectedModels.length) {
+        await emit({
+          type: "scenario_finished",
+          scenarioId: scenario.id
+        });
+      }
+    }
   }
 }
 
@@ -2788,7 +2847,7 @@ export async function runConfiguredBenchPack(
     const prepared = await benchPack.prepare(hostContext);
     const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
     const startedAt = new Date().toISOString();
-    const executionMode = options?.executionMode ?? "parallel_by_model";
+    const executionMode = options?.executionMode ?? "parallel_by_test_case";
     const generation = resolveBenchPackGeneration(manifest, options?.generation);
     let runErrorMessage: string | undefined;
     let cancelled = false;
@@ -2804,7 +2863,30 @@ export async function runConfiguredBenchPack(
         throwIfAborted(options?.abortSignal);
         switch (executionMode) {
           case "serial":
-            await executeSerialMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            await executeSerialTestCasesMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              artifacts.runId,
+              options?.abortSignal
+            );
+            break;
+          case "serial_by_model":
+            await executeSerialByModelMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              artifacts.runId,
+              options?.abortSignal
+            );
             break;
           case "parallel_by_test_case":
             await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);

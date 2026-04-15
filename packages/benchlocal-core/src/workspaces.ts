@@ -7,6 +7,7 @@ import type { GenerationRequest } from "./protocol.js";
 
 export type BenchLocalExecutionMode =
   | "serial"
+  | "serial_by_model"
   | "parallel_by_model"
   | "parallel_by_test_case"
   | "full_parallel";
@@ -75,8 +76,8 @@ const WorkspaceTabSchema = z.object({
     })
     .default({}),
   executionMode: z
-    .enum(["serial", "parallel_by_model", "parallel_by_test_case", "parallel_models", "parallel_scenarios", "full_parallel"])
-    .default("parallel_by_model")
+    .enum(["serial", "serial_by_model", "parallel_by_model", "parallel_by_test_case", "parallel_models", "parallel_scenarios", "full_parallel"])
+    .default("parallel_by_test_case")
     .transform((value) => {
       if (value === "parallel_models") {
         return "parallel_by_model";
@@ -141,7 +142,7 @@ export function createDefaultWorkspaceState(defaultBenchPack = ""): BenchLocalWo
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
-        executionMode: "parallel_by_model",
+        executionMode: "parallel_by_test_case",
         createdAt: now,
         updatedAt: now
       }
@@ -196,7 +197,7 @@ function normalizeWorkspaceState(raw: unknown, defaultBenchPack = ""): BenchLoca
       samplingOverrides: Object.fromEntries(
         Object.entries(tab.samplingOverrides ?? {}).filter(([, value]) => value !== undefined && Number.isFinite(value))
       ),
-      executionMode: tab.executionMode ?? "parallel_by_model"
+      executionMode: tab.executionMode ?? "parallel_by_test_case"
     };
   }
 

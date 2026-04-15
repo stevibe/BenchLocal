@@ -235,7 +235,8 @@ function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[],
 }
 
 const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: string }> = [
-  { value: "serial", label: "Serial" },
+  { value: "serial", label: "Serial per Test Case" },
+  { value: "serial_by_model", label: "Serial per Model" },
   { value: "parallel_by_model", label: "Parallel per Model" },
   { value: "parallel_by_test_case", label: "Parallel per Test Case" },
   { value: "full_parallel", label: "Parallel for All" }
@@ -1858,7 +1859,7 @@ export function App() {
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
-        executionMode: "parallel_by_model",
+        executionMode: "parallel_by_test_case",
         createdAt: now,
         updatedAt: now
       };
@@ -1925,7 +1926,7 @@ export function App() {
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
-          executionMode: "parallel_by_model",
+          executionMode: "parallel_by_test_case",
           createdAt: now,
           updatedAt: now
         };
@@ -2063,7 +2064,7 @@ export function App() {
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
-        executionMode: "parallel_by_model",
+        executionMode: "parallel_by_test_case",
         createdAt: now,
         updatedAt: now
       };
@@ -2208,7 +2209,7 @@ export function App() {
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
-          executionMode: "parallel_by_model",
+          executionMode: "parallel_by_test_case",
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
         };
