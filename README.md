@@ -14,6 +14,7 @@ Official Bench Packs today:
 - InstructFollow-15
 - ReasonMath-15
 - StructOutput-15
+- HermesAgent-20
 
 BenchLocal owns the shared desktop runtime:
 
