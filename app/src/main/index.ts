@@ -2,12 +2,13 @@ import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions 
 import path from "node:path";
 import { loadOrCreateConfig } from "@core";
 import { loadAppMetadata } from "./app-metadata";
-import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers } from "./ipc";
+import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers, stopActiveBenchPackRunsForShutdown } from "./ipc";
 import { loadAvailableTheme } from "./themes";
 
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
 const isMac = process.platform === "darwin";
+let isQuittingAfterBenchPackShutdown = false;
 
 if (isMac) {
   app.setName("BenchLocal");
@@ -195,6 +196,24 @@ app.whenReady().then(async () => {
       await createMainWindow();
     }
   });
+});
+
+app.on("before-quit", (event) => {
+  if (isQuittingAfterBenchPackShutdown) {
+    return;
+  }
+
+  event.preventDefault();
+  void (async () => {
+    try {
+      await stopActiveBenchPackRunsForShutdown();
+    } catch (error) {
+      console.error("[benchlocal] failed to stop active Bench Pack runs during shutdown", error);
+    } finally {
+      isQuittingAfterBenchPackShutdown = true;
+      app.quit();
+    }
+  })();
 });
 
 app.on("window-all-closed", () => {

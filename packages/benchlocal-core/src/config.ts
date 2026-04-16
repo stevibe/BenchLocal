@@ -427,7 +427,7 @@ export async function saveConfigFile(config: BenchLocalConfig, configPath = getC
   await ensureHomeAndStorageDirs(normalized);
   await fs.mkdir(path.dirname(configPath), { recursive: true });
 
-  const tempPath = `${configPath}.tmp`;
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.writeFile(tempPath, stringify(normalized), "utf8");
   await fs.rename(tempPath, configPath);
 

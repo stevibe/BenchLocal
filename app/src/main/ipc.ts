@@ -74,6 +74,33 @@ const activeBenchPackRuns = new Map<
   }
 >();
 
+export async function stopActiveBenchPackRunsForShutdown(
+  options?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+  }
+): Promise<void> {
+  if (activeBenchPackRuns.size === 0) {
+    return;
+  }
+
+  for (const activeRun of activeBenchPackRuns.values()) {
+    activeRun.controller.abort(new Error("Run cancelled because BenchLocal is shutting down."));
+  }
+
+  const timeoutMs = options?.timeoutMs ?? 15000;
+  const intervalMs = options?.intervalMs ?? 50;
+  const deadline = Date.now() + timeoutMs;
+
+  while (activeBenchPackRuns.size > 0) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out while waiting for active Bench Pack runs to stop.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 async function waitForBenchPackRunRelease(
   tabId: string,
   options?: {

@@ -213,6 +213,11 @@ type LoadedHistoryEntry = {
   startedAt: string;
 };
 
+type LiveScenarioFocusState = {
+  liveScenarioId: string | null;
+  autoFollow: boolean;
+};
+
 type VerifierPreparingProgress = Extract<ProgressEvent, { type: "verifier_preparing" }>;
 
 type VerifierPreparationModalState = {
@@ -846,6 +851,7 @@ export function App() {
   const [runSummaries, setRunSummaries] = useState<Record<string, BenchPackRunSummary>>({});
   const [runHistories, setRunHistories] = useState<Record<string, BenchPackRunHistoryEntry[]>>({});
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
+  const [liveScenarioFocus, setLiveScenarioFocus] = useState<Record<string, LiveScenarioFocusState>>({});
   const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<Record<string, LoadedHistoryEntry>>({});
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsAutoScroll, setLogsAutoScroll] = useState(true);
@@ -893,6 +899,10 @@ export function App() {
   const activeTabModels = useMemo(() => (draft ? resolveTabModels(activeTab, draft.models) : []), [draft, activeTab]);
   const activeRunSummary = useMemo(() => (activeTab ? runSummaries[activeTab.id] ?? null : null), [runSummaries, activeTab]);
   const activeLiveRun = useMemo(() => (activeTab ? liveRuns[activeTab.id] ?? null : null), [liveRuns, activeTab]);
+  const activeLiveScenarioFocus = useMemo(
+    () => (activeTab ? liveScenarioFocus[activeTab.id] ?? null : null),
+    [liveScenarioFocus, activeTab]
+  );
   const activeRunBlocker = useMemo(
     () =>
       activeInspection && draft
@@ -1057,9 +1067,45 @@ export function App() {
           return;
         }
 
+        const persistedRunEntries = await Promise.all(
+          Object.values(workspaceResult.state.tabs)
+            .filter((tab) => tab.benchPackId && tab.loadedRunId)
+            .map(async (tab) => {
+              try {
+                const summary = await window.benchlocal.benchPacks.loadHistory({
+                  benchPackId: tab.benchPackId as string,
+                  runId: tab.loadedRunId as string
+                });
+                return [tab.id, summary] as const;
+              } catch {
+                return null;
+              }
+            })
+        );
+
         setLoadState(result);
         setDraft(cloneConfig(result.config));
         setWorkspaceState(workspaceResult.state);
+        setRunSummaries(
+          Object.fromEntries(
+            persistedRunEntries.filter(
+              (entry): entry is readonly [string, BenchPackRunSummary] => entry !== null
+            )
+          )
+        );
+        setLoadedHistoryRuns(
+          Object.fromEntries(
+            persistedRunEntries
+              .filter((entry): entry is readonly [string, BenchPackRunSummary] => entry !== null)
+              .map(([tabId, summary]) => [
+                tabId,
+                {
+                  runId: summary.runId,
+                  startedAt: summary.startedAt
+                }
+              ])
+          )
+        );
         setBenchPackInspections(inspections);
         setRegistryEntries(registry);
         setRegistryWarning(nextRegistryWarning);
@@ -1179,6 +1225,32 @@ export function App() {
         ...current,
         [tabId]: updateLiveRunState(current[tabId], event)
       }));
+
+      if (event.type === "run_started") {
+        setLiveScenarioFocus((current) => ({
+          ...current,
+          [tabId]: {
+            liveScenarioId: null,
+            autoFollow: true
+          }
+        }));
+      } else if (
+        event.type === "scenario_started" ||
+        event.type === "model_progress" ||
+        event.type === "scenario_result" ||
+        event.type === "scenario_finished"
+      ) {
+        setLiveScenarioFocus((current) => {
+          const existing = current[tabId];
+          return {
+            ...current,
+            [tabId]: {
+              liveScenarioId: event.scenarioId,
+              autoFollow: existing?.autoFollow ?? true
+            }
+          };
+        });
+      }
     });
   }, []);
 
@@ -1852,6 +1924,17 @@ export function App() {
         ...current,
         [tab.id]: result
       }));
+      updateWorkspaceState((current) => {
+        const nextTab = current.tabs[tab.id];
+
+        if (!nextTab) {
+          return current;
+        }
+
+        nextTab.loadedRunId = result.runId;
+        nextTab.updatedAt = new Date().toISOString();
+        return current;
+      });
       if (result.cancelled) {
         setAppNotice(`Stopped ${result.benchPackName}.`);
       } else {
@@ -1971,6 +2054,17 @@ export function App() {
         ...current,
         [tab.id]: result
       }));
+      updateWorkspaceState((current) => {
+        const nextTab = current.tabs[tab.id];
+
+        if (!nextTab) {
+          return current;
+        }
+
+        nextTab.loadedRunId = result.runId;
+        nextTab.updatedAt = new Date().toISOString();
+        return current;
+      });
       if (result.cancelled) {
         setAppNotice(`Stopped ${result.benchPackName}.`);
       } else {
@@ -2073,12 +2167,13 @@ export function App() {
         createdAt: now,
         updatedAt: now
       };
-      current.tabs[tabId] = {
-        id: tabId,
-        title: "New Tab",
-        benchPackId: null,
-        focusedScenarioId: null,
-        modelSelections: [],
+        current.tabs[tabId] = {
+          id: tabId,
+          title: "New Tab",
+          benchPackId: null,
+          loadedRunId: null,
+          focusedScenarioId: null,
+          modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
         createdAt: now,
@@ -2144,6 +2239,7 @@ export function App() {
           id: nextTabId,
           title: "New Tab",
           benchPackId: null,
+          loadedRunId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
@@ -2282,6 +2378,7 @@ export function App() {
         id: tabId,
         title: createTabTitle(benchPackId, benchPackInspections),
         benchPackId,
+        loadedRunId: null,
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
@@ -2307,6 +2404,7 @@ export function App() {
 
       tab.title = createTabTitle(benchPackId, benchPackInspections);
       tab.benchPackId = benchPackId;
+      tab.loadedRunId = null;
       tab.focusedScenarioId = null;
       tab.samplingOverrides = {};
       tab.updatedAt = new Date().toISOString();
@@ -2427,6 +2525,7 @@ export function App() {
           id: replacementTabId,
           title: "New Tab",
           benchPackId: null,
+          loadedRunId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
@@ -2468,6 +2567,17 @@ export function App() {
         ...current,
         [activeTab.id]: summary
       }));
+      updateWorkspaceState((current) => {
+        const tab = current.tabs[activeTab.id];
+
+        if (!tab) {
+          return current;
+        }
+
+        tab.loadedRunId = summary.runId;
+        tab.updatedAt = new Date().toISOString();
+        return current;
+      });
       setLiveRuns((current) => {
         const next = { ...current };
         delete next[activeTab.id];
@@ -2554,7 +2664,7 @@ export function App() {
     });
 
     try {
-      const summary = await window.benchlocal.benchPacks.retryScenario({
+      await window.benchlocal.benchPacks.retryScenario({
         tabId: detail.tabId,
         benchPackId: detail.benchPackId,
         runId: detail.runId,
@@ -2562,12 +2672,15 @@ export function App() {
         modelId: detail.modelId,
         generation: tab.samplingOverrides
       });
-      const updatedResult = summary.resultsByModel[detail.modelId]?.find((candidate) => candidate.scenarioId === detail.scenarioId);
+      const refreshedSummary = await window.benchlocal.benchPacks.loadHistory({
+        benchPackId: detail.benchPackId,
+        runId: detail.runId
+      });
 
       if (!activeRuns[detail.tabId]) {
         setRunSummaries((current) => ({
           ...current,
-          [detail.tabId]: summary
+          [detail.tabId]: refreshedSummary
         }));
       }
       await loadHistoryForBenchPack(detail.benchPackId);
@@ -2593,6 +2706,17 @@ export function App() {
   };
 
   const clearLoadedHistoryRun = (tabId: string) => {
+    updateWorkspaceState((current) => {
+      const tab = current.tabs[tabId];
+
+      if (!tab) {
+        return current;
+      }
+
+      tab.loadedRunId = null;
+      tab.updatedAt = new Date().toISOString();
+      return current;
+    });
     setLoadedHistoryRuns((current) => {
       if (!current[tabId]) {
         return current;
@@ -2633,6 +2757,21 @@ export function App() {
     if (affectedTabIds.length === 0) {
       return;
     }
+
+    updateWorkspaceState((current) => {
+      for (const tabId of affectedTabIds) {
+        const tab = current.tabs[tabId];
+
+        if (!tab) {
+          continue;
+        }
+
+        tab.loadedRunId = null;
+        tab.updatedAt = new Date().toISOString();
+      }
+
+      return current;
+    });
 
     setLoadedHistoryRuns((current) => {
       const next = { ...current };
@@ -3395,18 +3534,37 @@ export function App() {
                               historyEntries={runHistories[activeInspection.id] ?? []}
 	                            liveRun={activeLiveRun}
                               loadedHistory={activeLoadedHistory}
-	                            focusedScenarioId={activeTab.focusedScenarioId}
-	                            onFocusScenario={(scenarioId) =>
-	                              updateWorkspaceState((current) => {
-	                                const tab = activeTab ? current.tabs[activeTab.id] : null;
-	                                if (!tab) {
+	                            focusedScenarioId={
+                                activeRuns[activeTab.id] && activeLiveScenarioFocus?.autoFollow && activeLiveScenarioFocus.liveScenarioId
+                                  ? activeLiveScenarioFocus.liveScenarioId
+                                  : activeTab.focusedScenarioId
+                              }
+	                            onFocusScenario={(scenarioId) => {
+                                  if (activeRuns[activeTab.id]) {
+                                    setLiveScenarioFocus((current) => {
+                                      const existing = current[activeTab.id];
+                                      const liveScenarioId = existing?.liveScenarioId ?? null;
+
+                                      return {
+                                        ...current,
+                                        [activeTab.id]: {
+                                          liveScenarioId,
+                                          autoFollow: liveScenarioId === scenarioId
+                                        }
+                                      };
+                                    });
+                                  }
+
+	                                updateWorkspaceState((current) => {
+	                                  const tab = activeTab ? current.tabs[activeTab.id] : null;
+	                                  if (!tab) {
+	                                    return current;
+	                                  }
+	                                  tab.focusedScenarioId = scenarioId;
+	                                  tab.updatedAt = new Date().toISOString();
 	                                  return current;
-	                                }
-	                                tab.focusedScenarioId = scenarioId;
-	                                tab.updatedAt = new Date().toISOString();
-	                                return current;
-	                              })
-	                            }
+	                                });
+                                }}
 	                            onEditModels={() =>
 	                              setTabModelsModal({
 	                                tabId: activeTab.id,
@@ -4363,15 +4521,17 @@ function BenchmarkSection({
   });
   const scenarios = inspection.scenarios ?? [];
   const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
+  const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
   const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
   const runButtonLabel = isRunning ? "Stop" : isResumableRun ? "Resume Test" : "Run";
+  const hasLiveActivity = isRunning || hasRetryActivity;
   const canStartFreshRun = inspection.status === "ready" && selectedModels.length > 0;
   const canResumeRun = Boolean(runSummary) && isResumableRun;
   const isRunButtonDisabled = isRunning
     ? false
-    : isStopping || !(canResumeRun || (!isViewingHistory && canStartFreshRun));
+    : hasRetryActivity || isStopping || !(canResumeRun || (!isViewingHistory && canStartFreshRun));
   const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
   const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
   const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
@@ -4596,7 +4756,7 @@ function BenchmarkSection({
               <span className="status-chip status-preview">{inspection.scenarioCount ?? 0} scenarios</span>
               <span className="status-chip status-idle">{selectedModels.length} models</span>
               <span className={`status-chip ${isRunning ? "status-live" : runSummary ? "status-done" : "status-idle"}`}>
-                {isRunning ? "Live" : runSummary ? "Done" : "Idle"}
+                {hasLiveActivity ? "Live" : runSummary ? "Done" : "Idle"}
               </span>
             </div>
           </div>
@@ -4697,7 +4857,7 @@ function BenchmarkSection({
                   type="button"
                   className="ghost-button run-mode-button"
                   onClick={() => setRunModeOpen((current) => !current)}
-                  disabled={isRunning}
+                  disabled={hasLiveActivity}
                   aria-haspopup="menu"
                   aria-expanded={runModeOpen}
                   title="Run mode"
@@ -4727,11 +4887,11 @@ function BenchmarkSection({
                   </div>
                 ) : null}
               </div>
-              <button type="button" onClick={onEditSampling} className="ghost-button" disabled={isRunning}>
+              <button type="button" onClick={onEditSampling} className="ghost-button" disabled={hasLiveActivity}>
                 <SlidersHorizontal size={14} />
                 Samplings
               </button>
-              <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
+              <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
                 <Bot size={14} />
                 Edit Models
               </button>
@@ -4753,7 +4913,7 @@ function BenchmarkSection({
                     <RotateCcw size={14} />
                     Test Histories
                   </button>
-                  <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
+                  <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
                     <Bot size={14} />
                     Add Models
                   </button>
@@ -4879,7 +5039,7 @@ function BenchmarkSection({
             )}
           </section>
 
-          {runSummary ? (
+          {runSummary && !hasLiveActivity ? (
             <section className="scoreboard">
               {Object.entries(runSummary.scores).map(([modelId, score]) => (
                 <div key={modelId} className="score-card score-card-compact">

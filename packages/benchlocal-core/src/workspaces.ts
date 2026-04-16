@@ -21,6 +21,7 @@ export type BenchLocalWorkspaceTab = {
   id: string;
   title: string;
   benchPackId: string | null;
+  loadedRunId?: string | null;
   focusedScenarioId: string | null;
   modelSelections: BenchLocalWorkspaceTabModelSelection[];
   samplingOverrides?: GenerationRequest;
@@ -56,6 +57,7 @@ const WorkspaceTabSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
   benchPackId: z.string().trim().min(1).nullable().default(null),
+  loadedRunId: z.string().trim().min(1).nullable().default(null),
   focusedScenarioId: z.string().trim().min(1).nullable(),
   modelSelections: z
     .array(
@@ -139,6 +141,7 @@ export function createDefaultWorkspaceState(defaultBenchPack = ""): BenchLocalWo
         id: tabId,
         title: hasDefaultBenchPack ? defaultBenchPack : "New Tab",
         benchPackId: hasDefaultBenchPack ? defaultBenchPack : null,
+        loadedRunId: null,
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
@@ -197,6 +200,7 @@ function normalizeWorkspaceState(raw: unknown, defaultBenchPack = ""): BenchLoca
       samplingOverrides: Object.fromEntries(
         Object.entries(tab.samplingOverrides ?? {}).filter(([, value]) => value !== undefined && Number.isFinite(value))
       ),
+      loadedRunId: tab.loadedRunId ?? null,
       executionMode: tab.executionMode ?? "parallel_by_test_case"
     };
   }
@@ -267,7 +271,7 @@ export async function saveWorkspaceStateFile(
   const normalized = normalizeWorkspaceState(state, defaultBenchPack);
   await fs.mkdir(path.dirname(statePath), { recursive: true });
 
-  const tempPath = `${statePath}.tmp`;
+  const tempPath = `${statePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   await fs.writeFile(tempPath, JSON.stringify(normalized, null, 2), "utf8");
   await fs.rename(tempPath, statePath);
 
