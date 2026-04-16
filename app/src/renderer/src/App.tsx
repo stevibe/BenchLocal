@@ -4934,11 +4934,24 @@ function BenchmarkSection({
   const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
   const isReplayMode = loadedHistory?.mode === "replay";
   const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
+  const replayRevealedCellCount = Object.values(liveRun?.resultsByModel ?? {}).reduce(
+    (total, results) => total + results.length,
+    0
+  );
+  const replayTotalCellCount = Object.values(runSummary?.resultsByModel ?? {}).reduce(
+    (total, results) => total + results.length,
+    0
+  );
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
   const canReplayRun = isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
   const runButtonLabel = isRunning ? "Stop" : canReplayRun ? "Replay" : isResumableRun ? "Resume Test" : "Run";
   const hasLiveActivity = isRunning || hasRetryActivity;
+  const hasCompletedReplay =
+    isReplayMode &&
+    !hasLiveActivity &&
+    replayTotalCellCount > 0 &&
+    replayRevealedCellCount >= replayTotalCellCount;
   const canStartFreshRun = inspection.status === "ready" && selectedModels.length > 0;
   const canResumeRun = Boolean(runSummary) && isResumableRun;
   const isRunButtonDisabled = isRunning
@@ -5367,8 +5380,12 @@ function BenchmarkSection({
                         <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
                           {isViewingHistory ? (
                             <div
-                              className="model-badge model-badge-history"
-                              title="This history view uses the models from the saved run."
+                              className={`model-badge${isReplayMode ? "" : " model-badge-history"}`}
+                              title={
+                                isReplayMode
+                                  ? "Replay mode uses the models from the saved run."
+                                  : "This history view uses the models from the saved run."
+                              }
                             >
                               {model.displayLabel}
                             </div>
@@ -5453,7 +5470,7 @@ function BenchmarkSection({
             )}
           </section>
 
-          {runSummary && !hasLiveActivity && !isReplayMode ? (
+          {runSummary && !hasLiveActivity && (!isReplayMode || hasCompletedReplay) ? (
             <section className="scoreboard">
               {Object.entries(runSummary.scores).map(([modelId, score]) => (
                 <div key={modelId} className="score-card score-card-compact">
