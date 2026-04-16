@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, screen, type MenuItemConstructorOptions } from "electron";
+import { promises as fs } from "node:fs";
 import path from "node:path";
-import { loadOrCreateConfig } from "@core";
+import { getBenchLocalHome, loadOrCreateConfig } from "@core";
 import { loadAppMetadata } from "./app-metadata";
 import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers, stopActiveBenchPackRunsForShutdown } from "./ipc";
 import { loadAvailableTheme } from "./themes";
@@ -9,6 +10,58 @@ const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
 const isMac = process.platform === "darwin";
 let isQuittingAfterBenchPackShutdown = false;
+const DEFAULT_WINDOW_WIDTH = 1500;
+const DEFAULT_WINDOW_HEIGHT = 800;
+const MIN_WINDOW_WIDTH = 1180;
+const MIN_WINDOW_HEIGHT = 768;
+const WINDOW_STATE_PATH = path.join(getBenchLocalHome(), "window-state.json");
+
+type PersistedWindowState = {
+  width: number;
+  height: number;
+  isMaximized?: boolean;
+};
+
+async function loadPersistedWindowState(): Promise<PersistedWindowState | null> {
+  try {
+    const raw = await fs.readFile(WINDOW_STATE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Partial<PersistedWindowState>;
+    const width = Number(parsed.width);
+    const height = Number(parsed.height);
+
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return null;
+    }
+
+    return {
+      width,
+      height,
+      isMaximized: Boolean(parsed.isMaximized)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function savePersistedWindowState(state: PersistedWindowState): Promise<void> {
+  await fs.mkdir(path.dirname(WINDOW_STATE_PATH), { recursive: true });
+  const tempPath = `${WINDOW_STATE_PATH}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  await fs.writeFile(tempPath, JSON.stringify(state, null, 2), "utf8");
+  await fs.rename(tempPath, WINDOW_STATE_PATH);
+}
+
+function resolveInitialWindowBounds(savedState: PersistedWindowState | null): { width: number; height: number } {
+  const primaryWorkArea = screen.getPrimaryDisplay().workAreaSize;
+  const maxWidth = Math.max(MIN_WINDOW_WIDTH, primaryWorkArea.width);
+  const maxHeight = Math.max(MIN_WINDOW_HEIGHT, primaryWorkArea.height);
+  const width = savedState?.width ?? DEFAULT_WINDOW_WIDTH;
+  const height = savedState?.height ?? DEFAULT_WINDOW_HEIGHT;
+
+  return {
+    width: Math.max(MIN_WINDOW_WIDTH, Math.min(width, maxWidth)),
+    height: Math.max(MIN_WINDOW_HEIGHT, Math.min(height, maxHeight))
+  };
+}
 
 if (isMac) {
   app.setName("BenchLocal");
@@ -112,6 +165,8 @@ function buildApplicationMenu(appName: string): void {
 
 async function createMainWindow(): Promise<void> {
   const loadState = await loadOrCreateConfig();
+  const savedWindowState = await loadPersistedWindowState();
+  const initialBounds = resolveInitialWindowBounds(savedWindowState);
   const effectiveThemeId =
     loadState.config.ui.theme === "system"
       ? (nativeTheme.shouldUseDarkColors ? "dark" : "light")
@@ -120,10 +175,10 @@ async function createMainWindow(): Promise<void> {
   const backgroundColor = theme?.variables["--bg"] ?? "#1f2227";
 
   const window = new BrowserWindow({
-    width: 1500,
-    height: 920,
-    minWidth: 1280,
-    minHeight: 820,
+    width: initialBounds.width,
+    height: initialBounds.height,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     title: "BenchLocal",
     show: false,
     backgroundColor,
@@ -147,7 +202,45 @@ async function createMainWindow(): Promise<void> {
   });
 
   window.once("ready-to-show", () => {
+    if (savedWindowState?.isMaximized) {
+      window.maximize();
+    }
+
     window.show();
+  });
+
+  let persistWindowStateTimeout: NodeJS.Timeout | null = null;
+  const schedulePersistWindowState = () => {
+    if (persistWindowStateTimeout) {
+      clearTimeout(persistWindowStateTimeout);
+    }
+
+    persistWindowStateTimeout = setTimeout(() => {
+      persistWindowStateTimeout = null;
+      const bounds = window.isMaximized() ? window.getNormalBounds() : window.getBounds();
+      void savePersistedWindowState({
+        width: bounds.width,
+        height: bounds.height,
+        isMaximized: window.isMaximized()
+      });
+    }, 150);
+  };
+
+  window.on("resize", schedulePersistWindowState);
+  window.on("maximize", schedulePersistWindowState);
+  window.on("unmaximize", schedulePersistWindowState);
+  window.on("close", () => {
+    if (persistWindowStateTimeout) {
+      clearTimeout(persistWindowStateTimeout);
+      persistWindowStateTimeout = null;
+    }
+
+    const bounds = window.isMaximized() ? window.getNormalBounds() : window.getBounds();
+    void savePersistedWindowState({
+      width: bounds.width,
+      height: bounds.height,
+      isMaximized: window.isMaximized()
+    });
   });
 
   if (!isDev) {
