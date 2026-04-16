@@ -19,6 +19,7 @@ import {
   listRunHistoryForBenchPack,
   loadBenchPackRegistry,
   loadRunSummaryForBenchPack,
+  resumeBenchPackRun,
   retryScenarioForBenchPackRun,
   runConfiguredBenchPack,
   startConfiguredBenchPackVerifiers,
@@ -52,6 +53,7 @@ const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-pro
 const BENCH_PACK_ACTIVE_RUNS_CHANNEL = "benchlocal:benchpacks:active-runs";
 const BENCH_PACK_RUN_CHANNEL = "benchlocal:benchpacks:run";
 const BENCH_PACK_RETRY_SCENARIO_CHANNEL = "benchlocal:benchpacks:retry-scenario";
+const BENCH_PACK_RESUME_RUN_CHANNEL = "benchlocal:benchpacks:resume-run";
 const BENCH_PACK_STOP_CHANNEL = "benchlocal:benchpacks:stop";
 const BENCH_PACK_HISTORY_CHANNEL = "benchlocal:benchpacks:history";
 const BENCH_PACK_HISTORY_LOAD_CHANNEL = "benchlocal:benchpacks:history-load";
@@ -71,6 +73,26 @@ const activeBenchPackRuns = new Map<
     controller: AbortController;
   }
 >();
+
+async function waitForBenchPackRunRelease(
+  tabId: string,
+  options?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+  }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 5000;
+  const intervalMs = options?.intervalMs ?? 50;
+  const deadline = Date.now() + timeoutMs;
+
+  while (activeBenchPackRuns.has(tabId)) {
+    if (Date.now() >= deadline) {
+      throw new Error("The previous benchmark run is still shutting down. Please wait a moment and try again.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 function providerSupportsModelDiscovery(provider: BenchLocalProviderConfig): boolean {
   return provider.kind === "openrouter" || provider.kind === "openai_compatible";
@@ -437,8 +459,14 @@ export function registerIpcHandlers(): void {
         generation?: GenerationRequest;
       }
     ) => {
-      if (activeBenchPackRuns.has(input.tabId)) {
-        throw new Error("A benchmark run is already active for this tab.");
+      const existingActiveRun = activeBenchPackRuns.get(input.tabId);
+
+      if (existingActiveRun) {
+        if (existingActiveRun.controller.signal.aborted) {
+          await waitForBenchPackRunRelease(input.tabId);
+        } else {
+          throw new Error("A benchmark run is already active for this tab.");
+        }
       }
 
       const { config } = await loadOrCreateConfig();
@@ -499,6 +527,59 @@ export function registerIpcHandlers(): void {
         },
         await getBenchLocalRuntimeCompatibility()
       );
+    }
+  );
+
+  ipcMain.handle(
+    BENCH_PACK_RESUME_RUN_CHANNEL,
+    async (
+      event,
+      input: {
+        tabId: string;
+        benchPackId: string;
+        runId: string;
+        executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+        generation?: GenerationRequest;
+      }
+    ) => {
+      const existingActiveRun = activeBenchPackRuns.get(input.tabId);
+
+      if (existingActiveRun) {
+        if (existingActiveRun.controller.signal.aborted) {
+          await waitForBenchPackRunRelease(input.tabId);
+        } else {
+          throw new Error("A benchmark run is already active for this tab.");
+        }
+      }
+
+      const { config } = await loadOrCreateConfig();
+      const controller = new AbortController();
+      activeBenchPackRuns.set(input.tabId, {
+        benchPackId: input.benchPackId,
+        controller
+      });
+
+      try {
+        return await resumeBenchPackRun(
+          config,
+          input.benchPackId,
+          {
+            runId: input.runId,
+            executionMode: input.executionMode,
+            generation: input.generation,
+            abortSignal: controller.signal,
+            onEvent: (progressEvent) => {
+              event.sender.send(BENCH_PACK_RUN_EVENT_CHANNEL, {
+                tabId: input.tabId,
+                event: progressEvent
+              });
+            }
+          },
+          await getBenchLocalRuntimeCompatibility()
+        );
+      } finally {
+        activeBenchPackRuns.delete(input.tabId);
+      }
     }
   );
 

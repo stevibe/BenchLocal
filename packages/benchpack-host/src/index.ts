@@ -1729,6 +1729,19 @@ function hasCompleteRunResults(summary: BenchPackRunSummary): boolean {
   return modelIds.every((modelId) => summary.resultsByModel[modelId]?.length === summary.scenarioCount);
 }
 
+function getHistoricalRunModelIds(summary: BenchPackRunSummary): string[] {
+  const runStartedEvent = summary.events.find(
+    (event): event is Extract<ProgressEvent, { type: "run_started" }> => event.type === "run_started"
+  );
+
+  const orderedModelIds = [
+    ...(runStartedEvent?.models.map((model) => model.id) ?? []),
+    ...Object.keys(summary.resultsByModel)
+  ].filter((modelId, index, all) => Boolean(modelId) && all.indexOf(modelId) === index);
+
+  return orderedModelIds;
+}
+
 function mergeSummaryEvents(current: ProgressEvent[], persisted?: ProgressEvent[]): ProgressEvent[] {
   if (!persisted || persisted.length <= current.length) {
     return current;
@@ -2645,10 +2658,17 @@ async function executeSerialTestCasesMode(
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
+  shouldExecuteCell: (scenario: ScenarioMeta, model: RegisteredModel) => boolean = () => true,
   abortSignal?: AbortSignal
 ): Promise<void> {
   for (const [index, scenario] of scenarios.entries()) {
     throwIfAborted(abortSignal);
+    const runnableModels = selectedModels.filter((model) => shouldExecuteCell(scenario, model));
+
+    if (runnableModels.length === 0) {
+      continue;
+    }
+
     await emit({
       type: "scenario_started",
       scenarioId: scenario.id,
@@ -2657,7 +2677,7 @@ async function executeSerialTestCasesMode(
       total: scenarios.length
     });
 
-    for (const model of selectedModels) {
+    for (const model of runnableModels) {
       throwIfAborted(abortSignal);
       const result = await runScenarioSafely(
         prepared,
@@ -2745,16 +2765,27 @@ async function executeSerialByModelMode(
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
+  shouldExecuteCell: (scenario: ScenarioMeta, model: RegisteredModel) => boolean = () => true,
   abortSignal?: AbortSignal
 ): Promise<void> {
   const startedScenarios = new Set<string>();
   const finishedCounts = new Map<string, number>();
+  const expectedCounts = new Map(
+    scenarios.map((scenario) => [
+      scenario.id,
+      selectedModels.filter((model) => shouldExecuteCell(scenario, model)).length
+    ])
+  );
 
   for (const model of selectedModels) {
     throwIfAborted(abortSignal);
 
     for (const [index, scenario] of scenarios.entries()) {
       throwIfAborted(abortSignal);
+
+      if (!shouldExecuteCell(scenario, model)) {
+        continue;
+      }
 
       if (!startedScenarios.has(scenario.id)) {
         startedScenarios.add(scenario.id);
@@ -2786,7 +2817,7 @@ async function executeSerialByModelMode(
       const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
       finishedCounts.set(scenario.id, completedCount);
 
-      if (completedCount >= selectedModels.length) {
+      if (completedCount >= (expectedCounts.get(scenario.id) ?? 0)) {
         await emit({
           type: "scenario_finished",
           scenarioId: scenario.id
@@ -2805,10 +2836,17 @@ async function executeParallelModelsMode(
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
+  shouldExecuteCell: (scenario: ScenarioMeta, model: RegisteredModel) => boolean = () => true,
   abortSignal?: AbortSignal
 ): Promise<void> {
   const startedScenarios = new Set<string>();
   const finishedCounts = new Map<string, number>();
+  const expectedCounts = new Map(
+    scenarios.map((scenario) => [
+      scenario.id,
+      selectedModels.filter((model) => shouldExecuteCell(scenario, model)).length
+    ])
+  );
 
   for (const model of selectedModels) {
     throwIfAborted(abortSignal);
@@ -2816,6 +2854,10 @@ async function executeParallelModelsMode(
     await Promise.all(
       scenarios.map(async (scenario, index) => {
         throwIfAborted(abortSignal);
+
+        if (!shouldExecuteCell(scenario, model)) {
+          return;
+        }
 
         if (!startedScenarios.has(scenario.id)) {
           startedScenarios.add(scenario.id);
@@ -2847,7 +2889,7 @@ async function executeParallelModelsMode(
         const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
         finishedCounts.set(scenario.id, completedCount);
 
-        if (completedCount >= selectedModels.length) {
+        if (completedCount >= (expectedCounts.get(scenario.id) ?? 0)) {
           await emit({
             type: "scenario_finished",
             scenarioId: scenario.id
@@ -2867,10 +2909,17 @@ async function executeParallelTestCasesMode(
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
+  shouldExecuteCell: (scenario: ScenarioMeta, model: RegisteredModel) => boolean = () => true,
   abortSignal?: AbortSignal
 ): Promise<void> {
   for (const [index, scenario] of scenarios.entries()) {
     throwIfAborted(abortSignal);
+    const runnableModels = selectedModels.filter((model) => shouldExecuteCell(scenario, model));
+
+    if (runnableModels.length === 0) {
+      continue;
+    }
+
     await emit({
       type: "scenario_started",
       scenarioId: scenario.id,
@@ -2880,7 +2929,7 @@ async function executeParallelTestCasesMode(
     });
 
     const scenarioResults = await Promise.all(
-      selectedModels.map(async (model) => {
+      runnableModels.map(async (model) => {
         const result = await runScenarioSafely(
           prepared,
           {
@@ -2919,11 +2968,18 @@ async function executeFullParallelMode(
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
+  shouldExecuteCell: (scenario: ScenarioMeta, model: RegisteredModel) => boolean = () => true,
   abortSignal?: AbortSignal
 ): Promise<void> {
   await Promise.all(
     scenarios.map(async (scenario, index) => {
       throwIfAborted(abortSignal);
+      const runnableModels = selectedModels.filter((model) => shouldExecuteCell(scenario, model));
+
+      if (runnableModels.length === 0) {
+        return;
+      }
+
       await emit({
         type: "scenario_started",
         scenarioId: scenario.id,
@@ -2933,7 +2989,7 @@ async function executeFullParallelMode(
       });
 
       const scenarioResults = await Promise.all(
-        selectedModels.map(async (model) => {
+        runnableModels.map(async (model) => {
           const result = await runScenarioSafely(
             prepared,
             {
@@ -3087,6 +3143,7 @@ export async function runConfiguredBenchPack(
               emit,
               resultsByModel,
               artifacts.runId,
+              undefined,
               options?.abortSignal
             );
             break;
@@ -3100,18 +3157,19 @@ export async function runConfiguredBenchPack(
               emit,
               resultsByModel,
               artifacts.runId,
+              undefined,
               options?.abortSignal
             );
             break;
           case "parallel_by_test_case":
-            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
           case "full_parallel":
-            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
           case "parallel_by_model":
           default:
-            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, options?.abortSignal);
+            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
         }
       } catch (error) {
@@ -3315,6 +3373,246 @@ export async function retryScenarioForBenchPackRun(
           error: isComplete ? undefined : latestSummary.error,
           events: [...latestSummary.events, ...retryEvents],
           resultsByModel: nextResultsByModel,
+          scores
+        };
+
+        await writeRunSummary(artifacts.summaryPath, nextSummary);
+        return nextSummary;
+      });
+    } finally {
+      await prepared.dispose();
+      await disposeHostResources();
+    }
+  } catch (error) {
+    await disposeHostResources();
+    throw error;
+  }
+}
+
+export async function resumeBenchPackRun(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  options: {
+    runId: string;
+    executionMode?: BenchLocalExecutionMode;
+    generation?: GenerationRequest;
+    abortSignal?: AbortSignal;
+    onEvent?: (event: ProgressEvent) => Promise<void> | void;
+  },
+  runtime?: BenchLocalRuntimeCompatibility
+): Promise<BenchPackRunSummary> {
+  const existingSummary = await loadRunSummaryForBenchPack(config, benchPackId, options.runId);
+
+  if (hasCompleteRunResults(existingSummary)) {
+    return existingSummary;
+  }
+
+  const artifacts = getRunArtifactsForExistingRun(existingSummary);
+  const { rootDir, manifest, benchPack } = await loadConfiguredBenchPack(config, benchPackId, runtime);
+  const resumeEvents: ProgressEvent[] = [];
+  const emit = async (event: ProgressEvent) => {
+    resumeEvents.push(event);
+    await appendJsonLine(artifacts.eventsPath, event);
+    await options.onEvent?.(event);
+  };
+
+  await startConfiguredBenchPackVerifiers(config, benchPackId, {
+    abortSignal: options.abortSignal,
+    onProgress: async (progress) => {
+      await emit({
+        type: "verifier_preparing",
+        benchPackId,
+        benchPackName: manifest.name,
+        verifierId: progress.verifierId,
+        phase: progress.phase,
+        message: progress.message
+      });
+    }
+  });
+
+  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const hostContext = hostResources.context;
+  let hostDisposed = false;
+  const disposeHostResources = async () => {
+    if (hostDisposed) {
+      return;
+    }
+
+    hostDisposed = true;
+    await hostResources.dispose();
+  };
+
+  try {
+    const blockingVerifier = hostContext.verifiers.find((verifier) => verifier.required && verifier.status !== "running");
+
+    if (blockingVerifier) {
+      if (blockingVerifier.status === "missing_dependency") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker.`);
+      }
+
+      if (blockingVerifier.status === "dependency_not_running") {
+        throw new Error(blockingVerifier.details ?? `Bench Pack "${manifest.name}" requires Local Docker to be running.`);
+      }
+
+      throw new Error(
+        blockingVerifier.details ??
+          `Bench Pack "${manifest.name}" requires verifier "${blockingVerifier.id}" to be running before the test can start.`
+      );
+    }
+
+    const historicalModelIds = getHistoricalRunModelIds(existingSummary);
+    const enabledModels = hostContext.models.filter((model) => model.enabled);
+    const selectedModels = historicalModelIds
+      .map((modelId) => enabledModels.find((model) => model.id === modelId))
+      .filter((model): model is (typeof enabledModels)[number] => Boolean(model));
+    const missingModelIds = historicalModelIds.filter((modelId) => !selectedModels.some((model) => model.id === modelId));
+
+    if (missingModelIds.length > 0) {
+      throw new Error(
+        `This saved run cannot be resumed because these historical models are not currently enabled: ${missingModelIds.join(", ")}.`
+      );
+    }
+
+    if (selectedModels.length === 0) {
+      throw new Error("This saved run has no resumable models.");
+    }
+
+    const scenarios = await benchPack.listScenarios();
+    const existingCellKeys = new Set(
+      Object.entries(existingSummary.resultsByModel).flatMap(([modelId, results]) =>
+        results.map((result) => `${modelId}::${result.scenarioId}`)
+      )
+    );
+    const shouldExecuteCell = (scenario: ScenarioMeta, model: RegisteredModel) =>
+      !existingCellKeys.has(`${model.id}::${scenario.id}`);
+    const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
+    const prepared = await benchPack.prepare(hostContext);
+    const executionMode = options.executionMode ?? existingSummary.executionMode ?? "parallel_by_test_case";
+    const generation = resolveBenchPackGeneration(manifest, options.generation);
+    let runErrorMessage: string | undefined;
+    let cancelled = false;
+
+    try {
+      await emit({
+        type: "run_started",
+        runId: existingSummary.runId,
+        models: selectedModels.map((model) => ({ id: model.id, label: model.label })),
+        totalScenarios: scenarios.length
+      });
+
+      try {
+        throwIfAborted(options.abortSignal);
+        switch (executionMode) {
+          case "serial":
+            await executeSerialTestCasesMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              existingSummary.runId,
+              shouldExecuteCell,
+              options.abortSignal
+            );
+            break;
+          case "serial_by_model":
+            await executeSerialByModelMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              existingSummary.runId,
+              shouldExecuteCell,
+              options.abortSignal
+            );
+            break;
+          case "parallel_by_test_case":
+            await executeParallelTestCasesMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              existingSummary.runId,
+              shouldExecuteCell,
+              options.abortSignal
+            );
+            break;
+          case "full_parallel":
+            await executeFullParallelMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              existingSummary.runId,
+              shouldExecuteCell,
+              options.abortSignal
+            );
+            break;
+          case "parallel_by_model":
+          default:
+            await executeParallelModelsMode(
+              scenarios,
+              selectedModels,
+              prepared,
+              benchPackId,
+              generation,
+              emit,
+              resultsByModel,
+              existingSummary.runId,
+              shouldExecuteCell,
+              options.abortSignal
+            );
+            break;
+        }
+      } catch (error) {
+        runErrorMessage = toErrorMessage(error);
+        cancelled = isAbortError(error) || Boolean(options.abortSignal?.aborted);
+        await emit({
+          type: "run_error",
+          message: runErrorMessage
+        });
+      }
+
+      return await withRunSummaryLock(`${benchPackId}:${existingSummary.runId}`, async () => {
+        const latestSummary = await loadRunSummaryForBenchPack(config, benchPackId, existingSummary.runId);
+        const mergedResultsByModel = mergeResultsByModel(resultsByModel, latestSummary.resultsByModel);
+        const mergedEvents = [...latestSummary.events, ...resumeEvents];
+        const scores = Object.fromEntries(
+          Object.entries(mergedResultsByModel).map(([modelId, results]) => [modelId, benchPack.scoreModelResults(results)])
+        );
+        const nextSnapshot: BenchPackRunSummary = {
+          ...latestSummary,
+          executionMode,
+          resultsByModel: mergedResultsByModel
+        };
+        const isComplete = hasCompleteRunResults(nextSnapshot);
+
+        if (!runErrorMessage) {
+          await emit({
+            type: "run_finished",
+            scores
+          });
+        }
+
+        const nextSummary: BenchPackRunSummary = {
+          ...latestSummary,
+          executionMode,
+          completedAt: new Date().toISOString(),
+          cancelled: isComplete ? false : cancelled || latestSummary.cancelled,
+          error: isComplete ? undefined : runErrorMessage ?? latestSummary.error,
+          events: mergedEvents,
+          resultsByModel: mergedResultsByModel,
           scores
         };
 

@@ -559,6 +559,32 @@ function resolveHistoryModels(
   });
 }
 
+function countStoredRunResults(summary: BenchPackRunSummary | null): number {
+  if (!summary) {
+    return 0;
+  }
+
+  return Object.values(summary.resultsByModel).reduce((total, results) => total + results.length, 0);
+}
+
+function isRunSummaryComplete(summary: BenchPackRunSummary | null): boolean {
+  if (!summary) {
+    return false;
+  }
+
+  return countStoredRunResults(summary) >= summary.modelCount * summary.scenarioCount;
+}
+
+function buildHistoryModelSelections(
+  runSummary: BenchPackRunSummary | null,
+  models: BenchLocalModelConfig[]
+): BenchLocalWorkspaceTabModelSelection[] {
+  return resolveHistoryModels(runSummary, models).map((model) => ({
+    modelId: model.id,
+    alias: model.displayLabel !== model.label ? model.displayLabel : undefined
+  }));
+}
+
 function upsertTabModelAlias(
   tab: BenchLocalWorkspaceTab,
   models: BenchLocalModelConfig[],
@@ -1860,6 +1886,142 @@ export function App() {
     }
   };
 
+  const resumeTabRun = async (tab: BenchLocalWorkspaceTab, runSummary: BenchPackRunSummary) => {
+    setError(null);
+    setAppNotice(null);
+
+    if (!tab.benchPackId || !draft) {
+      setError("Select a Bench Pack for this tab first.");
+      return;
+    }
+
+    if (isRunSummaryComplete(runSummary)) {
+      setError("This saved run is already complete.");
+      return;
+    }
+
+    const benchPackId = tab.benchPackId;
+    const previousLoadedHistory = loadedHistoryRuns[tab.id] ?? null;
+    const previousTabModelSelections = structuredClone(tab.modelSelections);
+    const previousExecutionMode = tab.executionMode;
+
+    if (hasUnsavedChanges) {
+      const saved = await save();
+
+      if (!saved) {
+        return;
+      }
+    }
+
+    const historicalSelections = buildHistoryModelSelections(runSummary, draft.models);
+    updateWorkspaceState((current) => {
+      const nextTab = current.tabs[tab.id];
+
+      if (!nextTab) {
+        return current;
+      }
+
+      nextTab.modelSelections = normalizeTabModelSelections(historicalSelections);
+      nextTab.executionMode = runSummary.executionMode ?? nextTab.executionMode;
+      nextTab.updatedAt = new Date().toISOString();
+      return current;
+    });
+
+    setLoadedHistoryRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    setActiveRuns((current) => ({
+      ...current,
+      [tab.id]: { benchPackId }
+    }));
+    setStoppingRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    setLiveRuns((current) => ({
+      ...current,
+      [tab.id]: {
+        runId: runSummary.runId,
+        events: [],
+        resultsByModel: {},
+        activeCellKeys: []
+      }
+    }));
+
+    try {
+      const result = await window.benchlocal.benchPacks.resumeRun({
+        tabId: tab.id,
+        benchPackId,
+        runId: runSummary.runId,
+        executionMode: runSummary.executionMode ?? tab.executionMode,
+        generation: tab.samplingOverrides
+      });
+      setRunSummaries((current) => ({
+        ...current,
+        [tab.id]: result
+      }));
+      if (result.cancelled) {
+        setAppNotice(`Stopped ${result.benchPackName}.`);
+      } else {
+        setAppNotice(
+          isRunSummaryComplete(result)
+            ? `Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`
+            : `Resumed ${result.benchPackName}, but the run is still incomplete.`
+        );
+      }
+      await loadBenchPackInspections();
+      await loadHistoryForBenchPack(benchPackId);
+    } catch (runError) {
+      updateWorkspaceState((current) => {
+        const nextTab = current.tabs[tab.id];
+
+        if (!nextTab) {
+          return current;
+        }
+
+        nextTab.modelSelections = structuredClone(previousTabModelSelections);
+        nextTab.executionMode = previousExecutionMode;
+        nextTab.updatedAt = new Date().toISOString();
+        return current;
+      });
+      if (previousLoadedHistory) {
+        setLoadedHistoryRuns((current) => ({
+          ...current,
+          [tab.id]: previousLoadedHistory
+        }));
+      }
+      setError(runError instanceof Error ? runError.message : `Failed to resume Bench Pack for ${benchPackId}.`);
+    } finally {
+      setVerifierPreparationModal((current) => (current?.tabId === tab.id ? null : current));
+      setActiveRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+      setStoppingRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+      setLiveRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+    }
+  };
+
   const stopTabRun = async (tabId: string) => {
     setStoppingRuns((current) => ({
       ...current,
@@ -2318,6 +2480,19 @@ export function App() {
           startedAt: summary.startedAt
         }
       }));
+      if (summary.executionMode) {
+        updateWorkspaceState((current) => {
+          const tab = current.tabs[activeTab.id];
+
+          if (!tab) {
+            return current;
+          }
+
+          tab.executionMode = summary.executionMode ?? tab.executionMode;
+          tab.updatedAt = new Date().toISOString();
+          return current;
+        });
+      }
     } catch (historyError) {
       setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
     }
@@ -3286,7 +3461,13 @@ export function App() {
                               }}
                               onRefreshVerification={() => void loadVerifierStatuses()}
                               onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
-	                            onRun={() => void runTab(activeTab)}
+	                            onRun={() =>
+                                void (
+                                  activeRunSummary && !isRunSummaryComplete(activeRunSummary)
+                                    ? resumeTabRun(activeTab, activeRunSummary)
+                                    : runTab(activeTab)
+                                )
+                              }
 	                            onStop={() => void stopTabRun(activeTab.id)}
 	                            onOpenDetail={setDetailModal}
 	                          />
@@ -4182,8 +4363,15 @@ function BenchmarkSection({
   });
   const scenarios = inspection.scenarios ?? [];
   const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
+  const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
+  const runButtonLabel = isRunning ? "Stop" : isResumableRun ? "Resume Test" : "Run";
+  const canStartFreshRun = inspection.status === "ready" && selectedModels.length > 0;
+  const canResumeRun = Boolean(runSummary) && isResumableRun;
+  const isRunButtonDisabled = isRunning
+    ? false
+    : isStopping || !(canResumeRun || (!isViewingHistory && canStartFreshRun));
   const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
   const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
   const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
@@ -4421,11 +4609,11 @@ function BenchmarkSection({
           <button
             type="button"
             onClick={isRunning ? onStop : onRun}
-            disabled={(((inspection.status !== "ready" || selectedModels.length === 0 || isViewingHistory) && !isRunning) || isStopping)}
+            disabled={isRunButtonDisabled}
             className={isRunning ? "button-warn" : "primary-button"}
           >
             {isRunning ? <Square size={15} /> : <Play size={15} />}
-            {isStopping ? "Stopping..." : isRunning ? "Stop" : "Run"}
+            {isStopping ? "Stopping..." : runButtonLabel}
           </button>
         </div>
       </div>

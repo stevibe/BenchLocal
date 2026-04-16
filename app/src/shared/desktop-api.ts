@@ -109,6 +109,13 @@ export interface BenchLocalDesktopApi {
       modelId: string;
       generation?: GenerationRequest;
     }): Promise<BenchPackRunSummary>;
+    resumeRun(input: {
+      tabId: string;
+      benchPackId: string;
+      runId: string;
+      executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+      generation?: GenerationRequest;
+    }): Promise<BenchPackRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;
     history(input: { benchPackId: string }): Promise<BenchPackRunHistoryEntry[]>;
     loadHistory(input: { benchPackId: string; runId: string }): Promise<BenchPackRunSummary>;
