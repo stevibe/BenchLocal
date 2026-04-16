@@ -2835,11 +2835,20 @@ select.config-input {
 }
 
 .settings-list-table-wrap {
-  overflow: auto;
+  overflow: hidden;
+  display: grid;
   border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--surface-strong);
   box-shadow: inset 0 1px 0 var(--glass-border);
+}
+
+.settings-table-scroll {
+  display: block;
+  overflow: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable both-edges;
 }
 
 .settings-section-stack {
@@ -2906,11 +2915,51 @@ select.config-input {
   text-transform: uppercase;
 }
 
+.settings-list-table th:last-child,
+.settings-list-table td:last-child:not([colspan]) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  white-space: nowrap;
+  background-clip: padding-box;
+  box-shadow: -1px 0 0 var(--sticky-column-rule);
+}
+
+.settings-list-table thead th:last-child {
+  z-index: 3;
+  background: var(--table-header-bg);
+}
+
+.settings-list-table tbody td:last-child:not([colspan]) {
+  background: var(--surface);
+}
+
+.settings-list-table-wrap.has-sticky-last-column-shadow .settings-list-table th:last-child,
+.settings-list-table-wrap.has-sticky-last-column-shadow .settings-list-table td:last-child:not([colspan]) {
+  overflow: hidden;
+}
+
+.settings-list-table-wrap.has-sticky-last-column-shadow .settings-list-table th:last-child::before,
+.settings-list-table-wrap.has-sticky-last-column-shadow .settings-list-table td:last-child:not([colspan])::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -18px;
+  width: 18px;
+  background: linear-gradient(to left, rgba(0, 0, 0, 0.06), transparent);
+  pointer-events: none;
+}
+
 .settings-list-table tbody tr {
   background: var(--surface);
 }
 
 .settings-list-table tbody tr:hover {
+  background: var(--surface-strong);
+}
+
+.settings-list-table tbody tr:hover td:last-child:not([colspan]) {
   background: var(--surface-strong);
 }
 
@@ -3204,8 +3253,11 @@ select.config-input {
 }
 
 .history-table-wrap {
+  max-height: none;
+}
+
+.history-table-wrap .settings-table-scroll {
   max-height: min(64vh, 720px);
-  overflow: auto;
 }
 
 .history-table-metric {
@@ -3225,7 +3277,7 @@ select.config-input {
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1024px) {
   .desktop-layout,
   .workspace-grid,
   .settings-scene,

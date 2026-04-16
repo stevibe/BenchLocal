@@ -511,6 +511,179 @@ function getTableScrollbarThumbWidth(metrics: {
   return Math.max(56, Math.round(metrics.clientWidth * ratio));
 }
 
+function SettingsTableShell({
+  children,
+  className
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarDragRef = useRef<{
+    startX: number;
+    startScrollLeft: number;
+  } | null>(null);
+  const [scrollMetrics, setScrollMetrics] = useState({
+    clientWidth: 0,
+    scrollWidth: 0,
+    scrollLeft: 0
+  });
+
+  const hasHorizontalOverflow = scrollMetrics.scrollWidth > scrollMetrics.clientWidth + 1;
+  const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(scrollMetrics) : 0;
+  const scrollbarThumbOffset =
+    hasHorizontalOverflow && scrollbarTrackRef.current
+      ? ((scrollMetrics.scrollLeft / Math.max(1, scrollMetrics.scrollWidth - scrollMetrics.clientWidth)) *
+          Math.max(0, scrollbarTrackRef.current.clientWidth - scrollbarThumbWidth))
+      : 0;
+  const wrapClassName = [
+    "settings-list-table-wrap",
+    className,
+    hasHorizontalOverflow ? "has-sticky-last-column-shadow" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) {
+      return;
+    }
+
+    const updateMetrics = () => {
+      setScrollMetrics({
+        clientWidth: viewport.clientWidth,
+        scrollWidth: viewport.scrollWidth,
+        scrollLeft: viewport.scrollLeft
+      });
+    };
+
+    const syncFromViewport = () => {
+      updateMetrics();
+    };
+
+    updateMetrics();
+    viewport.addEventListener("scroll", syncFromViewport);
+    window.addEventListener("resize", updateMetrics);
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            updateMetrics();
+          })
+        : null;
+
+    resizeObserver?.observe(viewport);
+
+    if (viewport.firstElementChild instanceof HTMLElement) {
+      resizeObserver?.observe(viewport.firstElementChild);
+    }
+
+    return () => {
+      viewport.removeEventListener("scroll", syncFromViewport);
+      window.removeEventListener("resize", updateMetrics);
+      resizeObserver?.disconnect();
+    };
+  }, [children]);
+
+  useEffect(() => {
+    const handleMove = (event: MouseEvent) => {
+      const viewport = viewportRef.current;
+      const track = scrollbarTrackRef.current;
+      const drag = scrollbarDragRef.current;
+
+      if (!viewport || !track || !drag) {
+        return;
+      }
+
+      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const maxThumbOffset = Math.max(1, track.clientWidth - getTableScrollbarThumbWidth(scrollMetrics));
+      const deltaX = event.clientX - drag.startX;
+      const nextScrollLeft = Math.min(
+        maxScrollLeft,
+        Math.max(0, drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft)
+      );
+      viewport.scrollLeft = nextScrollLeft;
+    };
+
+    const handleUp = () => {
+      scrollbarDragRef.current = null;
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [scrollMetrics]);
+
+  return (
+    <div className={wrapClassName}>
+      <div ref={viewportRef} className="settings-table-scroll">
+        {children}
+      </div>
+      {hasHorizontalOverflow ? (
+        <div
+          ref={scrollbarTrackRef}
+          className="table-scrollbar"
+          aria-hidden="true"
+          onMouseDown={(event) => {
+            const viewport = viewportRef.current;
+            const track = scrollbarTrackRef.current;
+
+            if (!viewport || !track) {
+              return;
+            }
+
+            const rect = track.getBoundingClientRect();
+            const clickX = event.clientX - rect.left;
+
+            if (clickX >= scrollbarThumbOffset && clickX <= scrollbarThumbOffset + scrollbarThumbWidth) {
+              return;
+            }
+
+            const nextOffset = Math.max(
+              0,
+              Math.min(track.clientWidth - scrollbarThumbWidth, clickX - scrollbarThumbWidth / 2)
+            );
+            const nextScrollLeft =
+              (nextOffset / Math.max(1, track.clientWidth - scrollbarThumbWidth)) *
+              Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+            viewport.scrollLeft = nextScrollLeft;
+          }}
+        >
+          <div
+            className="table-scrollbar-thumb"
+            style={{
+              width: `${scrollbarThumbWidth}px`,
+              transform: `translateX(${scrollbarThumbOffset}px)`
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              const viewport = viewportRef.current;
+
+              if (!viewport) {
+                return;
+              }
+
+              scrollbarDragRef.current = {
+                startX: event.clientX,
+                startScrollLeft: viewport.scrollLeft
+              };
+              document.body.style.userSelect = "none";
+            }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function resolveTabModels(tab: BenchLocalWorkspaceTab | null, models: BenchLocalModelConfig[]): ResolvedTabModel[] {
   const enabledModels = models.filter((model) => model.enabled);
   const modelMap = new Map(enabledModels.map((model) => [model.id, model]));
@@ -6197,7 +6370,7 @@ function ProvidersView({
         <button type="button" onClick={onCreate} className="primary-button"><Plus size={14} />Add Provider</button>
       }
     >
-      <div className="settings-list-table-wrap">
+      <SettingsTableShell>
         <table className="settings-list-table">
           <thead>
             <tr>
@@ -6239,7 +6412,7 @@ function ProvidersView({
             })}
           </tbody>
         </table>
-      </div>
+      </SettingsTableShell>
     </Panel>
   );
 }
@@ -6275,7 +6448,7 @@ function ModelsView({
         </button>
       }
     >
-      <div className="settings-list-table-wrap">
+      <SettingsTableShell>
         <table className="settings-list-table">
           <thead>
             <tr>
@@ -6311,7 +6484,7 @@ function ModelsView({
             ))}
           </tbody>
         </table>
-      </div>
+      </SettingsTableShell>
     </Panel>
   );
 }
@@ -6398,7 +6571,7 @@ function BenchPackRegistryView({
         actions={<button type="button" onClick={onRefresh} className="ghost-button" disabled={hasActiveMutation}><RotateCcw size={14} />Refresh Registry</button>}
       >
         {registryWarning ? <Banner tone="warning">{registryWarning}</Banner> : null}
-        <div className="settings-list-table-wrap">
+        <SettingsTableShell>
           <table className="settings-list-table">
             <thead>
               <tr>
@@ -6493,7 +6666,7 @@ function BenchPackRegistryView({
               )}
             </tbody>
           </table>
-        </div>
+        </SettingsTableShell>
       </Panel>
 
       <Panel
@@ -6532,7 +6705,7 @@ function BenchPackRegistryView({
           </button>
         </div>
 
-        <div className="settings-list-table-wrap">
+        <SettingsTableShell>
           <table className="settings-list-table">
             <thead>
               <tr>
@@ -6588,7 +6761,7 @@ function BenchPackRegistryView({
               )}
             </tbody>
           </table>
-        </div>
+        </SettingsTableShell>
       </Panel>
     </section>
   );
@@ -6648,7 +6821,7 @@ function VerificationView({
       tone="orange"
       icon={<Wrench size={16} />}
     >
-      <div className="settings-list-table-wrap">
+      <SettingsTableShell>
         <table className="settings-list-table">
           <thead>
             <tr>
@@ -6746,7 +6919,7 @@ function VerificationView({
             )}
           </tbody>
         </table>
-      </div>
+      </SettingsTableShell>
     </Panel>
   );
 }
@@ -6847,7 +7020,7 @@ function HistoryModal({
         </div>
 
         <div className="history-modal-body">
-          <div className="settings-list-table-wrap history-table-wrap">
+          <SettingsTableShell className="history-table-wrap">
             <table className="settings-list-table">
               <thead>
                 <tr>
@@ -6907,7 +7080,7 @@ function HistoryModal({
                 })}
               </tbody>
             </table>
-          </div>
+          </SettingsTableShell>
         </div>
 
         <div className="dialog-footer">
