@@ -206,11 +206,13 @@ type LiveRunState = {
 
 type ActiveRunEntry = {
   benchPackId: string;
+  mode?: "host" | "replay";
 };
 
 type LoadedHistoryEntry = {
   runId: string;
   startedAt: string;
+  mode?: "history" | "replay";
 };
 
 type LiveScenarioFocusState = {
@@ -590,6 +592,75 @@ function buildHistoryModelSelections(
   }));
 }
 
+type ReplayCell = {
+  modelId: string;
+  scenarioId: string;
+  result: ScenarioResult;
+};
+
+function buildReplayGroups(
+  summary: BenchPackRunSummary,
+  scenarios: ScenarioMeta[],
+  modelIds: string[]
+): ReplayCell[][] {
+  const scenarioOrder = scenarios.map((scenario) => scenario.id);
+  const resultMap = new Map<string, ScenarioResult>();
+
+  for (const [modelId, results] of Object.entries(summary.resultsByModel)) {
+    for (const result of results) {
+      resultMap.set(`${modelId}::${result.scenarioId}`, result);
+    }
+  }
+
+  const singletonCellsByScenarioThenModel = scenarioOrder.flatMap((scenarioId) =>
+    modelIds.flatMap((modelId) => {
+      const result = resultMap.get(`${modelId}::${scenarioId}`);
+      return result ? [[{ modelId, scenarioId, result } satisfies ReplayCell]] : [];
+    })
+  );
+
+  switch (summary.executionMode ?? "parallel_by_test_case") {
+    case "serial":
+      return singletonCellsByScenarioThenModel;
+    case "serial_by_model":
+      return modelIds.flatMap((modelId) =>
+        scenarioOrder.flatMap((scenarioId) => {
+          const result = resultMap.get(`${modelId}::${scenarioId}`);
+          return result ? [[{ modelId, scenarioId, result } satisfies ReplayCell]] : [];
+        })
+      );
+    case "parallel_by_test_case":
+      return scenarioOrder
+        .map((scenarioId) =>
+          modelIds.flatMap((modelId) => {
+            const result = resultMap.get(`${modelId}::${scenarioId}`);
+            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
+          })
+        )
+        .filter((group) => group.length > 0);
+    case "parallel_by_model":
+      return modelIds
+        .map((modelId) =>
+          scenarioOrder.flatMap((scenarioId) => {
+            const result = resultMap.get(`${modelId}::${scenarioId}`);
+            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
+          })
+        )
+        .filter((group) => group.length > 0);
+    case "full_parallel":
+      return [
+        scenarioOrder.flatMap((scenarioId) =>
+          modelIds.flatMap((modelId) => {
+            const result = resultMap.get(`${modelId}::${scenarioId}`);
+            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
+          })
+        )
+      ].filter((group) => group.length > 0);
+    default:
+      return singletonCellsByScenarioThenModel;
+  }
+}
+
 function upsertTabModelAlias(
   tab: BenchLocalWorkspaceTab,
   models: BenchLocalModelConfig[],
@@ -931,6 +1002,7 @@ export function App() {
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
   const modelDiscoveryCacheRef = useRef<Record<string, BenchLocalDiscoveredModel[]>>({});
+  const replayRunTokensRef = useRef(new Map<string, symbol>());
   const appliedThemeKeysRef = useRef<string[]>([]);
   const [tabStripOverflow, setTabStripOverflow] = useState(false);
   const [activeTabMask, setActiveTabMask] = useState<{ left: number; width: number } | null>(null);
@@ -1101,7 +1173,8 @@ export function App() {
                 tabId,
                 {
                   runId: summary.runId,
-                  startedAt: summary.startedAt
+                  startedAt: summary.startedAt,
+                  mode: "history"
                 }
               ])
           )
@@ -1874,7 +1947,7 @@ export function App() {
 
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { benchPackId }
+      [tab.id]: { benchPackId, mode: "host" }
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -2021,7 +2094,7 @@ export function App() {
     });
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { benchPackId }
+      [tab.id]: { benchPackId, mode: "host" }
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -2116,7 +2189,169 @@ export function App() {
     }
   };
 
+  const replayTabRun = async (tab: BenchLocalWorkspaceTab, runSummary: BenchPackRunSummary) => {
+    if (!tab.benchPackId) {
+      setError("Select a Bench Pack for this tab first.");
+      return;
+    }
+
+    if (!isRunSummaryComplete(runSummary)) {
+      setError("Replay is only available for completed test runs.");
+      return;
+    }
+
+    const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
+    const scenarios = inspection?.scenarios ?? [];
+    const modelIds = resolveHistoryModels(runSummary, draft?.models ?? []).map((model) => model.id);
+    const replayGroups = buildReplayGroups(runSummary, scenarios, modelIds);
+    const token = Symbol(`replay:${tab.id}`);
+    replayRunTokensRef.current.set(tab.id, token);
+
+    setError(null);
+    setAppNotice(null);
+    setActiveRuns((current) => ({
+      ...current,
+      [tab.id]: { benchPackId: tab.benchPackId as string, mode: "replay" }
+    }));
+    setStoppingRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    setLiveRuns((current) => ({
+      ...current,
+      [tab.id]: {
+        runId: runSummary.runId,
+        events: [],
+        resultsByModel: {},
+        activeCellKeys: []
+      }
+    }));
+    setLiveScenarioFocus((current) => ({
+      ...current,
+      [tab.id]: {
+        liveScenarioId: null,
+        autoFollow: true
+      }
+    }));
+
+    const wait = async (ms: number) => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    };
+
+    try {
+      for (const group of replayGroups) {
+        if (replayRunTokensRef.current.get(tab.id) !== token) {
+          return;
+        }
+
+        const nextActiveCellKeys = group.map((cell) => getCellKey(cell.modelId, cell.scenarioId));
+        const leadScenarioId = group[0]?.scenarioId ?? null;
+
+        setLiveRuns((current) => {
+          const existing = current[tab.id];
+          return {
+            ...current,
+            [tab.id]: {
+              runId: runSummary.runId,
+              events: existing?.events ?? [],
+              resultsByModel: existing?.resultsByModel ?? {},
+              activeCellKeys: nextActiveCellKeys
+            }
+          };
+        });
+        if (leadScenarioId) {
+          setLiveScenarioFocus((current) => ({
+            ...current,
+            [tab.id]: {
+              liveScenarioId: leadScenarioId,
+              autoFollow: true
+            }
+          }));
+        }
+
+        await wait(1000);
+
+        if (replayRunTokensRef.current.get(tab.id) !== token) {
+          return;
+        }
+
+        setLiveRuns((current) => {
+          const existing = current[tab.id];
+          const nextResultsByModel = { ...(existing?.resultsByModel ?? {}) };
+
+          for (const cell of group) {
+            nextResultsByModel[cell.modelId] = [
+              ...(nextResultsByModel[cell.modelId] ?? []).filter((candidate) => candidate.scenarioId !== cell.scenarioId),
+              cell.result
+            ];
+          }
+
+          return {
+            ...current,
+            [tab.id]: {
+              runId: runSummary.runId,
+              events: existing?.events ?? [],
+              resultsByModel: nextResultsByModel,
+              activeCellKeys: []
+            }
+          };
+        });
+      }
+
+      setAppNotice(`Replayed ${runSummary.benchPackName}.`);
+    } finally {
+      if (replayRunTokensRef.current.get(tab.id) === token) {
+        replayRunTokensRef.current.delete(tab.id);
+      }
+
+      setActiveRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+      setStoppingRuns((current) => {
+        const next = { ...current };
+        delete next[tab.id];
+        return next;
+      });
+    }
+  };
+
   const stopTabRun = async (tabId: string) => {
+    const activeRun = activeRuns[tabId];
+
+    if (activeRun?.mode === "replay") {
+      replayRunTokensRef.current.delete(tabId);
+      setActiveRuns((current) => {
+        const next = { ...current };
+        delete next[tabId];
+        return next;
+      });
+      setStoppingRuns((current) => {
+        const next = { ...current };
+        delete next[tabId];
+        return next;
+      });
+      setLiveRuns((current) => ({
+        ...current,
+        [tabId]: {
+          ...(current[tabId] ?? {
+            events: [],
+            resultsByModel: {},
+            activeCellKeys: []
+          }),
+          activeCellKeys: []
+        }
+      }));
+      setAppNotice("Stopped replay.");
+      return;
+    }
+
     setStoppingRuns((current) => ({
       ...current,
       [tabId]: true
@@ -2556,7 +2791,7 @@ export function App() {
     });
   };
 
-  const restoreHistoryRun = async (benchPackId: string, runId: string) => {
+  const restoreHistoryRun = async (benchPackId: string, runId: string, mode: "history" | "replay" = "history") => {
     if (!activeTab) {
       return;
     }
@@ -2587,7 +2822,8 @@ export function App() {
         ...current,
         [activeTab.id]: {
           runId,
-          startedAt: summary.startedAt
+          startedAt: summary.startedAt,
+          mode
         }
       }));
       if (summary.executionMode) {
@@ -3621,7 +3857,9 @@ export function App() {
                               onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
 	                            onRun={() =>
                                 void (
-                                  activeRunSummary && !isRunSummaryComplete(activeRunSummary)
+                                  activeLoadedHistory?.mode === "replay" && activeRunSummary
+                                    ? replayTabRun(activeTab, activeRunSummary)
+                                    : activeRunSummary && !isRunSummaryComplete(activeRunSummary)
                                     ? resumeTabRun(activeTab, activeRunSummary)
                                     : runTab(activeTab)
                                 )
@@ -4110,12 +4348,11 @@ export function App() {
 
       {historyModal ? (
         <HistoryModal
-          benchPackId={historyModal.benchPackId}
           benchPackName={historyModal.benchPackName}
           entries={historyModal.entries}
           onClose={() => setHistoryModal(null)}
-          onOpenRun={(runId) => {
-            void restoreHistoryRun(historyModal.benchPackId, runId);
+          onOpenRun={(runId, mode) => {
+            void restoreHistoryRun(historyModal.benchPackId, runId, mode);
             setHistoryModal(null);
           }}
           onRemoveAll={() =>
@@ -4522,16 +4759,18 @@ function BenchmarkSection({
   const scenarios = inspection.scenarios ?? [];
   const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
   const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
+  const isReplayMode = loadedHistory?.mode === "replay";
   const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
-  const runButtonLabel = isRunning ? "Stop" : isResumableRun ? "Resume Test" : "Run";
+  const canReplayRun = isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
+  const runButtonLabel = isRunning ? "Stop" : canReplayRun ? "Replay" : isResumableRun ? "Resume Test" : "Run";
   const hasLiveActivity = isRunning || hasRetryActivity;
   const canStartFreshRun = inspection.status === "ready" && selectedModels.length > 0;
   const canResumeRun = Boolean(runSummary) && isResumableRun;
   const isRunButtonDisabled = isRunning
     ? false
-    : hasRetryActivity || isStopping || !(canResumeRun || (!isViewingHistory && canStartFreshRun));
+    : hasRetryActivity || isStopping || !(canReplayRun || canResumeRun || (!isViewingHistory && canStartFreshRun));
   const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
   const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
   const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
@@ -4684,7 +4923,9 @@ function BenchmarkSection({
 
   function renderResultCell(modelId: string, scenarioId: string) {
     const liveResult = liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
-    const persistedResult = runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const persistedResult = isReplayMode
+      ? undefined
+      : runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
     const result = liveResult ?? persistedResult;
     const isActive = liveRun?.activeCellKeys.includes(`${modelId}::${scenarioId}`) ?? false;
 
@@ -4731,7 +4972,7 @@ function BenchmarkSection({
 
   return (
     <section className="workspace-panel">
-      {loadedHistory ? (
+      {loadedHistory && loadedHistory.mode !== "replay" ? (
         <div className="history-banner">
           <div className="banner-row">
             <span>
@@ -5039,7 +5280,7 @@ function BenchmarkSection({
             )}
           </section>
 
-          {runSummary && !hasLiveActivity ? (
+          {runSummary && !hasLiveActivity && !isReplayMode ? (
             <section className="scoreboard">
               {Object.entries(runSummary.scores).map(([modelId, score]) => (
                 <div key={modelId} className="score-card score-card-compact">
@@ -6589,7 +6830,7 @@ function HistoryModal({
   benchPackName: string;
   entries: BenchPackRunHistoryEntry[];
   onClose: () => void;
-  onOpenRun: (runId: string) => void;
+  onOpenRun: (runId: string, mode: "history" | "replay") => void;
   onRemoveAll: () => void;
 }) {
   return (
@@ -6647,7 +6888,16 @@ function HistoryModal({
                         </span>
                       </td>
                       <td>
-                        <button type="button" className="ghost-button ghost-button-compact" onClick={() => onOpenRun(entry.runId)}>
+                        <button
+                          type="button"
+                          className="ghost-button ghost-button-compact"
+                          onClick={(event) =>
+                            onOpenRun(
+                              entry.runId,
+                              event.shiftKey && !entry.error && !entry.cancelled ? "replay" : "history"
+                            )
+                          }
+                        >
                           <RotateCcw size={14} />
                           Open
                         </button>
