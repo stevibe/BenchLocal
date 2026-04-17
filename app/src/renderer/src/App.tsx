@@ -228,6 +228,11 @@ type VerifierPreparationModalState = {
   progress: VerifierPreparingProgress;
 };
 
+type SettingsVerifierPreparationModalState = {
+  benchPackId: string;
+  progress: VerifierPreparingProgress;
+};
+
 type BenchPackRunBlocker = {
   title: string;
   message: string;
@@ -237,6 +242,10 @@ type BenchPackRunBlocker = {
 type BenchPackMutationState = BenchPackMutationProgress;
 const THIRD_PARTY_INSTALL_MUTATION_ID = "__third_party_install__";
 const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = { request_timeout_seconds: 300 };
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof Error && /abort|cancel/i.test(error.name + " " + error.message);
+}
 
 function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
   if (themeId === "system") {
@@ -1089,6 +1098,8 @@ export function App() {
   const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [verifierPreparationModal, setVerifierPreparationModal] = useState<VerifierPreparationModalState | null>(null);
+  const [settingsVerifierPreparationModal, setSettingsVerifierPreparationModal] = useState<SettingsVerifierPreparationModalState | null>(null);
+  const [stoppingVerifierStarts, setStoppingVerifierStarts] = useState<Record<string, true>>({});
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [editingTab, setEditingTab] = useState<{ tabId: string; value: string; width: number } | null>(null);
   const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
@@ -1507,6 +1518,19 @@ export function App() {
         ...current,
         [payload.benchPackId]: payload
       }));
+    });
+  }, []);
+
+  useEffect(() => {
+    return window.benchlocal.verifiers.onProgress(({ benchPackId, event }) => {
+      setSettingsVerifierPreparationModal((current) =>
+        current?.benchPackId === benchPackId || current === null
+          ? {
+              benchPackId,
+              progress: event
+            }
+          : current
+      );
     });
   }, []);
 
@@ -2557,6 +2581,41 @@ export function App() {
         return next;
       });
       setError(stopError instanceof Error ? stopError.message : "Failed to stop Bench Pack run.");
+    }
+  };
+
+  const cancelSettingsVerifierStart = async (benchPackId: string) => {
+    setStoppingVerifierStarts((current) => ({
+      ...current,
+      [benchPackId]: true
+    }));
+
+    try {
+      const result = await window.benchlocal.verifiers.cancelStart({ benchPackId });
+
+      if (!result.cancelled) {
+        setSettingsVerifierPreparationModal((current) => (current?.benchPackId === benchPackId ? null : current));
+        setStoppingVerifierStarts((current) => {
+          if (!current[benchPackId]) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[benchPackId];
+          return next;
+        });
+      }
+    } catch (cancelError) {
+      setStoppingVerifierStarts((current) => {
+        if (!current[benchPackId]) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[benchPackId];
+        return next;
+      });
+      setError(cancelError instanceof Error ? cancelError.message : "Failed to cancel verifier start.");
     }
   };
 
@@ -3622,12 +3681,51 @@ export function App() {
               }
               onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
               onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
-              onStartVerifier={async (benchPackId) => {
+              onStartVerifier={async (benchPackId, benchPackName, verifierId) => {
+                setError(null);
+                setStoppingVerifierStarts((current) => {
+                  if (!current[benchPackId]) {
+                    return current;
+                  }
+
+                  const next = { ...current };
+                  delete next[benchPackId];
+                  return next;
+                });
+                setSettingsVerifierPreparationModal({
+                  benchPackId,
+                  progress: {
+                    type: "verifier_preparing",
+                    benchPackId,
+                    benchPackName,
+                    verifierId,
+                    phase: "checking_docker",
+                    message: "Checking Local Docker availability."
+                  }
+                });
+
                 try {
                   const status = await window.benchlocal.verifiers.start({ benchPackId });
                   setVerifierStatuses((current) => ({ ...current, [benchPackId]: status }));
                 } catch (verifierError) {
-                  setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
+                  if (isAbortLikeError(verifierError)) {
+                    if (settingsOpenRef.current) {
+                      setSettingsNotice(`Cancelled preparing ${verifierId}.`);
+                    }
+                  } else {
+                    setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
+                  }
+                } finally {
+                  setSettingsVerifierPreparationModal((current) => (current?.benchPackId === benchPackId ? null : current));
+                  setStoppingVerifierStarts((current) => {
+                    if (!current[benchPackId]) {
+                      return current;
+                    }
+
+                    const next = { ...current };
+                    delete next[benchPackId];
+                    return next;
+                  });
                 }
               }}
               onStopVerifier={async (benchPackId) => {
@@ -3637,6 +3735,36 @@ export function App() {
                 } catch (verifierError) {
                   setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
                 }
+              }}
+              onDeleteVerifierImage={(benchPackId, benchPackName, verifierId) => {
+                setConfirmDialog({
+                  title: "Delete Verifier Image",
+                  subtitle: `Delete the Local Docker image for verifier "${verifierId}" in ${benchPackName}? BenchLocal will pull or rebuild it again the next time this verifier starts.`,
+                  confirmLabel: "Delete Image",
+                  tone: "danger",
+                  onConfirm: () => {
+                    void (async () => {
+                      setIsBusy(true);
+                      setError(null);
+
+                      try {
+                        const result = await window.benchlocal.verifiers.deleteImage({ benchPackId, verifierId });
+                        setVerifierStatuses((current) => ({ ...current, [benchPackId]: result.status }));
+                        if (settingsOpenRef.current) {
+                          setSettingsNotice(
+                            result.removed
+                              ? `Deleted Docker image ${result.image}.`
+                              : `Docker image ${result.image} was already absent.`
+                          );
+                        }
+                      } catch (verifierError) {
+                        setError(verifierError instanceof Error ? verifierError.message : "Failed to delete verifier image.");
+                      } finally {
+                        setIsBusy(false);
+                      }
+                    })();
+                  }
+                });
               }}
               onRefreshRegistry={() => void loadRegistryEntries()}
               onInstallBenchPack={(benchPackId) => void installBenchPack(benchPackId)}
@@ -4557,7 +4685,15 @@ export function App() {
         />
       ) : null}
 
-      {verifierPreparationModal ? (
+      {settingsVerifierPreparationModal ? (
+        <VerifierPreparationModal
+          benchPackName={settingsVerifierPreparationModal.progress.benchPackName}
+          verifierId={settingsVerifierPreparationModal.progress.verifierId}
+          message={settingsVerifierPreparationModal.progress.message}
+          isCancelling={Boolean(stoppingVerifierStarts[settingsVerifierPreparationModal.benchPackId])}
+          onCancel={() => void cancelSettingsVerifierStart(settingsVerifierPreparationModal.benchPackId)}
+        />
+      ) : verifierPreparationModal ? (
         <VerifierPreparationModal
           benchPackName={verifierPreparationModal.progress.benchPackName}
           verifierId={verifierPreparationModal.progress.verifierId}
@@ -6160,6 +6296,7 @@ function SettingsScene({
   onEditModel,
   onStartVerifier,
   onStopVerifier,
+  onDeleteVerifierImage,
   onRefreshRegistry,
   onInstallBenchPack,
   onInstallBenchPackFromUrl,
@@ -6191,8 +6328,9 @@ function SettingsScene({
   onEditProvider: (providerId: string) => void;
   onCreateModel: () => void;
   onEditModel: (index: number) => void;
-  onStartVerifier: (benchPackId: string) => Promise<void>;
+  onStartVerifier: (benchPackId: string, benchPackName: string, verifierId: string) => Promise<void>;
   onStopVerifier: (benchPackId: string) => Promise<void>;
+  onDeleteVerifierImage: (benchPackId: string, benchPackName: string, verifierId: string) => void;
   onRefreshRegistry: () => void;
   onInstallBenchPack: (benchPackId: string) => void;
   onInstallBenchPackFromUrl: (url: string) => Promise<boolean | void>;
@@ -6306,11 +6444,14 @@ function SettingsScene({
                 draft={draft}
                 statuses={verifierStatuses}
                 onUpdate={onUpdateVerifier}
-                onStart={async (benchPackId) => {
-                  await onStartVerifier(benchPackId);
+                onStart={async (benchPackId, benchPackName, verifierId) => {
+                  await onStartVerifier(benchPackId, benchPackName, verifierId);
                 }}
                 onStop={async (benchPackId) => {
                   await onStopVerifier(benchPackId);
+                }}
+                onDeleteImage={(benchPackId, benchPackName, verifierId) => {
+                  onDeleteVerifierImage(benchPackId, benchPackName, verifierId);
                 }}
               />
             ) : null}
@@ -6804,13 +6945,15 @@ function VerificationView({
   statuses,
   onUpdate,
   onStart,
-  onStop
+  onStop,
+  onDeleteImage
 }: {
   draft: BenchLocalConfig;
   statuses: Record<string, BenchPackVerifierStatus>;
   onUpdate: (benchPackId: string, verifierId: string, updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig) => void;
-  onStart: (benchPackId: string) => Promise<void>;
+  onStart: (benchPackId: string, benchPackName: string, verifierId: string) => Promise<void>;
   onStop: (benchPackId: string) => Promise<void>;
+  onDeleteImage: (benchPackId: string, benchPackName: string, verifierId: string) => void;
 }) {
   const verificationEntries = Object.entries(draft.benchpacks).filter(([benchPackId]) => {
     const status = statuses[benchPackId];
@@ -6924,7 +7067,7 @@ function VerificationView({
                       ) : (
                         <button
                           type="button"
-                          onClick={() => onStart(benchPackId)}
+                          onClick={() => onStart(benchPackId, benchPackName, verifierId)}
                           className="ghost-button ghost-button-compact"
                           disabled={docker?.state !== "ready"}
                         >
@@ -6932,6 +7075,17 @@ function VerificationView({
                           Start
                         </button>
                       )}
+                      {runtime?.dockerImagePresent ? (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteImage(benchPackId, benchPackName, verifierId)}
+                          className="button-danger ghost-button-compact"
+                          disabled={verifier.mode !== "docker" || docker?.state !== "ready" || runtime?.status === "running"}
+                        >
+                          <Trash2 size={14} />
+                          Delete Image
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -7124,8 +7278,8 @@ function VerifierPreparationModal({
   benchPackName: string;
   verifierId: string;
   message: string;
-  isCancelling: boolean;
-  onCancel: () => void;
+  isCancelling?: boolean;
+  onCancel?: () => void;
 }) {
   return (
     <div className="dialog-backdrop">
@@ -7145,12 +7299,14 @@ function VerifierPreparationModal({
 
         <p className="settings-row-secondary verifier-preparation-message">{message}</p>
 
-        <div className="dialog-footer verifier-preparation-footer">
-          <button type="button" className="button-warn" onClick={onCancel} disabled={isCancelling}>
-            {isCancelling ? <span className="spinner" /> : null}
-            {isCancelling ? "Cancelling..." : "Cancel Run"}
-          </button>
-        </div>
+        {onCancel ? (
+          <div className="dialog-footer verifier-preparation-footer">
+            <button type="button" className="button-warn" onClick={onCancel} disabled={isCancelling}>
+              {isCancelling ? <span className="spinner" /> : null}
+              {isCancelling ? "Cancelling..." : "Cancel Run"}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

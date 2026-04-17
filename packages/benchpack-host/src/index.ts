@@ -2442,12 +2442,43 @@ function formatDockerVerifierUnavailableMessage(benchPackId: string, availabilit
   return `Bench Pack "${benchPackId}" requires Local Docker, but Docker is not running.`;
 }
 
+function resolveVerifierDockerImageRef(
+  benchPackId: string,
+  spec: VerifierSpec,
+  runtime?: BenchLocalVerifierConfig
+): {
+  image?: string;
+  pullImage: boolean;
+} {
+  const configuredImage = runtime?.docker_image ?? spec.docker?.image;
+
+  if (configuredImage) {
+    return {
+      image: configuredImage,
+      pullImage: true
+    };
+  }
+
+  if (spec.docker?.buildContext) {
+    return {
+      image: `benchlocal/${sanitizeRuntimeName(benchPackId)}-${sanitizeRuntimeName(spec.id)}:local`,
+      pullImage: false
+    };
+  }
+
+  return {
+    image: undefined,
+    pullImage: true
+  };
+}
+
 async function resolveDockerVerifierEndpoint(
   benchPackId: string,
   spec: VerifierSpec,
   config?: BenchLocalVerifierConfig
 ): Promise<VerifierEndpoint> {
   const docker = await detectDockerAvailability();
+  const { image } = resolveVerifierDockerImageRef(benchPackId, spec, config);
 
   if (!docker.available) {
     return {
@@ -2456,7 +2487,8 @@ async function resolveDockerVerifierEndpoint(
       mode: "docker",
       required: spec.required,
       status: docker.state === "not_running" ? "dependency_not_running" : "missing_dependency",
-      details: docker.details
+      details: docker.details,
+      dockerImagePresent: false
     };
   }
 
@@ -2478,6 +2510,7 @@ async function resolveDockerVerifierEndpoint(
       : container.exists
         ? "stopped"
         : "stopped";
+  const dockerImagePresent = image ? await inspectDockerImage(image) : false;
 
   return {
     id: spec.id,
@@ -2487,6 +2520,7 @@ async function resolveDockerVerifierEndpoint(
     status,
     url,
     port,
+    dockerImagePresent,
     details: container.running
       ? spec.docker?.image
       : "BenchLocal assigns a free local port automatically when this verifier starts."
@@ -2521,7 +2555,8 @@ async function resolveVerifierEndpoints(
         status,
         url: resolved.url,
         port: resolved.port,
-        details: resolved.details ?? (resolved.url ? undefined : "Verifier URL is not configured.")
+        details: resolved.details ?? (resolved.url ? undefined : "Verifier URL is not configured."),
+        dockerImagePresent: false
       } satisfies VerifierEndpoint;
     })
   );
@@ -2614,14 +2649,10 @@ export async function startConfiguredBenchPackVerifiers(
       continue;
     }
 
-    let image = runtime.docker_image ?? spec.docker?.image;
+    const { image, pullImage } = resolveVerifierDockerImageRef(benchPackId, spec, runtime);
     const listenPort = spec.docker?.listenPort;
-    let pullImage = true;
 
-    if (!image && spec.docker?.buildContext) {
-      image = `benchlocal/${sanitizeRuntimeName(benchPackId)}-${sanitizeRuntimeName(spec.id)}:local`;
-      pullImage = false;
-
+    if (!pullImage && image && spec.docker?.buildContext) {
       if (!(await inspectDockerImage(image))) {
         await options?.onProgress?.({
           verifierId: spec.id,
@@ -2716,6 +2747,74 @@ export async function stopConfiguredBenchPackVerifiers(
   );
 
   return getConfiguredBenchPackVerifierStatus(config, benchPackId);
+}
+
+export async function deleteConfiguredBenchPackVerifierImage(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  verifierId: string
+): Promise<{
+  status: ConfiguredBenchPackVerifierStatus;
+  image: string;
+  removed: boolean;
+}> {
+  const { benchPackConfig, manifest } = await loadConfiguredBenchPackRuntime(config, benchPackId);
+  const spec = getManifestVerifiers(manifest).find((candidate) => candidate.id === verifierId);
+
+  if (!spec) {
+    throw new Error(`Verifier "${verifierId}" was not found for Bench Pack "${benchPackId}".`);
+  }
+
+  const runtime = benchPackConfig.verifiers?.[spec.id] ?? benchPackConfig.sidecars?.[spec.id];
+  const mode = runtime?.mode ?? spec.defaultMode;
+
+  if (mode !== "docker") {
+    throw new Error(`Verifier "${verifierId}" for Bench Pack "${benchPackId}" is not configured for Local Docker.`);
+  }
+
+  const docker = await detectDockerAvailability();
+
+  if (!docker.available) {
+    throw new Error(
+      docker.state === "not_installed"
+        ? `Cannot delete the Docker image for verifier "${verifierId}" because Docker is not installed.`
+        : `Cannot delete the Docker image for verifier "${verifierId}" because Docker is not running.`
+    );
+  }
+
+  const { image } = resolveVerifierDockerImageRef(benchPackId, spec, runtime);
+
+  if (!image) {
+    throw new Error(`Verifier "${verifierId}" for Bench Pack "${benchPackId}" does not define a Docker image.`);
+  }
+
+  const containerName = getVerifierContainerName(benchPackId, spec.id);
+  let removed = false;
+
+  await withVerifierContainerLock(containerName, async () => {
+    const existingEndpoint = await resolveDockerVerifierEndpoint(benchPackId, spec, runtime);
+
+    if (existingEndpoint.status === "running") {
+      throw new Error(`Stop verifier "${verifierId}" before deleting its Docker image.`);
+    }
+
+    // Drop any leftover container reference so the image can be removed cleanly.
+    await stopDockerVerifierContainer(containerName);
+
+    if (!(await inspectDockerImage(image))) {
+      removed = false;
+      return;
+    }
+
+    await runDockerCommand(["image", "rm", image]);
+    removed = true;
+  });
+
+  return {
+    status: await getConfiguredBenchPackVerifierStatus(config, benchPackId),
+    image,
+    removed
+  };
 }
 
 async function executeSerialTestCasesMode(

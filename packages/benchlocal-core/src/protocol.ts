@@ -196,6 +196,7 @@ export interface VerifierEndpoint {
   url?: string;
   port?: number;
   details?: string;
+  dockerImagePresent?: boolean;
 }
 
 export type SidecarEndpoint = VerifierEndpoint;

@@ -11,6 +11,7 @@ import {
   saveWorkspaceStateFile
 } from "@core";
 import {
+  deleteConfiguredBenchPackVerifierImage,
   getConfiguredBenchPackVerifierStatus,
   installBenchPackFromRegistry,
   installBenchPackFromUrl,
@@ -62,6 +63,9 @@ const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const VERIFIERS_LIST_CHANNEL = "benchlocal:verifiers:list";
 const VERIFIERS_START_CHANNEL = "benchlocal:verifiers:start";
 const VERIFIERS_STOP_CHANNEL = "benchlocal:verifiers:stop";
+const VERIFIERS_CANCEL_START_CHANNEL = "benchlocal:verifiers:cancel-start";
+const VERIFIERS_DELETE_IMAGE_CHANNEL = "benchlocal:verifiers:delete-image";
+const VERIFIERS_PROGRESS_CHANNEL = "benchlocal:verifiers:progress";
 const LOGS_OPEN_DETACHED_CHANNEL = "benchlocal:logs:open-detached";
 const LOGS_CLOSE_DETACHED_CHANNEL = "benchlocal:logs:close-detached";
 const LOGS_PUBLISH_STATE_CHANNEL = "benchlocal:logs:publish-state";
@@ -73,6 +77,12 @@ const activeBenchPackRuns = new Map<
     controller: AbortController;
   }
 >();
+const activeVerifierStarts = new Map<
+  string,
+  {
+    controller: AbortController;
+  }
+>();
 
 export async function stopActiveBenchPackRunsForShutdown(
   options?: {
@@ -80,7 +90,7 @@ export async function stopActiveBenchPackRunsForShutdown(
     intervalMs?: number;
   }
 ): Promise<void> {
-  if (activeBenchPackRuns.size === 0) {
+  if (activeBenchPackRuns.size === 0 && activeVerifierStarts.size === 0) {
     return;
   }
 
@@ -88,13 +98,17 @@ export async function stopActiveBenchPackRunsForShutdown(
     activeRun.controller.abort(new Error("Run cancelled because BenchLocal is shutting down."));
   }
 
+  for (const activeStart of activeVerifierStarts.values()) {
+    activeStart.controller.abort(new Error("Verifier start cancelled because BenchLocal is shutting down."));
+  }
+
   const timeoutMs = options?.timeoutMs ?? 15000;
   const intervalMs = options?.intervalMs ?? 50;
   const deadline = Date.now() + timeoutMs;
 
-  while (activeBenchPackRuns.size > 0) {
+  while (activeBenchPackRuns.size > 0 || activeVerifierStarts.size > 0) {
     if (Date.now() >= deadline) {
-      throw new Error("Timed out while waiting for active Bench Pack runs to stop.");
+      throw new Error("Timed out while waiting for active Bench Pack work to stop.");
     }
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -115,6 +129,26 @@ async function waitForBenchPackRunRelease(
   while (activeBenchPackRuns.has(tabId)) {
     if (Date.now() >= deadline) {
       throw new Error("The previous benchmark run is still shutting down. Please wait a moment and try again.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+async function waitForVerifierStartRelease(
+  benchPackId: string,
+  options?: {
+    timeoutMs?: number;
+    intervalMs?: number;
+  }
+): Promise<void> {
+  const timeoutMs = options?.timeoutMs ?? 15000;
+  const intervalMs = options?.intervalMs ?? 50;
+  const deadline = Date.now() + timeoutMs;
+
+  while (activeVerifierStarts.has(benchPackId)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out while waiting for verifier startup "${benchPackId}" to stop.`);
     }
 
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -451,14 +485,65 @@ export function registerIpcHandlers(): void {
     return Promise.all(relevant.map((inspection) => getConfiguredBenchPackVerifierStatus(config, inspection.id)));
   });
 
-  ipcMain.handle(VERIFIERS_START_CHANNEL, async (_event, input: { benchPackId: string }) => {
+  ipcMain.handle(VERIFIERS_START_CHANNEL, async (event, input: { benchPackId: string }) => {
+    const existingActiveStart = activeVerifierStarts.get(input.benchPackId);
+
+    if (existingActiveStart) {
+      if (existingActiveStart.controller.signal.aborted) {
+        await waitForVerifierStartRelease(input.benchPackId);
+      } else {
+        throw new Error(`Verifier startup is already active for Bench Pack "${input.benchPackId}".`);
+      }
+    }
+
     const { config } = await loadOrCreateConfig();
-    return startConfiguredBenchPackVerifiers(config, input.benchPackId);
+    const currentStatus = await getConfiguredBenchPackVerifierStatus(config, input.benchPackId);
+    const controller = new AbortController();
+    activeVerifierStarts.set(input.benchPackId, {
+      controller
+    });
+
+    try {
+      return await startConfiguredBenchPackVerifiers(config, input.benchPackId, {
+        abortSignal: controller.signal,
+        onProgress: (progress) => {
+          event.sender.send(VERIFIERS_PROGRESS_CHANNEL, {
+            benchPackId: input.benchPackId,
+            event: {
+              type: "verifier_preparing",
+              benchPackId: input.benchPackId,
+              benchPackName: currentStatus.benchPackName,
+              verifierId: progress.verifierId,
+              phase: progress.phase,
+              message: progress.message
+            }
+          });
+        }
+      });
+    } finally {
+      activeVerifierStarts.delete(input.benchPackId);
+    }
   });
 
   ipcMain.handle(VERIFIERS_STOP_CHANNEL, async (_event, input: { benchPackId: string }) => {
     const { config } = await loadOrCreateConfig();
     return stopConfiguredBenchPackVerifiers(config, input.benchPackId);
+  });
+
+  ipcMain.handle(VERIFIERS_CANCEL_START_CHANNEL, async (_event, input: { benchPackId: string }) => {
+    const activeStart = activeVerifierStarts.get(input.benchPackId);
+
+    if (!activeStart) {
+      return { cancelled: false };
+    }
+
+    activeStart.controller.abort(new Error("Verifier start cancelled by user."));
+    return { cancelled: true };
+  });
+
+  ipcMain.handle(VERIFIERS_DELETE_IMAGE_CHANNEL, async (_event, input: { benchPackId: string; verifierId: string }) => {
+    const { config } = await loadOrCreateConfig();
+    return deleteConfiguredBenchPackVerifierImage(config, input.benchPackId, input.verifierId);
   });
 
   ipcMain.handle(LOGS_OPEN_DETACHED_CHANNEL, async () => {

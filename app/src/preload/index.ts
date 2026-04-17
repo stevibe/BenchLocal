@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { BenchLocalConfig, BenchLocalWorkspaceState, GenerationRequest, ProgressEvent } from "@core";
-import type { BenchLocalDesktopApi, DetachedLogsState } from "@/shared/desktop-api";
+import type { BenchLocalDesktopApi, BenchPackVerifierPreparationEvent, DetachedLogsState } from "@/shared/desktop-api";
 
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
@@ -10,6 +10,7 @@ const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-progress";
+const VERIFIERS_PROGRESS_CHANNEL = "benchlocal:verifiers:progress";
 const DETACHED_LOGS_STATE_CHANNEL = "benchlocal:logs:state";
 const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
 
@@ -90,7 +91,18 @@ const api: BenchLocalDesktopApi = {
   verifiers: {
     list: () => ipcRenderer.invoke("benchlocal:verifiers:list"),
     start: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:start", input),
-    stop: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:stop", input)
+    stop: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:stop", input),
+    cancelStart: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:verifiers:cancel-start", input),
+    deleteImage: (input: { benchPackId: string; verifierId: string }) =>
+      ipcRenderer.invoke("benchlocal:verifiers:delete-image", input),
+    onProgress: (listener: (payload: { benchPackId: string; event: BenchPackVerifierPreparationEvent }) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: { benchPackId: string; event: BenchPackVerifierPreparationEvent }) => {
+        listener(payload);
+      };
+
+      ipcRenderer.on(VERIFIERS_PROGRESS_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(VERIFIERS_PROGRESS_CHANNEL, wrapped);
+    }
   },
   logs: {
     openDetachedWindow: () => ipcRenderer.invoke("benchlocal:logs:open-detached"),

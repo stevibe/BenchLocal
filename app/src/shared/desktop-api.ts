@@ -46,6 +46,14 @@ export type BenchPackVerifierStatus = {
   verifiers: VerifierEndpoint[];
 };
 
+export type BenchPackVerifierImageDeleteResult = {
+  status: BenchPackVerifierStatus;
+  image: string;
+  removed: boolean;
+};
+
+export type BenchPackVerifierPreparationEvent = Extract<ProgressEvent, { type: "verifier_preparing" }>;
+
 export type BenchPackMutationProgress = {
   benchPackId: string;
   action: "install" | "update" | "uninstall";
@@ -126,6 +134,9 @@ export interface BenchLocalDesktopApi {
     list(): Promise<BenchPackVerifierStatus[]>;
     start(input: { benchPackId: string }): Promise<BenchPackVerifierStatus>;
     stop(input: { benchPackId: string }): Promise<BenchPackVerifierStatus>;
+    cancelStart(input: { benchPackId: string }): Promise<{ cancelled: boolean }>;
+    deleteImage(input: { benchPackId: string; verifierId: string }): Promise<BenchPackVerifierImageDeleteResult>;
+    onProgress(listener: (payload: { benchPackId: string; event: BenchPackVerifierPreparationEvent }) => void): () => void;
   };
   logs: {
     openDetachedWindow(): Promise<{ opened: boolean }>;
