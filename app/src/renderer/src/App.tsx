@@ -49,7 +49,8 @@ import type {
   BenchPackInspection,
   BenchPackManifest,
   BenchPackRunHistoryEntry,
-  BenchPackRunSummary
+  BenchPackRunSummary,
+  ScenarioMeta
 } from "@core";
 import type {
   BenchLocalAppMetadata,
@@ -4561,6 +4562,8 @@ export function App() {
           benchPackName={verifierPreparationModal.progress.benchPackName}
           verifierId={verifierPreparationModal.progress.verifierId}
           message={verifierPreparationModal.progress.message}
+          isCancelling={Boolean(stoppingRuns[verifierPreparationModal.tabId])}
+          onCancel={() => void stopTabRun(verifierPreparationModal.tabId)}
         />
       ) : null}
 
@@ -7114,11 +7117,15 @@ function HistoryModal({
 function VerifierPreparationModal({
   benchPackName,
   verifierId,
-  message
+  message,
+  isCancelling,
+  onCancel
 }: {
   benchPackName: string;
   verifierId: string;
   message: string;
+  isCancelling: boolean;
+  onCancel: () => void;
 }) {
   return (
     <div className="dialog-backdrop">
@@ -7137,6 +7144,13 @@ function VerifierPreparationModal({
         </div>
 
         <p className="settings-row-secondary verifier-preparation-message">{message}</p>
+
+        <div className="dialog-footer verifier-preparation-footer">
+          <button type="button" className="button-warn" onClick={onCancel} disabled={isCancelling}>
+            {isCancelling ? <span className="spinner" /> : null}
+            {isCancelling ? "Cancelling..." : "Cancel Run"}
+          </button>
+        </div>
       </div>
     </div>
   );

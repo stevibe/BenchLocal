@@ -501,7 +501,72 @@ function sanitizeBenchPackVersion(input: string): string {
   return input.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || randomUUID().slice(0, 8);
 }
 
-async function runDockerCommand(args: string[]): Promise<string> {
+function createAbortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+
+  if (reason instanceof Error) {
+    return reason;
+  }
+
+  return new Error("Run cancelled by user.");
+}
+
+async function waitForPromiseWithAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return promise;
+  }
+
+  throwIfAborted(signal);
+
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError(signal));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function waitForAbortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (delayMs <= 0) {
+    throwIfAborted(signal);
+    return;
+  }
+
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return;
+  }
+
+  throwIfAborted(signal);
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError(signal));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function runDockerCommand(args: string[], options?: { abortSignal?: AbortSignal }): Promise<string> {
   const dockerExecutable = await resolveDockerExecutable();
   if (!dockerExecutable) {
     const error = new Error("Docker CLI is not installed.");
@@ -514,7 +579,8 @@ async function runDockerCommand(args: string[]): Promise<string> {
       ...process.env,
       PATH: getNormalizedPathEnv()
     },
-    maxBuffer: 4 * 1024 * 1024
+    maxBuffer: 4 * 1024 * 1024,
+    signal: options?.abortSignal
   });
 
   return stdout.trim();
@@ -581,7 +647,7 @@ function getSimulatedDockerAvailability(): DockerRuntimeAvailability | null {
   return null;
 }
 
-async function maybeDelayVerifierPreparation(): Promise<void> {
+async function maybeDelayVerifierPreparation(abortSignal?: AbortSignal): Promise<void> {
   const raw = process.env.BENCHLOCAL_SIMULATE_VERIFIER_PREP_MS?.trim();
 
   if (!raw) {
@@ -594,7 +660,7 @@ async function maybeDelayVerifierPreparation(): Promise<void> {
     return;
   }
 
-  await new Promise((resolve) => setTimeout(resolve, durationMs));
+  await waitForAbortableDelay(durationMs, abortSignal);
 }
 
 async function runTarCommand(args: string[], options?: { cwd?: string }): Promise<string> {
@@ -750,7 +816,10 @@ async function stopDockerVerifierContainer(containerName: string): Promise<void>
 
 async function withVerifierContainerLock<T>(
   containerName: string,
-  operation: () => Promise<T>
+  operation: () => Promise<T>,
+  options?: {
+    abortSignal?: AbortSignal;
+  }
 ): Promise<T> {
   const previous = verifierContainerLocks.get(containerName) ?? Promise.resolve();
   let release!: () => void;
@@ -760,9 +829,8 @@ async function withVerifierContainerLock<T>(
   const tail = previous.catch(() => undefined).then(() => gate);
   verifierContainerLocks.set(containerName, tail);
 
-  await previous.catch(() => undefined);
-
   try {
+    await waitForPromiseWithAbort(previous.catch(() => undefined), options?.abortSignal);
     return await operation();
   } finally {
     release();
@@ -803,11 +871,12 @@ async function startDockerVerifierContainer(
   listenPort: number,
   options?: {
     pullImage?: boolean;
+    abortSignal?: AbortSignal;
   }
 ): Promise<void> {
   await stopDockerVerifierContainer(containerName);
   if (options?.pullImage !== false) {
-    await runDockerCommand(["pull", image]);
+    await runDockerCommand(["pull", image], { abortSignal: options?.abortSignal });
   }
   const dockerArgs = [
     "run",
@@ -819,11 +888,11 @@ async function startDockerVerifierContainer(
     `${hostPort}:${listenPort}`,
     image
   ];
-  await runDockerCommand(dockerArgs);
+  await runDockerCommand(dockerArgs, { abortSignal: options?.abortSignal });
 }
 
-async function buildDockerVerifierImage(tag: string, contextPath: string): Promise<void> {
-  await runDockerCommand(["build", "-t", tag, contextPath]);
+async function buildDockerVerifierImage(tag: string, contextPath: string, options?: { abortSignal?: AbortSignal }): Promise<void> {
+  await runDockerCommand(["build", "-t", tag, contextPath], { abortSignal: options?.abortSignal });
 }
 
 async function resolveInstalledBenchPackRoot(config: BenchLocalConfig, benchPackId: string): Promise<string | undefined> {
@@ -1648,13 +1717,7 @@ function throwIfAborted(signal?: AbortSignal): void {
     return;
   }
 
-  const reason = signal.reason;
-
-  if (reason instanceof Error) {
-    throw reason;
-  }
-
-  throw new Error("Run cancelled by user.");
+  throw createAbortError(signal);
 }
 
 function compactGenerationRequest(input?: GenerationRequest): GenerationRequest {
@@ -2287,17 +2350,19 @@ async function waitForVerifierReady(
   options?: {
     attempts?: number;
     delayMs?: number;
+    abortSignal?: AbortSignal;
   }
 ): Promise<boolean> {
   const attempts = options?.attempts ?? 12;
   const delayMs = options?.delayMs ?? 500;
 
   for (let index = 0; index < attempts; index += 1) {
+    throwIfAborted(options?.abortSignal);
     if ((await probeVerifier(url, healthcheckPath)) === "running") {
       return true;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await waitForAbortableDelay(delayMs, options?.abortSignal);
   }
 
   return false;
@@ -2563,9 +2628,11 @@ export async function startConfiguredBenchPackVerifiers(
           phase: "building_image",
           message: "Building the local verifier image."
         });
-        await maybeDelayVerifierPreparation();
+        await maybeDelayVerifierPreparation(options?.abortSignal);
         throwIfAborted(options?.abortSignal);
-        await buildDockerVerifierImage(image, path.resolve(rootDir, spec.docker.buildContext));
+        await buildDockerVerifierImage(image, path.resolve(rootDir, spec.docker.buildContext), {
+          abortSignal: options?.abortSignal
+        });
       }
     }
 
@@ -2597,7 +2664,7 @@ export async function startConfiguredBenchPackVerifiers(
           phase: "pulling_image",
           message: `Pulling verifier image ${image}.`
         });
-        await maybeDelayVerifierPreparation();
+        await maybeDelayVerifierPreparation(options?.abortSignal);
         throwIfAborted(options?.abortSignal);
       }
 
@@ -2606,7 +2673,7 @@ export async function startConfiguredBenchPackVerifiers(
         phase: "starting_container",
         message: `Starting verifier ${spec.id}.`
       });
-      await maybeDelayVerifierPreparation();
+      await maybeDelayVerifierPreparation(options?.abortSignal);
       throwIfAborted(options?.abortSignal);
       await startDockerVerifierContainer(
         containerName,
@@ -2614,7 +2681,8 @@ export async function startConfiguredBenchPackVerifiers(
         hostPort,
         listenPort,
         {
-          pullImage
+          pullImage,
+          abortSignal: options?.abortSignal
         }
       );
 
@@ -2623,13 +2691,14 @@ export async function startConfiguredBenchPackVerifiers(
         phase: "waiting_for_healthcheck",
         message: "Waiting for the verifier health check to pass."
       });
-      await maybeDelayVerifierPreparation();
+      await maybeDelayVerifierPreparation(options?.abortSignal);
       throwIfAborted(options?.abortSignal);
       await waitForVerifierReady(
         `http://127.0.0.1:${hostPort}`,
-        spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath
+        spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath,
+        { abortSignal: options?.abortSignal }
       );
-    });
+    }, { abortSignal: options?.abortSignal });
   }
 
   return getConfiguredBenchPackVerifierStatus(config, benchPackId);

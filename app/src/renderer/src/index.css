@@ -2188,6 +2188,12 @@ pre {
   padding-top: 28px;
 }
 
+.verifier-preparation-footer {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .history-dialog-shell {
   width: min(1180px, calc(100vw - 48px));
 }
