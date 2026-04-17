@@ -243,6 +243,12 @@ async function createMainWindow(): Promise<void> {
     });
   });
 
+  window.on("closed", () => {
+    if (isMac && !isQuittingAfterBenchPackShutdown) {
+      app.quit();
+    }
+  });
+
   if (!isDev) {
     window.webContents.on("before-input-event", (event, input) => {
       const isReloadShortcut =
