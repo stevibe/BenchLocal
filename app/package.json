@@ -2,7 +2,7 @@
   "name": "benchlocal-app",
   "productName": "BenchLocal",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "BenchLocal desktop app for running and managing LLM Bench Packs.",
   "author": "stevibe",
   "type": "module",
