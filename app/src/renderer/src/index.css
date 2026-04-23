@@ -2873,6 +2873,14 @@ select.config-input {
   gap: 18px;
 }
 
+.settings-models-filter-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(180px, 0.8fr) minmax(260px, 1.4fr);
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
 .benchpack-action-button {
   min-height: 32px;
   height: 32px;
@@ -3383,6 +3391,10 @@ select.config-input {
   .advanced-grid,
   .entry-grid.two-col,
   .entry-grid.four-col {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-models-filter-row {
     grid-template-columns: 1fr;
   }
 
