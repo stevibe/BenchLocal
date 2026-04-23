@@ -561,6 +561,28 @@ function normalizeTabModelSelections(
     }));
 }
 
+function normalizeEditableTabModelSelections(
+  selections: BenchLocalWorkspaceTabModelSelection[]
+): BenchLocalWorkspaceTabModelSelection[] {
+  const seen = new Set<string>();
+
+  return selections
+    .filter((selection) => {
+      const modelId = selection.modelId.trim();
+
+      if (!modelId || seen.has(modelId)) {
+        return false;
+      }
+
+      seen.add(modelId);
+      return true;
+    })
+    .map((selection) => ({
+      modelId: selection.modelId.trim(),
+      alias: selection.alias
+    }));
+}
+
 function getTableScrollbarThumbWidth(metrics: {
   clientWidth: number;
   scrollWidth: number;
@@ -5797,10 +5819,10 @@ function TabModelsModal({
   const [groupFilter, setGroupFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const enabledModels = models.filter((model) => model.enabled);
-  const normalizedSelections = normalizeTabModelSelections(selections);
-  const selectionMap = new Map(normalizedSelections.map((selection) => [selection.modelId, selection]));
+  const editableSelections = normalizeEditableTabModelSelections(selections);
+  const selectionMap = new Map(editableSelections.map((selection) => [selection.modelId, selection]));
   const availableIds = new Set(enabledModels.map((model) => model.id));
-  const orderedSelectedIds = normalizedSelections.map((selection) => selection.modelId).filter((modelId) => availableIds.has(modelId));
+  const orderedSelectedIds = editableSelections.map((selection) => selection.modelId).filter((modelId) => availableIds.has(modelId));
   const selectedIdSet = new Set(orderedSelectedIds);
   const providerOptions = [
     { value: "all", label: "All Providers" },
@@ -5846,16 +5868,16 @@ function TabModelsModal({
   const toggleModel = (modelId: string, enabled: boolean) => {
     if (enabled) {
       const existing = selectionMap.get(modelId);
-      onChange([...normalizedSelections, { modelId, alias: existing?.alias }]);
+      onChange([...editableSelections, { modelId, alias: existing?.alias }]);
       return;
     }
 
-    onChange(normalizedSelections.filter((selection) => selection.modelId !== modelId));
+    onChange(editableSelections.filter((selection) => selection.modelId !== modelId));
   };
 
   const updateAlias = (modelId: string, alias: string) => {
-    const next = normalizedSelections.map((selection) =>
-      selection.modelId === modelId ? { ...selection, alias: alias.trim() || undefined } : selection
+    const next = editableSelections.map((selection) =>
+      selection.modelId === modelId ? { ...selection, alias: alias || undefined } : selection
     );
     onChange(next);
   };
@@ -5865,7 +5887,7 @@ function TabModelsModal({
       return;
     }
 
-    const next = [...normalizedSelections];
+    const next = [...editableSelections];
     const fromIndex = next.findIndex((selection) => selection.modelId === draggedId);
     const toIndex = next.findIndex((selection) => selection.modelId === targetId);
 
