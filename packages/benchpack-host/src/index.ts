@@ -367,6 +367,7 @@ function getNormalizedPathEnv(): string {
     "/usr/sbin",
     "/sbin",
     "/Applications/Docker.app/Contents/Resources/bin",
+    "/Applications/OrbStack.app/Contents/MacOS/xbin",
     "/Applications/OrbStack.app/Contents/MacOS/bin"
   ]) {
     pathEntries.add(candidate);
@@ -386,6 +387,7 @@ async function resolveDockerExecutable(): Promise<string | null> {
         "/usr/local/bin/docker",
         "/opt/homebrew/bin/docker",
         "/Applications/Docker.app/Contents/Resources/bin/docker",
+        "/Applications/OrbStack.app/Contents/MacOS/xbin/docker",
         "/Applications/OrbStack.app/Contents/MacOS/bin/docker"
       ];
 
@@ -1214,6 +1216,38 @@ async function copyIfPresent(sourcePath: string, targetPath: string): Promise<vo
   await fs.cp(sourcePath, targetPath, { recursive: true });
 }
 
+function isErrnoExceptionWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof (error as NodeJS.ErrnoException).code === "string" &&
+    (error as NodeJS.ErrnoException).code === code
+  );
+}
+
+async function moveDirectory(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, targetPath);
+    return;
+  } catch (error) {
+    if (!isErrnoExceptionWithCode(error, "EXDEV")) {
+      throw error;
+    }
+  }
+
+  try {
+    await fs.cp(sourcePath, targetPath, {
+      recursive: true,
+      force: false,
+      errorOnExist: true
+    });
+    await fs.rm(sourcePath, { recursive: true, force: true });
+  } catch (error) {
+    await fs.rm(targetPath, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function hydrateBenchLocalRuntimeDependencies(rootDir: string): Promise<void> {
   const runtimeRoot = await resolveBenchLocalRuntimeRoot();
   const nodeModulesRoot = path.join(rootDir, "node_modules");
@@ -1344,7 +1378,7 @@ async function commitStagedBenchPackInstall(
   const versionKey = `${sanitizeBenchPackVersion(version)}-${randomUUID().slice(0, 8)}`;
   const finalVersionDir = path.join(getBenchPackVersionsDir(baseDir), versionKey);
 
-  await fs.rename(stagedDir, finalVersionDir);
+  await moveDirectory(stagedDir, finalVersionDir);
   if (stagingRoot) {
     await fs.rm(stagingRoot, { recursive: true, force: true });
   }
