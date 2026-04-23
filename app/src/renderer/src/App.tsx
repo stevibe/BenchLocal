@@ -312,6 +312,10 @@ const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: str
   { value: "full_parallel", label: "Parallel for All" }
 ];
 
+function supportsLiveScenarioColumnFocus(executionMode: BenchLocalExecutionMode): boolean {
+  return executionMode !== "parallel_by_model" && executionMode !== "full_parallel";
+}
+
 const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
 
 const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: string }> = [
@@ -2530,7 +2534,7 @@ export function App() {
       ...current,
       [tab.id]: {
         liveScenarioId: null,
-        autoFollow: true
+        autoFollow: supportsLiveScenarioColumnFocus(runSummary.executionMode ?? tab.executionMode)
       }
     }));
 
@@ -2559,7 +2563,7 @@ export function App() {
             }
           };
         });
-        if (leadScenarioId) {
+        if (leadScenarioId && supportsLiveScenarioColumnFocus(runSummary.executionMode ?? tab.executionMode)) {
           setLiveScenarioFocus((current) => ({
             ...current,
             [tab.id]: {
@@ -4198,12 +4202,15 @@ export function App() {
 	                            liveRun={activeLiveRun}
                               loadedHistory={activeLoadedHistory}
 	                            focusedScenarioId={
-                                activeRuns[activeTab.id] && activeLiveScenarioFocus?.autoFollow && activeLiveScenarioFocus.liveScenarioId
+                                activeRuns[activeTab.id] &&
+                                supportsLiveScenarioColumnFocus(activeTab.executionMode) &&
+                                activeLiveScenarioFocus?.autoFollow &&
+                                activeLiveScenarioFocus.liveScenarioId
                                   ? activeLiveScenarioFocus.liveScenarioId
                                   : activeTab.focusedScenarioId
                               }
 	                            onFocusScenario={(scenarioId) => {
-                                  if (activeRuns[activeTab.id]) {
+                                  if (activeRuns[activeTab.id] && supportsLiveScenarioColumnFocus(activeTab.executionMode)) {
                                     setLiveScenarioFocus((current) => {
                                       const existing = current[activeTab.id];
                                       const liveScenarioId = existing?.liveScenarioId ?? null;
@@ -5201,6 +5208,9 @@ function BenchmarkSection({
   });
   const scenarios = inspection.scenarios ?? [];
   const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
+  const highlightedScenarioId = supportsLiveScenarioColumnFocus(executionMode)
+    ? currentScenario?.id ?? null
+    : focusedScenarioId;
   const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
   const isReplayMode = loadedHistory?.mode === "replay";
   const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
@@ -5628,7 +5638,7 @@ function BenchmarkSection({
                       {scenarios.map((scenario) => (
                         <th
                           key={scenario.id}
-                          className={`${scenario.id === currentScenario?.id ? "active-column selected-column" : ""}`}
+                          className={`${scenario.id === highlightedScenarioId ? "active-column selected-column" : ""}`}
                         >
                           <div className="column-heading">
                             <button
@@ -5673,7 +5683,7 @@ function BenchmarkSection({
                         {scenarios.map((scenario) => (
                           <td
                             key={`${model.id}-${scenario.id}`}
-                            className={`result-icon-cell ${scenario.id === currentScenario?.id ? "active-column" : ""}`}
+                            className={`result-icon-cell ${scenario.id === highlightedScenarioId ? "active-column" : ""}`}
                           >
                             {renderResultCell(model.id, scenario.id)}
                           </td>
