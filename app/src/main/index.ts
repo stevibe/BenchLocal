@@ -5,6 +5,7 @@ import { getBenchLocalHome, loadOrCreateConfig } from "@core";
 import { loadAppMetadata } from "./app-metadata";
 import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers, stopActiveBenchPackRunsForShutdown } from "./ipc";
 import { loadAvailableTheme } from "./themes";
+import { checkForAppUpdatesInteractively, initializeAppUpdater } from "./updater";
 
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
@@ -83,6 +84,10 @@ function buildApplicationMenu(appName: string): void {
     target?.webContents.send(APP_OPEN_SETTINGS_CHANNEL);
   };
 
+  const checkForUpdates = () => {
+    void checkForAppUpdatesInteractively();
+  };
+
   const appSubmenu: MenuItemConstructorOptions[] = isMac
     ? [
         { role: "about" },
@@ -91,6 +96,10 @@ function buildApplicationMenu(appName: string): void {
           label: "Settings",
           accelerator: "CmdOrCtrl+,",
           click: openSettings
+        },
+        {
+          label: "Check for Updates…",
+          click: checkForUpdates
         },
         { role: "services" },
         { type: "separator" },
@@ -109,6 +118,10 @@ function buildApplicationMenu(appName: string): void {
           label: "Settings",
           accelerator: "CmdOrCtrl+,",
           click: openSettings
+        },
+        {
+          label: "Check for Updates…",
+          click: checkForUpdates
         },
         ...(isDev
           ? [
@@ -287,6 +300,7 @@ app.whenReady().then(async () => {
     ...(appMetadata.copyright ? { copyright: appMetadata.copyright } : {})
   });
   registerIpcHandlers();
+  initializeAppUpdater();
   buildApplicationMenu(appMetadata.productName);
   await createMainWindow();
 

@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "lucide-react": "^1.7.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -46,8 +47,15 @@
     "appId": "com.stevibe.benchlocal",
     "productName": "BenchLocal",
     "electronVersion": "37.2.0",
+    "electronUpdaterCompatibility": ">=2.16",
     "directories": {
       "output": "dist"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "stevibe",
+      "repo": "BenchLocal",
+      "tagNamePrefix": "v"
     },
     "files": [
       "out/**/*",

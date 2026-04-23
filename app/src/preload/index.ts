@@ -7,6 +7,10 @@ const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
 const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
+const APP_UPDATE_GET_STATE_CHANNEL = "benchlocal:updates:get-state";
+const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
+const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
+const APP_UPDATE_STATE_CHANNEL = "benchlocal:updates:state";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-progress";
@@ -32,6 +36,19 @@ const api: BenchLocalDesktopApi = {
 
       ipcRenderer.on(APP_OPEN_SETTINGS_CHANNEL, wrapped);
       return () => ipcRenderer.removeListener(APP_OPEN_SETTINGS_CHANNEL, wrapped);
+    }
+  },
+  updates: {
+    state: () => ipcRenderer.invoke(APP_UPDATE_GET_STATE_CHANNEL),
+    check: () => ipcRenderer.invoke(APP_UPDATE_CHECK_CHANNEL),
+    install: () => ipcRenderer.invoke(APP_UPDATE_INSTALL_CHANNEL),
+    onState: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => {
+        listener(state);
+      };
+
+      ipcRenderer.on(APP_UPDATE_STATE_CHANNEL, wrapped);
+      return () => ipcRenderer.removeListener(APP_UPDATE_STATE_CHANNEL, wrapped);
     }
   },
   config: {

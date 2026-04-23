@@ -263,6 +263,11 @@ pre {
   gap: 10px;
 }
 
+.header-update-button {
+  min-height: 34px;
+  padding: 0.5rem 0.95rem;
+}
+
 .primary-button,
 .ghost-button,
 .button-danger,
@@ -1786,6 +1791,12 @@ pre {
   gap: 12px;
 }
 
+.banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .banner-dismiss {
   width: 24px;
   height: 24px;
@@ -3200,7 +3211,7 @@ select.config-input {
 
 .about-dialog-shell {
   position: relative;
-  width: min(360px, calc(100vw - 48px));
+  width: min(460px, calc(100vw - 48px));
   padding: 18px 20px 26px;
   border-radius: 22px;
   background: var(--surface);
@@ -3252,6 +3263,87 @@ select.config-input {
   font-size: 0.9rem;
   font-weight: 560;
   opacity: 0.86;
+}
+
+.about-dialog-update-card {
+  width: 100%;
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-elevated);
+  display: grid;
+  gap: 12px;
+}
+
+.about-dialog-update-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.about-dialog-update-message,
+.about-dialog-update-meta {
+  margin: 0;
+  color: var(--ink);
+}
+
+.about-dialog-update-message {
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.about-dialog-update-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.about-dialog-update-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.about-dialog-update-progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+}
+
+.about-dialog-update-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+}
+
+.about-dialog-update-progress-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.about-dialog-update-notes {
+  margin: 0;
+  padding: 12px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.about-dialog-update-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .history-dialog-shell .dialog-footer {

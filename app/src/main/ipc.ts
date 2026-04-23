@@ -31,12 +31,16 @@ import {
 import { closeDetachedLogsWindow, openDetachedLogsWindow, publishDetachedLogsState } from "./log-window";
 import { loadAppMetadata } from "./app-metadata";
 import { listAvailableThemes, loadAvailableTheme } from "./themes";
+import { checkForAppUpdates, getAppUpdateState, installDownloadedAppUpdate } from "./updater";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
 const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
 export const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 export const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
+const APP_UPDATE_GET_STATE_CHANNEL = "benchlocal:updates:get-state";
+const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
+const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
@@ -295,6 +299,18 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(APP_METADATA_CHANNEL, async () => {
     return loadAppMetadata();
+  });
+
+  ipcMain.handle(APP_UPDATE_GET_STATE_CHANNEL, async () => {
+    return getAppUpdateState();
+  });
+
+  ipcMain.handle(APP_UPDATE_CHECK_CHANNEL, async () => {
+    return checkForAppUpdates();
+  });
+
+  ipcMain.handle(APP_UPDATE_INSTALL_CHANNEL, async () => {
+    return installDownloadedAppUpdate();
   });
 
   ipcMain.handle(MODELS_DISCOVER_CHANNEL, async (_event, input: { provider: BenchLocalProviderConfig }) => {

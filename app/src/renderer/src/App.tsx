@@ -54,6 +54,7 @@ import type {
 } from "@core";
 import type {
   BenchLocalAppMetadata,
+  BenchLocalUpdateState,
   BenchPackMutationProgress,
   BenchLocalDiscoveredModel,
   DetachedLogsState,
@@ -62,6 +63,54 @@ import type {
 
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
+
+function describeAppUpdateState(state: BenchLocalUpdateState | null): string {
+  if (!state) {
+    return "Updater is initializing.";
+  }
+
+  if (state.message?.trim()) {
+    return state.message.trim();
+  }
+
+  switch (state.status) {
+    case "unsupported":
+      return "Self-update is unavailable in this BenchLocal build.";
+    case "checking":
+      return "Checking for BenchLocal updates.";
+    case "available":
+      return state.availableVersion
+        ? `BenchLocal ${state.availableVersion} is available. Downloading update.`
+        : "A BenchLocal update is available. Downloading update.";
+    case "downloading":
+      return state.availableVersion
+        ? `Downloading BenchLocal ${state.availableVersion}.`
+        : "Downloading BenchLocal update.";
+    case "downloaded":
+      return state.downloadedVersion
+        ? `BenchLocal ${state.downloadedVersion} is ready to install.`
+        : "A BenchLocal update is ready to install.";
+    case "not_available":
+      return "BenchLocal is up to date.";
+    case "error":
+      return "BenchLocal could not complete the update request.";
+    default:
+      return "BenchLocal can check for updates.";
+  }
+}
+
+function formatAppUpdateCheckedAt(checkedAt?: string): string | null {
+  if (!checkedAt) {
+    return null;
+  }
+
+  const date = new Date(checkedAt);
+  if (Number.isNaN(date.valueOf())) {
+    return null;
+  }
+
+  return date.toLocaleString();
+}
 
 type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
 
@@ -1087,6 +1136,8 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [appMetadata, setAppMetadata] = useState<BenchLocalAppMetadata | null>(null);
+  const [appUpdateState, setAppUpdateState] = useState<BenchLocalUpdateState | null>(null);
+  const [dismissedDownloadedUpdateVersion, setDismissedDownloadedUpdateVersion] = useState<string | null>(null);
   const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
   const [modelBrowserModal, setModelBrowserModal] = useState<ModelBrowserModalState | null>(null);
@@ -1181,6 +1232,9 @@ export function App() {
 
     return activeTabModels;
   }, [draft, activeLoadedHistory, activeRunSummary, activeTabModels]);
+  const downloadedUpdateVersion = appUpdateState?.downloadedVersion ?? appUpdateState?.availableVersion ?? null;
+  const showDownloadedUpdateBanner =
+    appUpdateState?.status === "downloaded" && downloadedUpdateVersion !== dismissedDownloadedUpdateVersion;
   const activeLogEvents = activeLiveRun?.events ?? activeRunSummary?.events ?? [];
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const tabStripShellRef = useRef<HTMLDivElement | null>(null);
@@ -1271,6 +1325,23 @@ export function App() {
       setAvailableThemes(themes);
     } catch (themeError) {
       setError(themeError instanceof Error ? themeError.message : "Failed to load available themes.");
+    }
+  };
+
+  const checkForAppUpdates = async () => {
+    try {
+      const nextState = await window.benchlocal.updates.check();
+      setAppUpdateState(nextState);
+    } catch (updateError) {
+      setError(formatDesktopErrorMessage(updateError) || "Failed to check for BenchLocal updates.");
+    }
+  };
+
+  const installDownloadedAppUpdate = async () => {
+    try {
+      await window.benchlocal.updates.install();
+    } catch (updateError) {
+      setError(formatDesktopErrorMessage(updateError) || "Failed to install the downloaded BenchLocal update.");
     }
   };
 
@@ -1406,6 +1477,32 @@ export function App() {
 
     return () => {
       media.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void window.benchlocal.updates
+      .state()
+      .then((state) => {
+        if (!cancelled) {
+          setAppUpdateState(state);
+        }
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = window.benchlocal.updates.onState((state) => {
+      setAppUpdateState(state);
+
+      if (state.status !== "downloaded") {
+        setDismissedDownloadedUpdateVersion(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
     };
   }, []);
 
@@ -3583,23 +3680,23 @@ export function App() {
 
               {!settingsOpen ? (
                 <div className="toolbar-cluster">
-	                  <BenchPackPickerTrigger
-	                    inspections={readyInspections}
-	                    open={tabMenuOpen}
-	                    setOpen={setTabMenuOpen}
-	                    onCreateTab={(benchPackId) => {
-                        if (activeTab && !activeTab.benchPackId) {
-                          assignBenchPackToTab(activeTab.id, benchPackId);
-                          return;
-                        }
+                  <BenchPackPickerTrigger
+                    inspections={readyInspections}
+                    open={tabMenuOpen}
+                    setOpen={setTabMenuOpen}
+                    onCreateTab={(benchPackId) => {
+                      if (activeTab && !activeTab.benchPackId) {
+                        assignBenchPackToTab(activeTab.id, benchPackId);
+                        return;
+                      }
 
-                        createTab(benchPackId);
-                      }}
-	                    disabled={!activeWorkspace}
-	                  />
-	                  <button
-	                    type="button"
-	                    onClick={() => setSettingsOpen(true)}
+                      createTab(benchPackId);
+                    }}
+                    disabled={!activeWorkspace}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(true)}
                     className="ghost-button"
                     aria-label="Open settings"
                     title="Settings"
@@ -3607,6 +3704,18 @@ export function App() {
                     <Cog size={16} />
                     Settings
                   </button>
+                  {appUpdateState?.status === "downloaded" ? (
+                    <button
+                      type="button"
+                      onClick={() => void installDownloadedAppUpdate()}
+                      className="button-warn header-update-button"
+                      aria-label="Restart BenchLocal to install update"
+                      title={downloadedUpdateVersion ? `Install BenchLocal ${downloadedUpdateVersion}` : "Install BenchLocal update"}
+                    >
+                      <ArrowUp size={16} />
+                      Restart to Update
+                    </button>
+                  ) : null}
                 </div>
               ) : draft ? (
                 <div className="toolbar-cluster">
@@ -3877,6 +3986,22 @@ export function App() {
                         className="banner-dismiss"
                         onClick={() => setAppNotice(null)}
                         aria-label="Dismiss notice"
+                        title="Dismiss"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </Banner>
+                ) : null}
+                {showDownloadedUpdateBanner ? (
+                  <Banner tone="success">
+                    <div className="banner-row">
+                      <span>{describeAppUpdateState(appUpdateState)}</span>
+                      <button
+                        type="button"
+                        className="banner-dismiss"
+                        onClick={() => setDismissedDownloadedUpdateVersion(downloadedUpdateVersion)}
+                        aria-label="Dismiss update notice"
                         title="Dismiss"
                       >
                         <X size={14} />
@@ -4621,7 +4746,13 @@ export function App() {
       ) : null}
 
       {aboutDialogOpen ? (
-        <AboutDialog metadata={appMetadata} onClose={() => setAboutDialogOpen(false)} />
+        <AboutDialog
+          metadata={appMetadata}
+          updateState={appUpdateState}
+          onCheckForUpdates={() => void checkForAppUpdates()}
+          onInstallUpdate={() => void installDownloadedAppUpdate()}
+          onClose={() => setAboutDialogOpen(false)}
+        />
       ) : null}
 
       {workspaceModal ? (
@@ -7326,14 +7457,41 @@ function Banner({ tone, children }: { tone: "success" | "danger" | "neutral" | "
 
 function AboutDialog({
   metadata,
+  updateState,
+  onCheckForUpdates,
+  onInstallUpdate,
   onClose
 }: {
   metadata: BenchLocalAppMetadata | null;
+  updateState: BenchLocalUpdateState | null;
+  onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const productName = metadata?.productName ?? "BenchLocal";
   const version = metadata?.version?.trim();
+  const updateMessage = describeAppUpdateState(updateState);
+  const checkedAtLabel = formatAppUpdateCheckedAt(updateState?.checkedAt);
+  const updateFeedLabel = updateState?.feedLabel?.trim() || "GitHub Releases";
+  const updateFeedUrl = updateState?.feedUrl?.trim();
+  const progressPercent =
+    typeof updateState?.progressPercent === "number" ? Math.max(0, Math.min(100, updateState.progressPercent)) : null;
+  const canCheckForUpdates =
+    updateState?.status !== "checking" &&
+    updateState?.status !== "downloading" &&
+    updateState?.status !== "available" &&
+    updateState?.status !== "unsupported";
+  const updateActionLabel =
+    updateState?.status === "downloaded"
+      ? "Restart to Update"
+      : updateState?.status === "checking"
+        ? "Checking..."
+        : updateState?.status === "downloading" || updateState?.status === "available"
+          ? progressPercent !== null
+            ? `Downloading ${Math.round(progressPercent)}%`
+            : "Downloading..."
+          : "Check for Updates";
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -7371,6 +7529,36 @@ function AboutDialog({
           <h3 className="about-dialog-app-name">{productName}</h3>
           {version ? <p className="about-dialog-version">Version {version}</p> : null}
           {metadata?.copyright ? <p className="about-dialog-copyright">{metadata.copyright}</p> : null}
+          <div className="about-dialog-update-card">
+            <div className="about-dialog-update-header">
+              <span className="eyebrow">Self Update</span>
+              {updateState?.availableVersion ? <span className="status-chip status-idle">v{updateState.availableVersion}</span> : null}
+            </div>
+            <p className="about-dialog-update-message">{updateMessage}</p>
+            <p className="about-dialog-update-meta">
+              Feed: {updateFeedUrl ? `${updateFeedLabel} (${updateFeedUrl})` : updateFeedLabel}
+            </p>
+            {progressPercent !== null ? (
+              <div className="about-dialog-update-progress">
+                <div className="about-dialog-update-progress-track">
+                  <span className="about-dialog-update-progress-fill" style={{ width: `${progressPercent}%` }} />
+                </div>
+                <span className="about-dialog-update-progress-label">{Math.round(progressPercent)}%</span>
+              </div>
+            ) : null}
+            {checkedAtLabel ? <p className="about-dialog-update-meta">Last checked: {checkedAtLabel}</p> : null}
+            {updateState?.releaseNotes ? <pre className="about-dialog-update-notes">{updateState.releaseNotes}</pre> : null}
+            <div className="about-dialog-update-actions">
+              <button
+                type="button"
+                className="primary-button"
+                onClick={updateState?.status === "downloaded" ? onInstallUpdate : onCheckForUpdates}
+                disabled={!canCheckForUpdates && updateState?.status !== "downloaded"}
+              >
+                {updateActionLabel}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

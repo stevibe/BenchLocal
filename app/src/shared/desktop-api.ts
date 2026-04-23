@@ -28,6 +28,24 @@ export type BenchLocalAppMetadata = {
   copyright?: string;
 };
 
+export type BenchLocalUpdateState = {
+  status: "unsupported" | "idle" | "checking" | "available" | "downloading" | "downloaded" | "not_available" | "error";
+  currentVersion: string;
+  feedSource?: "github" | "generic";
+  feedLabel?: string;
+  feedUrl?: string;
+  availableVersion?: string;
+  downloadedVersion?: string;
+  releaseName?: string;
+  releaseNotes?: string;
+  checkedAt?: string;
+  progressPercent?: number;
+  bytesPerSecond?: number;
+  transferred?: number;
+  total?: number;
+  message?: string;
+};
+
 export type ConfigLoadResult = {
   path: string;
   created: boolean;
@@ -75,6 +93,12 @@ export interface BenchLocalDesktopApi {
     metadata(): Promise<BenchLocalAppMetadata>;
     onOpenAbout(listener: () => void): () => void;
     onOpenSettings(listener: () => void): () => void;
+  };
+  updates: {
+    state(): Promise<BenchLocalUpdateState>;
+    check(): Promise<BenchLocalUpdateState>;
+    install(): Promise<{ started: boolean }>;
+    onState(listener: (state: BenchLocalUpdateState) => void): () => void;
   };
   config: {
     load(): Promise<ConfigLoadResult>;
