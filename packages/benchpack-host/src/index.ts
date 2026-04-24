@@ -2187,6 +2187,7 @@ async function startInferenceRelay(
         response.writeHead(
           upstreamResponse.status,
           toNodeHeaders(upstreamResponse.headers, {
+            "content-encoding": undefined,
             "content-length": String(Buffer.byteLength(responseBody)),
             "transfer-encoding": undefined
           })
