@@ -321,6 +321,7 @@ const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
 const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: string }> = [
   { value: "openai_compatible", label: "OpenAI Compatible" },
   { value: "openrouter", label: "OpenRouter" },
+  { value: "huggingface", label: "Hugging Face" },
   { value: "ollama", label: "Ollama" },
   { value: "llamacpp", label: "llama.cpp" },
   { value: "mlx", label: "MLX" },
@@ -384,6 +385,15 @@ function defaultProviderName(kind: BenchLocalProviderKind): string {
   return providerKindLabel(kind);
 }
 
+function defaultProviderApiKeyPlaceholder(kind: BenchLocalProviderKind): string {
+  switch (kind) {
+    case "huggingface":
+      return "hf_...";
+    default:
+      return "sk-or-v1-...";
+  }
+}
+
 function benchPackMutationLabel(mutation: BenchPackMutationState): string {
   switch (mutation.action) {
     case "install":
@@ -401,6 +411,8 @@ function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
   switch (kind) {
     case "openrouter":
       return "https://openrouter.ai/api/v1";
+    case "huggingface":
+      return "https://router.huggingface.co/v1";
     case "ollama":
       return "http://127.0.0.1:11434/v1";
     case "llamacpp":
@@ -439,7 +451,7 @@ function createEmptyModel(providerId = "openrouter"): ModelFormState {
 }
 
 function providerSupportsModelDiscovery(provider?: BenchLocalProviderConfig | null): boolean {
-  return provider?.kind === "openrouter" || provider?.kind === "openai_compatible";
+  return provider?.kind === "openrouter" || provider?.kind === "huggingface" || provider?.kind === "openai_compatible";
 }
 
 function defaultModelLabel(
@@ -4533,7 +4545,7 @@ export function App() {
               label="API Key"
               type="password"
               value={providerModal.form.api_key}
-              placeholder="sk-or-v1-..."
+              placeholder={defaultProviderApiKeyPlaceholder(providerModal.form.kind)}
               onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, api_key: value } } : current)}
             />
             <FieldToggle

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 export type BenchLocalProviderKind =
   | "openrouter"
+  | "huggingface"
   | "ollama"
   | "llamacpp"
   | "mlx"
@@ -84,7 +85,7 @@ export type LoadedBenchLocalConfig = {
 
 const ProviderSchema = z.object({
   kind: z
-    .enum(["openrouter", "ollama", "llamacpp", "mlx", "lmstudio", "pico", "openai_compatible"])
+    .enum(["openrouter", "huggingface", "ollama", "llamacpp", "mlx", "lmstudio", "pico", "openai_compatible"])
     .optional(),
   name: z.string().trim().min(1).optional(),
   enabled: z.boolean().default(true),
@@ -196,6 +197,8 @@ function inferProviderKind(providerId: string): BenchLocalProviderKind {
   switch (providerId) {
     case "openrouter":
       return "openrouter";
+    case "huggingface":
+      return "huggingface";
     case "ollama":
       return "ollama";
     case "llamacpp":
@@ -215,6 +218,8 @@ function inferProviderName(providerId: string, kind: BenchLocalProviderKind): st
   switch (kind) {
     case "openrouter":
       return "OpenRouter";
+    case "huggingface":
+      return "Hugging Face";
     case "ollama":
       return "Ollama";
     case "llamacpp":

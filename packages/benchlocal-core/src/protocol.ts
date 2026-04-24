@@ -163,7 +163,7 @@ export interface ScenarioMeta {
 
 export interface ProviderConfig {
   id: string;
-  kind: "openrouter" | "ollama" | "llamacpp" | "mlx" | "lmstudio" | "pico" | "openai_compatible";
+  kind: "openrouter" | "huggingface" | "ollama" | "llamacpp" | "mlx" | "lmstudio" | "pico" | "openai_compatible";
   name: string;
   enabled: boolean;
   baseUrl: string;

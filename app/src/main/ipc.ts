@@ -160,7 +160,7 @@ async function waitForVerifierStartRelease(
 }
 
 function providerSupportsModelDiscovery(provider: BenchLocalProviderConfig): boolean {
-  return provider.kind === "openrouter" || provider.kind === "openai_compatible";
+  return provider.kind === "openrouter" || provider.kind === "huggingface" || provider.kind === "openai_compatible";
 }
 
 async function getBenchLocalRuntimeCompatibility() {
