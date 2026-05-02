@@ -205,6 +205,7 @@ type GenerationRequest = {
   top_k?: number;
   min_p?: number;
   repetition_penalty?: number;
+  max_tokens?: number;
   request_timeout_seconds?: number;
 };
 ```
@@ -213,7 +214,7 @@ Behavior:
 
 - if a field is present, the pack may forward it to the provider client
 - if a field is omitted, BenchLocal may still supply a platform default before the pack receives the request
-- BenchLocal currently applies `request_timeout_seconds: 300` unless the pack or user overrides it
+- BenchLocal currently applies `max_tokens: 2048` and `request_timeout_seconds: 300` unless the pack or user overrides them
 
 This allows:
 

@@ -249,12 +249,15 @@ export interface GenerationRequest {
   top_k?: number;
   min_p?: number;
   repetition_penalty?: number;
+  max_tokens?: number;
   request_timeout_seconds?: number;
 }
 
 export const DEFAULT_BENCHLOCAL_REQUEST_TIMEOUT_SECONDS = 300;
+export const DEFAULT_BENCHLOCAL_MAX_TOKENS = 2048;
 
 export const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = {
+  max_tokens: DEFAULT_BENCHLOCAL_MAX_TOKENS,
   request_timeout_seconds: DEFAULT_BENCHLOCAL_REQUEST_TIMEOUT_SECONDS
 };
 
@@ -370,6 +373,17 @@ export interface ScenarioResultEvent {
 export interface ScenarioFinishedEvent {
   type: "scenario_finished";
   scenarioId: string;
+  generation?: GenerationRequest;
+  results?: Array<{
+    modelId: string;
+    status: ScenarioResult["status"];
+    score?: number;
+    provider?: {
+      finishReason?: string | null;
+      usage?: Record<string, unknown>;
+      contentLength?: number;
+    };
+  }>;
 }
 
 export interface RunFinishedEvent {

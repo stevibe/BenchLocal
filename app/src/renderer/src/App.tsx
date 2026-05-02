@@ -193,6 +193,7 @@ type SamplingFormState = {
   top_k: string;
   min_p: string;
   repetition_penalty: string;
+  max_tokens: string;
   request_timeout_seconds: string;
 };
 
@@ -290,7 +291,7 @@ type BenchPackRunBlocker = {
 
 type BenchPackMutationState = BenchPackMutationProgress;
 const THIRD_PARTY_INSTALL_MUTATION_ID = "__third_party_install__";
-const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = { request_timeout_seconds: 300 };
+const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = { max_tokens: 2048, request_timeout_seconds: 300 };
 
 function isAbortLikeError(error: unknown): boolean {
   return error instanceof Error && /abort|cancel/i.test(error.name + " " + error.message);
@@ -347,6 +348,7 @@ const SAMPLING_FIELDS: Array<{
   { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
   { key: "min_p", label: "Min P", placeholder: "Leave blank" },
   { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
+  { key: "max_tokens", label: "Max Tokens", placeholder: "Leave blank", integer: true },
   { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
 ];
 
@@ -475,6 +477,7 @@ function createSamplingForm(input?: GenerationRequest): SamplingFormState {
     top_k: input?.top_k?.toString() ?? "",
     min_p: input?.min_p?.toString() ?? "",
     repetition_penalty: input?.repetition_penalty?.toString() ?? "",
+    max_tokens: input?.max_tokens?.toString() ?? "",
     request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
   };
 }

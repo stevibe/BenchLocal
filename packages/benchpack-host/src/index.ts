@@ -1616,6 +1616,7 @@ type LoadedBenchPackRuntime = {
         top_k?: number;
         min_p?: number;
         repetition_penalty?: number;
+        max_tokens?: number;
         request_timeout_seconds?: number;
       };
     }, emit: (event: ProgressEvent) => Promise<void> | void) => Promise<ScenarioResult>;
@@ -1814,6 +1815,29 @@ function mergeResultsByModel(
   }
 
   return merged;
+}
+
+function scenarioFinishedEvent(
+  scenarioId: string,
+  generation: GenerationRequest,
+  results: Array<{ modelId: string; result: ScenarioResult }>
+): Extract<ProgressEvent, { type: "scenario_finished" }> {
+  type ProviderDiagnostics = NonNullable<Extract<ProgressEvent, { type: "scenario_finished" }>["results"]>[number]["provider"];
+  type ScenarioResultWithRuntimeDiagnostics = ScenarioResult & {
+    __providerDiagnostics?: ProviderDiagnostics;
+  };
+
+  return {
+    type: "scenario_finished",
+    scenarioId,
+    generation,
+    results: results.map(({ modelId, result }) => ({
+      modelId,
+      status: result.status,
+      score: result.score,
+      provider: (result as ScenarioResultWithRuntimeDiagnostics).__providerDiagnostics
+    }))
+  };
 }
 
 function hasCompleteRunResults(summary: BenchPackRunSummary): boolean {
@@ -2899,10 +2923,14 @@ async function executeSerialTestCasesMode(
       await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
     }
 
-    await emit({
-      type: "scenario_finished",
-      scenarioId: scenario.id
-    });
+    await emit(scenarioFinishedEvent(
+      scenario.id,
+      generation,
+      runnableModels.map((model) => ({
+        modelId: model.id,
+        result: resultsByModel[model.id].find((result) => result.scenarioId === scenario.id)!
+      }))
+    ));
   }
 }
 
@@ -2973,6 +3001,7 @@ async function executeSerialByModelMode(
 ): Promise<void> {
   const startedScenarios = new Set<string>();
   const finishedCounts = new Map<string, number>();
+  const finishedResults = new Map<string, Array<{ modelId: string; result: ScenarioResult }>>();
   const expectedCounts = new Map(
     scenarios.map((scenario) => [
       scenario.id,
@@ -3016,15 +3045,16 @@ async function executeSerialByModelMode(
 
       resultsByModel[model.id].push(result);
       await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
+      finishedResults.set(scenario.id, [
+        ...(finishedResults.get(scenario.id) ?? []),
+        { modelId: model.id, result }
+      ]);
 
       const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
       finishedCounts.set(scenario.id, completedCount);
 
       if (completedCount >= (expectedCounts.get(scenario.id) ?? 0)) {
-        await emit({
-          type: "scenario_finished",
-          scenarioId: scenario.id
-        });
+        await emit(scenarioFinishedEvent(scenario.id, generation, finishedResults.get(scenario.id) ?? []));
       }
     }
   }
@@ -3044,6 +3074,7 @@ async function executeParallelModelsMode(
 ): Promise<void> {
   const startedScenarios = new Set<string>();
   const finishedCounts = new Map<string, number>();
+  const finishedResults = new Map<string, Array<{ modelId: string; result: ScenarioResult }>>();
   const expectedCounts = new Map(
     scenarios.map((scenario) => [
       scenario.id,
@@ -3088,15 +3119,16 @@ async function executeParallelModelsMode(
 
         resultsByModel[model.id].push(result);
         await emit({ type: "scenario_result", modelId: model.id, scenarioId: scenario.id, result });
+        finishedResults.set(scenario.id, [
+          ...(finishedResults.get(scenario.id) ?? []),
+          { modelId: model.id, result }
+        ]);
 
         const completedCount = (finishedCounts.get(scenario.id) ?? 0) + 1;
         finishedCounts.set(scenario.id, completedCount);
 
         if (completedCount >= (expectedCounts.get(scenario.id) ?? 0)) {
-          await emit({
-            type: "scenario_finished",
-            scenarioId: scenario.id
-          });
+          await emit(scenarioFinishedEvent(scenario.id, generation, finishedResults.get(scenario.id) ?? []));
         }
       })
     );
@@ -3155,10 +3187,7 @@ async function executeParallelTestCasesMode(
       await emit({ type: "scenario_result", modelId, scenarioId: scenario.id, result });
     }
 
-    await emit({
-      type: "scenario_finished",
-      scenarioId: scenario.id
-    });
+    await emit(scenarioFinishedEvent(scenario.id, generation, scenarioResults));
   }
 }
 
@@ -3215,10 +3244,7 @@ async function executeFullParallelMode(
         await emit({ type: "scenario_result", modelId, scenarioId: scenario.id, result });
       }
 
-      await emit({
-        type: "scenario_finished",
-        scenarioId: scenario.id
-      });
+      await emit(scenarioFinishedEvent(scenario.id, generation, scenarioResults));
     })
   );
 }
@@ -3548,10 +3574,7 @@ export async function retryScenarioForBenchPackRun(
         scenarioId: scenario.id,
         result
       });
-      await emit({
-        type: "scenario_finished",
-        scenarioId: scenario.id
-      });
+      await emit(scenarioFinishedEvent(scenario.id, generation, [{ modelId: model.id, result }]));
 
       return await withRunSummaryLock(`${benchPackId}:${existingSummary.runId}`, async () => {
         const latestSummary = await loadRunSummaryForBenchPack(config, benchPackId, existingSummary.runId);
