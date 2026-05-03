@@ -185,7 +185,7 @@ Behavior:
 
 - if a Bench Pack provides a default, BenchLocal uses it unless the user overrides it in that tab
 - if a field is omitted, BenchLocal falls back to platform defaults where defined
-- BenchLocal currently applies `request_timeout_seconds: 300` unless your pack or the user overrides it
+- BenchLocal currently applies `max_tokens: 2048` and `request_timeout_seconds: 300` unless your pack or the user overrides them
 
 ## Compatibility requirements
 

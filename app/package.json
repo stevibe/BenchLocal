@@ -20,11 +20,21 @@
     "build:mac": "npm run build:compile && npm run package:mac",
     "build:win": "npm run build:compile && npm run package:win",
     "build:linux": "npm run build:compile && npm run package:linux",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "web:dev:renderer": "vite --config vite.config.web.ts",
+    "web:dev:server": "tsx watch src/server/index.ts",
+    "web:dev": "concurrently \"npm run web:dev:renderer\" \"npm run web:dev:server\"",
+    "web:build": "npm run build:compile && vite build --config vite.config.web.ts && esbuild src/server/index.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=../dist/server/index.mjs --external:@benchlocal/*",
+    "preweb:start": "npm run web:build",
+    "web:start": "node ../dist/server/index.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.6.2",
     "lucide-react": "^1.7.0",
+    "@benchlocal/benchpack-host": "file:../packages/benchpack-host",
+    "@benchlocal/core": "file:../packages/benchlocal-core",
+    "@fastify/static": "^8.0.0",
+    "fastify": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -41,6 +51,9 @@
     "postcss": "^8.5.1",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3",
+    "concurrently": "^9.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.0.0",
     "vite": "^6.3.5"
   },
   "build": {

@@ -1,36 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import benchlocalIcon from "../../../assets/benchlocal-icon.png";
-import {
-  ArrowRight,
-  ArrowUp,
-  CircleAlert,
-  Check,
-  Bot,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Cog,
-  FolderOpen,
-  GripVertical,
-  LayoutList,
-  Logs,
-  Pencil,
-  Palette,
-  Play,
-  PlugZap,
-  Plus,
-  RotateCcw,
-  Save,
-  Square,
-  Server,
-  Sidebar,
-  SlidersHorizontal,
-  Trash2,
-  Wrench,
-  X
-} from "lucide-react";
 import type {
-  BenchPackRegistryEntry,
   BenchLocalConfig,
   BenchLocalExecutionMode,
   BenchLocalModelConfig,
@@ -43,30 +11,64 @@ import type {
   BenchLocalWorkspaceState,
   BenchLocalWorkspaceTab,
   BenchLocalWorkspaceTabModelSelection,
-  GenerationRequest,
-  ProgressEvent,
-  ScenarioResult,
   BenchPackInspection,
   BenchPackManifest,
+  BenchPackRegistryEntry,
   BenchPackRunHistoryEntry,
   BenchPackRunSummary,
-  ScenarioMeta
-} from "@core";
+  GenerationRequest,
+  ProgressEvent,
+  ScenarioMeta,
+  ScenarioResult,
+} from '@core';
+import {
+  ArrowRight,
+  ArrowUp,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  Cog,
+  FolderOpen,
+  GripVertical,
+  LayoutList,
+  Logs,
+  Palette,
+  Pencil,
+  Play,
+  PlugZap,
+  Plus,
+  RotateCcw,
+  Save,
+  Server,
+  Sidebar,
+  SlidersHorizontal,
+  Square,
+  Trash2,
+  Wrench,
+  X,
+} from 'lucide-react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BenchLocalAppMetadata,
+  BenchLocalDiscoveredModel,
   BenchLocalUpdateState,
   BenchPackMutationProgress,
-  BenchLocalDiscoveredModel,
+  BenchPackVerifierStatus,
   DetachedLogsState,
-  BenchPackVerifierStatus
-} from "@/shared/desktop-api";
+} from '@/shared/desktop-api';
+import benchlocalIcon from '../../../assets/benchlocal-icon.png';
+import { bl } from './api/client';
 
-const DETACHED_LOGS_VIEW =
-  typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
+const IS_IS_DETACHED_LOGS_VIEW =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('view') === 'logs';
 
 function describeAppUpdateState(state: BenchLocalUpdateState | null): string {
   if (!state) {
-    return "Updater is initializing.";
+    return 'Updater is initializing.';
   }
 
   if (state.message?.trim()) {
@@ -74,28 +76,28 @@ function describeAppUpdateState(state: BenchLocalUpdateState | null): string {
   }
 
   switch (state.status) {
-    case "unsupported":
-      return "Self-update is unavailable in this BenchLocal build.";
-    case "checking":
-      return "Checking for BenchLocal updates.";
-    case "available":
+    case 'unsupported':
+      return 'Self-update is unavailable in this BenchLocal build.';
+    case 'checking':
+      return 'Checking for BenchLocal updates.';
+    case 'available':
       return state.availableVersion
         ? `BenchLocal ${state.availableVersion} is available. Downloading update.`
-        : "A BenchLocal update is available. Downloading update.";
-    case "downloading":
+        : 'A BenchLocal update is available. Downloading update.';
+    case 'downloading':
       return state.availableVersion
         ? `Downloading BenchLocal ${state.availableVersion}.`
-        : "Downloading BenchLocal update.";
-    case "downloaded":
+        : 'Downloading BenchLocal update.';
+    case 'downloaded':
       return state.downloadedVersion
         ? `BenchLocal ${state.downloadedVersion} is ready to install.`
-        : "A BenchLocal update is ready to install.";
-    case "not_available":
-      return "BenchLocal is up to date.";
-    case "error":
-      return "BenchLocal could not complete the update request.";
+        : 'A BenchLocal update is ready to install.';
+    case 'not_available':
+      return 'BenchLocal is up to date.';
+    case 'error':
+      return 'BenchLocal could not complete the update request.';
     default:
-      return "BenchLocal can check for updates.";
+      return 'BenchLocal can check for updates.';
   }
 }
 
@@ -112,7 +114,12 @@ function formatAppUpdateCheckedAt(checkedAt?: string): string | null {
   return date.toLocaleString();
 }
 
-type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
+type SettingsTab =
+  | 'providers'
+  | 'models'
+  | 'benchPacks'
+  | 'verification'
+  | 'advanced';
 
 type LoadState = {
   path: string;
@@ -131,12 +138,12 @@ type ProviderFormState = {
 
 type ProviderModalState =
   | {
-      mode: "create";
+      mode: 'create';
       initialId?: undefined;
       form: ProviderFormState;
     }
   | {
-      mode: "edit";
+      mode: 'edit';
       initialId: string;
       form: ProviderFormState;
     };
@@ -151,12 +158,12 @@ type ModelFormState = {
 
 type ModelModalState =
   | {
-      mode: "create";
+      mode: 'create';
       index?: undefined;
       form: ModelFormState;
     }
   | {
-      mode: "edit";
+      mode: 'edit';
       index: number;
       form: ModelFormState;
     };
@@ -179,7 +186,7 @@ type DetailModalState = {
   scenarioId: string;
   summary: string;
   rawLog: string;
-  status: "pass" | "partial" | "fail";
+  status: 'pass' | 'partial' | 'fail';
 };
 
 type TabModelsModalState = {
@@ -193,6 +200,7 @@ type SamplingFormState = {
   top_k: string;
   min_p: string;
   repetition_penalty: string;
+  max_tokens: string;
   request_timeout_seconds: string;
 };
 
@@ -217,13 +225,11 @@ type HistoryModalState = {
   entries: BenchPackRunHistoryEntry[];
 };
 
-type WorkspaceModalState =
-  | {
-      mode: "rename";
-      workspaceId: string;
-      name: string;
-    }
-  | null;
+type WorkspaceModalState = {
+  mode: 'rename';
+  workspaceId: string;
+  name: string;
+} | null;
 
 type WorkspaceContextMenuState = {
   workspaceId: string;
@@ -232,15 +238,13 @@ type WorkspaceContextMenuState = {
   y: number;
 } | null;
 
-type ConfirmDialogState =
-  | {
-      title: string;
-      subtitle: string;
-      confirmLabel: string;
-      tone?: "danger" | "neutral";
-      onConfirm: () => void;
-    }
-  | null;
+type ConfirmDialogState = {
+  title: string;
+  subtitle: string;
+  confirmLabel: string;
+  tone?: 'danger' | 'neutral';
+  onConfirm: () => void;
+} | null;
 
 type ResolvedTabModel = BenchLocalModelConfig & {
   displayLabel: string;
@@ -256,13 +260,13 @@ type LiveRunState = {
 
 type ActiveRunEntry = {
   benchPackId: string;
-  mode?: "host" | "replay";
+  mode?: 'host' | 'replay';
 };
 
 type LoadedHistoryEntry = {
   runId: string;
   startedAt: string;
-  mode?: "history" | "replay";
+  mode?: 'history' | 'replay';
 };
 
 type LiveScenarioFocusState = {
@@ -270,7 +274,10 @@ type LiveScenarioFocusState = {
   autoFollow: boolean;
 };
 
-type VerifierPreparingProgress = Extract<ProgressEvent, { type: "verifier_preparing" }>;
+type VerifierPreparingProgress = Extract<
+  ProgressEvent,
+  { type: 'verifier_preparing' }
+>;
 
 type VerifierPreparationModalState = {
   tabId: string;
@@ -289,51 +296,96 @@ type BenchPackRunBlocker = {
 };
 
 type BenchPackMutationState = BenchPackMutationProgress;
-const THIRD_PARTY_INSTALL_MUTATION_ID = "__third_party_install__";
-const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = { request_timeout_seconds: 300 };
+const THIRD_PARTY_INSTALL_MUTATION_ID = '__third_party_install__';
+const DEFAULT_BENCHLOCAL_GENERATION: GenerationRequest = {
+  max_tokens: 2048,
+  request_timeout_seconds: 300,
+};
 
 function isAbortLikeError(error: unknown): boolean {
-  return error instanceof Error && /abort|cancel/i.test(error.name + " " + error.message);
+  return (
+    error instanceof Error &&
+    /abort|cancel/i.test(error.name + ' ' + error.message)
+  );
 }
 
-function resolveThemeLabel(themeId: string, themes: BenchLocalThemeDescriptor[], prefersDark: boolean): string {
-  if (themeId === "system") {
-    return `System (${prefersDark ? "Dark" : "Light"})`;
+function resolveThemeLabel(
+  themeId: string,
+  themes: BenchLocalThemeDescriptor[],
+  prefersDark: boolean,
+): string {
+  if (themeId === 'system') {
+    return `System (${prefersDark ? 'Dark' : 'Light'})`;
   }
 
   return themes.find((theme) => theme.id === themeId)?.name ?? themeId;
 }
 
-const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: string }> = [
-  { value: "serial", label: "Serial per Test Case" },
-  { value: "serial_by_model", label: "Serial per Model" },
-  { value: "parallel_by_model", label: "Parallel per Model" },
-  { value: "parallel_by_test_case", label: "Parallel per Test Case" },
-  { value: "full_parallel", label: "Parallel for All" }
+const EXECUTION_MODE_OPTIONS: Array<{
+  value: BenchLocalExecutionMode;
+  label: string;
+}> = [
+  { value: 'serial', label: 'Serial per Test Case' },
+  { value: 'serial_by_model', label: 'Serial per Model' },
+  { value: 'parallel_by_model', label: 'Parallel per Model' },
+  { value: 'parallel_by_test_case', label: 'Parallel per Test Case' },
+  { value: 'full_parallel', label: 'Parallel for All' },
 ];
 
-function supportsLiveScenarioColumnFocus(executionMode: BenchLocalExecutionMode): boolean {
-  return executionMode !== "parallel_by_model" && executionMode !== "full_parallel";
+function supportsLiveScenarioColumnFocus(
+  executionMode: BenchLocalExecutionMode,
+): boolean {
+  return (
+    executionMode !== 'parallel_by_model' && executionMode !== 'full_parallel'
+  );
 }
 
-const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
+const SIDEBAR_OPEN_STORAGE_KEY = 'benchlocal.sidebar-open';
 
-const PROVIDER_KIND_OPTIONS: Array<{ value: BenchLocalProviderKind; label: string }> = [
-  { value: "openai_compatible", label: "OpenAI Compatible" },
-  { value: "openrouter", label: "OpenRouter" },
-  { value: "huggingface", label: "Hugging Face" },
-  { value: "ollama", label: "Ollama" },
-  { value: "llamacpp", label: "llama.cpp" },
-  { value: "mlx", label: "MLX" },
-  { value: "lmstudio", label: "LM Studio" },
-  { value: "pico", label: "Pico" }
+const PROVIDER_KIND_OPTIONS: Array<{
+  value: BenchLocalProviderKind;
+  label: string;
+}> = [
+  { value: 'openai_compatible', label: 'OpenAI Compatible' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'huggingface', label: 'Hugging Face' },
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'llamacpp', label: 'llama.cpp' },
+  { value: 'mlx', label: 'MLX' },
+  { value: 'lmstudio', label: 'LM Studio' },
+  { value: 'pico', label: 'Pico' },
 ];
 
-const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon: ReactNode }> = [
-  { id: "providers", label: "Providers", blurb: "Provider endpoints and credentials.", icon: <Server size={16} /> },
-  { id: "models", label: "Models", blurb: "Shared model registry across Bench Packs.", icon: <Bot size={16} /> },
-  { id: "benchPacks", label: "Bench Packs", blurb: "Browse, install, update, and remove official Bench Packs.", icon: <PlugZap size={16} /> },
-  { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> }
+const SETTINGS_TABS: Array<{
+  id: SettingsTab;
+  label: string;
+  blurb: string;
+  icon: ReactNode;
+}> = [
+  {
+    id: 'providers',
+    label: 'Providers',
+    blurb: 'Provider endpoints and credentials.',
+    icon: <Server size={16} />,
+  },
+  {
+    id: 'models',
+    label: 'Models',
+    blurb: 'Shared model registry across Bench Packs.',
+    icon: <Bot size={16} />,
+  },
+  {
+    id: 'benchPacks',
+    label: 'Bench Packs',
+    blurb: 'Browse, install, update, and remove official Bench Packs.',
+    icon: <PlugZap size={16} />,
+  },
+  {
+    id: 'verification',
+    label: 'Verification',
+    blurb: 'Managed verifiers and dependency modes.',
+    icon: <Wrench size={16} />,
+  },
 ];
 
 const SAMPLING_FIELDS: Array<{
@@ -342,12 +394,27 @@ const SAMPLING_FIELDS: Array<{
   placeholder: string;
   integer?: boolean;
 }> = [
-  { key: "temperature", label: "Temperature", placeholder: "Leave blank" },
-  { key: "top_p", label: "Top P", placeholder: "Leave blank" },
-  { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
-  { key: "min_p", label: "Min P", placeholder: "Leave blank" },
-  { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
-  { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
+  { key: 'temperature', label: 'Temperature', placeholder: 'Leave blank' },
+  { key: 'top_p', label: 'Top P', placeholder: 'Leave blank' },
+  { key: 'top_k', label: 'Top K', placeholder: 'Leave blank', integer: true },
+  { key: 'min_p', label: 'Min P', placeholder: 'Leave blank' },
+  {
+    key: 'repetition_penalty',
+    label: 'Repetition Penalty',
+    placeholder: 'Leave blank',
+  },
+  {
+    key: 'max_tokens',
+    label: 'Max Tokens',
+    placeholder: 'Leave blank',
+    integer: true,
+  },
+  {
+    key: 'request_timeout_seconds',
+    label: 'Request Timeout Seconds',
+    placeholder: 'Leave blank',
+    integer: true,
+  },
 ];
 
 function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
@@ -355,16 +422,16 @@ function cloneConfig(config: BenchLocalConfig): BenchLocalConfig {
 }
 
 const FILESYSTEM_CONFIG_KEYS = [
-  "run_storage_dir",
-  "benchpack_storage_dir",
-  "log_storage_dir",
-  "cache_dir"
+  'run_storage_dir',
+  'benchpack_storage_dir',
+  'log_storage_dir',
+  'cache_dir',
 ] as const satisfies Array<keyof BenchLocalConfig>;
 
 function reapplyPendingFilesystemDraft(
   baseConfig: BenchLocalConfig,
   currentDraft: BenchLocalConfig,
-  persistedConfig: BenchLocalConfig
+  persistedConfig: BenchLocalConfig,
 ): BenchLocalConfig {
   const nextConfig = cloneConfig(baseConfig);
 
@@ -378,30 +445,34 @@ function reapplyPendingFilesystemDraft(
 }
 
 function providerKindLabel(kind: BenchLocalProviderKind): string {
-  return PROVIDER_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
+  return (
+    PROVIDER_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? kind
+  );
 }
 
 function defaultProviderName(kind: BenchLocalProviderKind): string {
   return providerKindLabel(kind);
 }
 
-function defaultProviderApiKeyPlaceholder(kind: BenchLocalProviderKind): string {
+function defaultProviderApiKeyPlaceholder(
+  kind: BenchLocalProviderKind,
+): string {
   switch (kind) {
-    case "huggingface":
-      return "hf_...";
+    case 'huggingface':
+      return 'hf_...';
     default:
-      return "sk-or-v1-...";
+      return 'sk-or-v1-...';
   }
 }
 
 function benchPackMutationLabel(mutation: BenchPackMutationState): string {
   switch (mutation.action) {
-    case "install":
-      return mutation.phase === "complete" ? "Installed" : "Installing...";
-    case "update":
-      return mutation.phase === "complete" ? "Updated" : "Updating...";
-    case "uninstall":
-      return mutation.phase === "complete" ? "Removed" : "Removing...";
+    case 'install':
+      return mutation.phase === 'complete' ? 'Installed' : 'Installing...';
+    case 'update':
+      return mutation.phase === 'complete' ? 'Updated' : 'Updating...';
+    case 'uninstall':
+      return mutation.phase === 'complete' ? 'Removed' : 'Removing...';
     default:
       return mutation.message;
   }
@@ -409,55 +480,61 @@ function benchPackMutationLabel(mutation: BenchPackMutationState): string {
 
 function defaultProviderBaseUrl(kind: BenchLocalProviderKind): string {
   switch (kind) {
-    case "openrouter":
-      return "https://openrouter.ai/api/v1";
-    case "huggingface":
-      return "https://router.huggingface.co/v1";
-    case "ollama":
-      return "http://127.0.0.1:11434/v1";
-    case "llamacpp":
-      return "http://127.0.0.1:8080/v1";
-    case "mlx":
-      return "http://127.0.0.1:8082/v1";
-    case "lmstudio":
-      return "http://127.0.0.1:1234/v1";
-    case "pico":
-      return "http://127.0.0.1:7426/v1";
-    case "openai_compatible":
+    case 'openrouter':
+      return 'https://openrouter.ai/api/v1';
+    case 'huggingface':
+      return 'https://router.huggingface.co/v1';
+    case 'ollama':
+      return 'http://127.0.0.1:11434/v1';
+    case 'llamacpp':
+      return 'http://127.0.0.1:8080/v1';
+    case 'mlx':
+      return 'http://127.0.0.1:8082/v1';
+    case 'lmstudio':
+      return 'http://127.0.0.1:1234/v1';
+    case 'pico':
+      return 'http://127.0.0.1:7426/v1';
+    case 'openai_compatible':
     default:
-      return "https://api.example.com/v1";
+      return 'https://api.example.com/v1';
   }
 }
 
 function createEmptyProvider(): ProviderFormState {
   return {
     id: `openai_compatible-${crypto.randomUUID()}`,
-    kind: "openai_compatible",
-    name: "",
+    kind: 'openai_compatible',
+    name: '',
     enabled: true,
-    base_url: "https://api.example.com/v1",
-    api_key: ""
+    base_url: 'https://api.example.com/v1',
+    api_key: '',
   };
 }
 
-function createEmptyModel(providerId = "openrouter"): ModelFormState {
+function createEmptyModel(providerId = 'openrouter'): ModelFormState {
   return {
     provider: providerId,
-    model: "",
-    label: "",
-    group: "primary",
-    enabled: true
+    model: '',
+    label: '',
+    group: 'primary',
+    enabled: true,
   };
 }
 
-function providerSupportsModelDiscovery(provider?: BenchLocalProviderConfig | null): boolean {
-  return provider?.kind === "openrouter" || provider?.kind === "huggingface" || provider?.kind === "openai_compatible";
+function providerSupportsModelDiscovery(
+  provider?: BenchLocalProviderConfig | null,
+): boolean {
+  return (
+    provider?.kind === 'openrouter' ||
+    provider?.kind === 'huggingface' ||
+    provider?.kind === 'openai_compatible'
+  );
 }
 
 function defaultModelLabel(
   providerName: string,
   modelId: string,
-  discoveredName?: string
+  discoveredName?: string,
 ): string {
   const trimmedDiscoveredName = discoveredName?.trim();
 
@@ -470,16 +547,20 @@ function defaultModelLabel(
 
 function createSamplingForm(input?: GenerationRequest): SamplingFormState {
   return {
-    temperature: input?.temperature?.toString() ?? "",
-    top_p: input?.top_p?.toString() ?? "",
-    top_k: input?.top_k?.toString() ?? "",
-    min_p: input?.min_p?.toString() ?? "",
-    repetition_penalty: input?.repetition_penalty?.toString() ?? "",
-    request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
+    temperature: input?.temperature?.toString() ?? '',
+    top_p: input?.top_p?.toString() ?? '',
+    top_k: input?.top_k?.toString() ?? '',
+    min_p: input?.min_p?.toString() ?? '',
+    repetition_penalty: input?.repetition_penalty?.toString() ?? '',
+    max_tokens: input?.max_tokens?.toString() ?? '',
+    request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? '',
   };
 }
 
-function parseSamplingForm(form: SamplingFormState): { value?: GenerationRequest; error?: string } {
+function parseSamplingForm(form: SamplingFormState): {
+  value?: GenerationRequest;
+  error?: string;
+} {
   const result: GenerationRequest = {};
 
   for (const field of SAMPLING_FIELDS) {
@@ -489,7 +570,9 @@ function parseSamplingForm(form: SamplingFormState): { value?: GenerationRequest
       continue;
     }
 
-    const parsed = field.integer ? Number.parseInt(rawValue, 10) : Number(rawValue);
+    const parsed = field.integer
+      ? Number.parseInt(rawValue, 10)
+      : Number(rawValue);
 
     if (!Number.isFinite(parsed)) {
       return { error: `${field.label} must be a valid number.` };
@@ -505,14 +588,17 @@ function parseSamplingForm(form: SamplingFormState): { value?: GenerationRequest
   return { value: result };
 }
 
-function toProviderForm(id: string, provider: BenchLocalProviderConfig): ProviderFormState {
+function toProviderForm(
+  id: string,
+  provider: BenchLocalProviderConfig,
+): ProviderFormState {
   return {
     id,
     kind: provider.kind,
     name: provider.name,
     enabled: provider.enabled,
     base_url: provider.base_url,
-    api_key: provider.api_key ?? ""
+    api_key: provider.api_key ?? '',
   };
 }
 
@@ -522,13 +608,13 @@ function toModelForm(model: BenchLocalModelConfig): ModelFormState {
     model: model.model,
     label: model.label,
     group: model.group,
-    enabled: model.enabled
+    enabled: model.enabled,
   };
 }
 
 function buildModelConfig(
   form: ModelFormState,
-  providers: Record<string, BenchLocalProviderConfig>
+  providers: Record<string, BenchLocalProviderConfig>,
 ): BenchLocalModelConfig {
   const provider = providers[form.provider.trim()];
   const providerLabel = provider?.name?.trim() || form.provider.trim();
@@ -538,21 +624,29 @@ function buildModelConfig(
     provider: form.provider.trim(),
     model: form.model.trim(),
     label: form.label.trim() || `${form.model.trim()} via ${providerLabel}`,
-    group: form.group.trim() || "primary",
-    enabled: form.enabled
+    group: form.group.trim() || 'primary',
+    enabled: form.enabled,
   };
 }
 
 function createWorkspaceName(existingCount: number): string {
-  return existingCount === 0 ? "My Workspace" : `Workspace ${existingCount + 1}`;
+  return existingCount === 0
+    ? 'My Workspace'
+    : `Workspace ${existingCount + 1}`;
 }
 
-function createTabTitle(benchPackId: string, inspections: BenchPackInspection[]): string {
-  return inspections.find((inspection) => inspection.id === benchPackId)?.manifest?.name ?? benchPackId;
+function createTabTitle(
+  benchPackId: string,
+  inspections: BenchPackInspection[],
+): string {
+  return (
+    inspections.find((inspection) => inspection.id === benchPackId)?.manifest
+      ?.name ?? benchPackId
+  );
 }
 
 function normalizeTabModelSelections(
-  selections: BenchLocalWorkspaceTabModelSelection[]
+  selections: BenchLocalWorkspaceTabModelSelection[],
 ): BenchLocalWorkspaceTabModelSelection[] {
   const seen = new Set<string>();
 
@@ -569,12 +663,12 @@ function normalizeTabModelSelections(
     })
     .map((selection) => ({
       modelId: selection.modelId.trim(),
-      alias: selection.alias?.trim() || undefined
+      alias: selection.alias?.trim() || undefined,
     }));
 }
 
 function normalizeEditableTabModelSelections(
-  selections: BenchLocalWorkspaceTabModelSelection[]
+  selections: BenchLocalWorkspaceTabModelSelection[],
 ): BenchLocalWorkspaceTabModelSelection[] {
   const seen = new Set<string>();
 
@@ -591,7 +685,7 @@ function normalizeEditableTabModelSelections(
     })
     .map((selection) => ({
       modelId: selection.modelId.trim(),
-      alias: selection.alias
+      alias: selection.alias,
     }));
 }
 
@@ -610,7 +704,7 @@ function getTableScrollbarThumbWidth(metrics: {
 
 function SettingsTableShell({
   children,
-  className
+  className,
 }: {
   children: ReactNode;
   className?: string;
@@ -624,23 +718,27 @@ function SettingsTableShell({
   const [scrollMetrics, setScrollMetrics] = useState({
     clientWidth: 0,
     scrollWidth: 0,
-    scrollLeft: 0
+    scrollLeft: 0,
   });
 
-  const hasHorizontalOverflow = scrollMetrics.scrollWidth > scrollMetrics.clientWidth + 1;
-  const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(scrollMetrics) : 0;
+  const hasHorizontalOverflow =
+    scrollMetrics.scrollWidth > scrollMetrics.clientWidth + 1;
+  const scrollbarThumbWidth = hasHorizontalOverflow
+    ? getTableScrollbarThumbWidth(scrollMetrics)
+    : 0;
   const scrollbarThumbOffset =
     hasHorizontalOverflow && scrollbarTrackRef.current
-      ? ((scrollMetrics.scrollLeft / Math.max(1, scrollMetrics.scrollWidth - scrollMetrics.clientWidth)) *
-          Math.max(0, scrollbarTrackRef.current.clientWidth - scrollbarThumbWidth))
+      ? (scrollMetrics.scrollLeft /
+          Math.max(1, scrollMetrics.scrollWidth - scrollMetrics.clientWidth)) *
+        Math.max(0, scrollbarTrackRef.current.clientWidth - scrollbarThumbWidth)
       : 0;
   const wrapClassName = [
-    "settings-list-table-wrap",
+    'settings-list-table-wrap',
     className,
-    hasHorizontalOverflow ? "has-sticky-last-column-shadow" : ""
+    hasHorizontalOverflow ? 'has-sticky-last-column-shadow' : '',
   ]
     .filter(Boolean)
-    .join(" ");
+    .join(' ');
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -653,7 +751,7 @@ function SettingsTableShell({
       setScrollMetrics({
         clientWidth: viewport.clientWidth,
         scrollWidth: viewport.scrollWidth,
-        scrollLeft: viewport.scrollLeft
+        scrollLeft: viewport.scrollLeft,
       });
     };
 
@@ -662,11 +760,11 @@ function SettingsTableShell({
     };
 
     updateMetrics();
-    viewport.addEventListener("scroll", syncFromViewport);
-    window.addEventListener("resize", updateMetrics);
+    viewport.addEventListener('scroll', syncFromViewport);
+    window.addEventListener('resize', updateMetrics);
 
     const resizeObserver =
-      typeof ResizeObserver !== "undefined"
+      typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             updateMetrics();
           })
@@ -679,8 +777,8 @@ function SettingsTableShell({
     }
 
     return () => {
-      viewport.removeEventListener("scroll", syncFromViewport);
-      window.removeEventListener("resize", updateMetrics);
+      viewport.removeEventListener('scroll', syncFromViewport);
+      window.removeEventListener('resize', updateMetrics);
       resizeObserver?.disconnect();
     };
   }, [children]);
@@ -695,27 +793,36 @@ function SettingsTableShell({
         return;
       }
 
-      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-      const maxThumbOffset = Math.max(1, track.clientWidth - getTableScrollbarThumbWidth(scrollMetrics));
+      const maxScrollLeft = Math.max(
+        0,
+        viewport.scrollWidth - viewport.clientWidth,
+      );
+      const maxThumbOffset = Math.max(
+        1,
+        track.clientWidth - getTableScrollbarThumbWidth(scrollMetrics),
+      );
       const deltaX = event.clientX - drag.startX;
       const nextScrollLeft = Math.min(
         maxScrollLeft,
-        Math.max(0, drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft)
+        Math.max(
+          0,
+          drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft,
+        ),
       );
       viewport.scrollLeft = nextScrollLeft;
     };
 
     const handleUp = () => {
       scrollbarDragRef.current = null;
-      document.body.style.userSelect = "";
+      document.body.style.userSelect = '';
     };
 
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
 
     return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
     };
   }, [scrollMetrics]);
 
@@ -740,16 +847,23 @@ function SettingsTableShell({
             const rect = track.getBoundingClientRect();
             const clickX = event.clientX - rect.left;
 
-            if (clickX >= scrollbarThumbOffset && clickX <= scrollbarThumbOffset + scrollbarThumbWidth) {
+            if (
+              clickX >= scrollbarThumbOffset &&
+              clickX <= scrollbarThumbOffset + scrollbarThumbWidth
+            ) {
               return;
             }
 
             const nextOffset = Math.max(
               0,
-              Math.min(track.clientWidth - scrollbarThumbWidth, clickX - scrollbarThumbWidth / 2)
+              Math.min(
+                track.clientWidth - scrollbarThumbWidth,
+                clickX - scrollbarThumbWidth / 2,
+              ),
             );
             const nextScrollLeft =
-              (nextOffset / Math.max(1, track.clientWidth - scrollbarThumbWidth)) *
+              (nextOffset /
+                Math.max(1, track.clientWidth - scrollbarThumbWidth)) *
               Math.max(0, viewport.scrollWidth - viewport.clientWidth);
             viewport.scrollLeft = nextScrollLeft;
           }}
@@ -758,7 +872,7 @@ function SettingsTableShell({
             className="table-scrollbar-thumb"
             style={{
               width: `${scrollbarThumbWidth}px`,
-              transform: `translateX(${scrollbarThumbOffset}px)`
+              transform: `translateX(${scrollbarThumbOffset}px)`,
             }}
             onMouseDown={(event) => {
               event.preventDefault();
@@ -770,9 +884,9 @@ function SettingsTableShell({
 
               scrollbarDragRef.current = {
                 startX: event.clientX,
-                startScrollLeft: viewport.scrollLeft
+                startScrollLeft: viewport.scrollLeft,
               };
-              document.body.style.userSelect = "none";
+              document.body.style.userSelect = 'none';
             }}
           />
         </div>
@@ -781,30 +895,35 @@ function SettingsTableShell({
   );
 }
 
-function resolveTabModels(tab: BenchLocalWorkspaceTab | null, models: BenchLocalModelConfig[]): ResolvedTabModel[] {
+function resolveTabModels(
+  tab: BenchLocalWorkspaceTab | null,
+  models: BenchLocalModelConfig[],
+): ResolvedTabModel[] {
   const enabledModels = models.filter((model) => model.enabled);
   const modelMap = new Map(enabledModels.map((model) => [model.id, model]));
 
-  return normalizeTabModelSelections(tab?.modelSelections ?? []).reduce<ResolvedTabModel[]>((resolved, selection) => {
-      const model = modelMap.get(selection.modelId);
+  return normalizeTabModelSelections(tab?.modelSelections ?? []).reduce<
+    ResolvedTabModel[]
+  >((resolved, selection) => {
+    const model = modelMap.get(selection.modelId);
 
-      if (!model) {
-        return resolved;
-      }
-
-      resolved.push({
-        ...model,
-        alias: selection.alias,
-        displayLabel: selection.alias || model.label
-      });
-
+    if (!model) {
       return resolved;
-    }, []);
+    }
+
+    resolved.push({
+      ...model,
+      alias: selection.alias,
+      displayLabel: selection.alias || model.label,
+    });
+
+    return resolved;
+  }, []);
 }
 
 function resolveHistoryModels(
   runSummary: BenchPackRunSummary | null,
-  models: BenchLocalModelConfig[]
+  models: BenchLocalModelConfig[],
 ): ResolvedTabModel[] {
   if (!runSummary) {
     return [];
@@ -812,26 +931,29 @@ function resolveHistoryModels(
 
   const modelMap = new Map(models.map((model) => [model.id, model]));
   const runStartedEvent = runSummary.events.find(
-    (event): event is Extract<ProgressEvent, { type: "run_started" }> => event.type === "run_started"
+    (event): event is Extract<ProgressEvent, { type: 'run_started' }> =>
+      event.type === 'run_started',
   );
   const orderedModelIds = [
     ...(runStartedEvent?.models.map((model) => model.id) ?? []),
-    ...Object.keys(runSummary.resultsByModel)
+    ...Object.keys(runSummary.resultsByModel),
   ].filter((modelId, index, all) => modelId && all.indexOf(modelId) === index);
 
   return orderedModelIds.map((modelId) => {
     const currentModel = modelMap.get(modelId);
-    const historicalLabel = runStartedEvent?.models.find((model) => model.id === modelId)?.label;
+    const historicalLabel = runStartedEvent?.models.find(
+      (model) => model.id === modelId,
+    )?.label;
     const label = currentModel?.label ?? historicalLabel ?? modelId;
 
     return {
       id: modelId,
-      provider: currentModel?.provider ?? "history",
+      provider: currentModel?.provider ?? 'history',
       model: currentModel?.model ?? modelId,
       label,
-      group: currentModel?.group ?? "history",
+      group: currentModel?.group ?? 'history',
       enabled: currentModel?.enabled ?? false,
-      displayLabel: label
+      displayLabel: label,
     };
   });
 }
@@ -841,7 +963,10 @@ function countStoredRunResults(summary: BenchPackRunSummary | null): number {
     return 0;
   }
 
-  return Object.values(summary.resultsByModel).reduce((total, results) => total + results.length, 0);
+  return Object.values(summary.resultsByModel).reduce(
+    (total, results) => total + results.length,
+    0,
+  );
 }
 
 function isRunSummaryComplete(summary: BenchPackRunSummary | null): boolean {
@@ -849,16 +974,18 @@ function isRunSummaryComplete(summary: BenchPackRunSummary | null): boolean {
     return false;
   }
 
-  return countStoredRunResults(summary) >= summary.modelCount * summary.scenarioCount;
+  return (
+    countStoredRunResults(summary) >= summary.modelCount * summary.scenarioCount
+  );
 }
 
 function buildHistoryModelSelections(
   runSummary: BenchPackRunSummary | null,
-  models: BenchLocalModelConfig[]
+  models: BenchLocalModelConfig[],
 ): BenchLocalWorkspaceTabModelSelection[] {
   return resolveHistoryModels(runSummary, models).map((model) => ({
     modelId: model.id,
-    alias: model.displayLabel !== model.label ? model.displayLabel : undefined
+    alias: model.displayLabel !== model.label ? model.displayLabel : undefined,
   }));
 }
 
@@ -871,7 +998,7 @@ type ReplayCell = {
 function buildReplayGroups(
   summary: BenchPackRunSummary,
   scenarios: ScenarioMeta[],
-  modelIds: string[]
+  modelIds: string[],
 ): ReplayCell[][] {
   const scenarioOrder = scenarios.map((scenario) => scenario.id);
   const resultMap = new Map<string, ScenarioResult>();
@@ -882,49 +1009,60 @@ function buildReplayGroups(
     }
   }
 
-  const singletonCellsByScenarioThenModel = scenarioOrder.flatMap((scenarioId) =>
-    modelIds.flatMap((modelId) => {
-      const result = resultMap.get(`${modelId}::${scenarioId}`);
-      return result ? [[{ modelId, scenarioId, result } satisfies ReplayCell]] : [];
-    })
+  const singletonCellsByScenarioThenModel = scenarioOrder.flatMap(
+    (scenarioId) =>
+      modelIds.flatMap((modelId) => {
+        const result = resultMap.get(`${modelId}::${scenarioId}`);
+        return result
+          ? [[{ modelId, scenarioId, result } satisfies ReplayCell]]
+          : [];
+      }),
   );
 
-  switch (summary.executionMode ?? "parallel_by_test_case") {
-    case "serial":
+  switch (summary.executionMode ?? 'parallel_by_test_case') {
+    case 'serial':
       return singletonCellsByScenarioThenModel;
-    case "serial_by_model":
+    case 'serial_by_model':
       return modelIds.flatMap((modelId) =>
         scenarioOrder.flatMap((scenarioId) => {
           const result = resultMap.get(`${modelId}::${scenarioId}`);
-          return result ? [[{ modelId, scenarioId, result } satisfies ReplayCell]] : [];
-        })
+          return result
+            ? [[{ modelId, scenarioId, result } satisfies ReplayCell]]
+            : [];
+        }),
       );
-    case "parallel_by_test_case":
+    case 'parallel_by_test_case':
       return scenarioOrder
         .map((scenarioId) =>
           modelIds.flatMap((modelId) => {
             const result = resultMap.get(`${modelId}::${scenarioId}`);
-            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
-          })
+            return result
+              ? [{ modelId, scenarioId, result } satisfies ReplayCell]
+              : [];
+          }),
         )
         .filter((group) => group.length > 0);
-    case "parallel_by_model":
+    case 'parallel_by_model':
       return modelIds
         .map((modelId) =>
           scenarioOrder.flatMap((scenarioId) => {
             const result = resultMap.get(`${modelId}::${scenarioId}`);
-            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
-          })
+            return result
+              ? [{ modelId, scenarioId, result } satisfies ReplayCell]
+              : [];
+          }),
         )
         .filter((group) => group.length > 0);
-    case "full_parallel":
+    case 'full_parallel':
       return [
         scenarioOrder.flatMap((scenarioId) =>
           modelIds.flatMap((modelId) => {
             const result = resultMap.get(`${modelId}::${scenarioId}`);
-            return result ? [{ modelId, scenarioId, result } satisfies ReplayCell] : [];
-          })
-        )
+            return result
+              ? [{ modelId, scenarioId, result } satisfies ReplayCell]
+              : [];
+          }),
+        ),
       ].filter((group) => group.length > 0);
     default:
       return singletonCellsByScenarioThenModel;
@@ -935,7 +1073,7 @@ function upsertTabModelAlias(
   tab: BenchLocalWorkspaceTab,
   models: BenchLocalModelConfig[],
   modelId: string,
-  alias: string
+  alias: string,
 ): BenchLocalWorkspaceTabModelSelection[] {
   const normalized = normalizeTabModelSelections(tab.modelSelections);
   const nextAlias = alias.trim() || undefined;
@@ -949,14 +1087,14 @@ function upsertTabModelAlias(
     found = true;
     return {
       ...selection,
-      alias: nextAlias
+      alias: nextAlias,
     };
   });
 
   if (!found) {
     next.push({
       modelId,
-      alias: nextAlias
+      alias: nextAlias,
     });
   }
 
@@ -966,50 +1104,67 @@ function upsertTabModelAlias(
 function pushScenarioResult(
   current: Record<string, ScenarioResult[]>,
   modelId: string,
-  result: ScenarioResult
+  result: ScenarioResult,
 ): Record<string, ScenarioResult[]> {
   return {
     ...current,
-    [modelId]: [...(current[modelId] ?? []).filter((candidate) => candidate.scenarioId !== result.scenarioId), result]
+    [modelId]: [
+      ...(current[modelId] ?? []).filter(
+        (candidate) => candidate.scenarioId !== result.scenarioId,
+      ),
+      result,
+    ],
   };
 }
 
 function updateLiveRunState(
   current: LiveRunState | undefined,
-  event: ProgressEvent
+  event: ProgressEvent,
 ): LiveRunState {
   const next: LiveRunState = current ?? {
     events: [],
     resultsByModel: {},
-    activeCellKeys: []
+    activeCellKeys: [],
   };
 
   const eventKey =
-    "modelId" in event && "scenarioId" in event ? `${event.modelId}::${event.scenarioId}` : null;
+    'modelId' in event && 'scenarioId' in event
+      ? `${event.modelId}::${event.scenarioId}`
+      : null;
 
   next.events = [...next.events, event];
 
-  if (event.type === "run_started") {
+  if (event.type === 'run_started') {
     next.runId = event.runId;
   }
 
-  if (event.type === "model_progress" && eventKey && !next.activeCellKeys.includes(eventKey)) {
+  if (
+    event.type === 'model_progress' &&
+    eventKey &&
+    !next.activeCellKeys.includes(eventKey)
+  ) {
     next.activeCellKeys = [...next.activeCellKeys, eventKey];
   }
 
-  if (event.type === "scenario_result" && eventKey) {
-    next.resultsByModel = pushScenarioResult(next.resultsByModel, event.modelId, event.result);
+  if (event.type === 'scenario_result' && eventKey) {
+    next.resultsByModel = pushScenarioResult(
+      next.resultsByModel,
+      event.modelId,
+      event.result,
+    );
     next.activeCellKeys = next.activeCellKeys.filter((key) => key !== eventKey);
   }
 
-  if (event.type === "run_finished" || event.type === "run_error") {
+  if (event.type === 'run_finished' || event.type === 'run_error') {
     next.activeCellKeys = [];
   }
 
   return next;
 }
 
-function detailModalKey(detail: Pick<DetailModalState, "tabId" | "modelId" | "scenarioId">): string {
+function detailModalKey(
+  detail: Pick<DetailModalState, 'tabId' | 'modelId' | 'scenarioId'>,
+): string {
   return `${detail.tabId}::${detail.modelId}::${detail.scenarioId}`;
 }
 
@@ -1018,14 +1173,16 @@ function getCellKey(modelId: string, scenarioId: string): string {
 }
 
 const REGISTRY_UNAVAILABLE_MESSAGE =
-  "Official Bench Pack registry is unavailable right now. Installed Bench Packs remain usable.";
+  'Official Bench Pack registry is unavailable right now. Installed Bench Packs remain usable.';
 
 function formatDesktopErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
-    return "";
+    return '';
   }
 
-  return error.message.replace(/^Error invoking remote method '[^']+':\s*/u, "").trim();
+  return error.message
+    .replace(/^Error invoking remote method '[^']+':\s*/u, '')
+    .trim();
 }
 
 function isRegistryConnectivityError(error: unknown): boolean {
@@ -1048,69 +1205,90 @@ function formatRegistryWarning(error: unknown): string {
 }
 
 function formatRegistryMutationError(
-  action: "install" | "update",
+  action: 'install' | 'update',
   benchPackId: string,
-  error: unknown
+  error: unknown,
 ): string {
   if (isRegistryConnectivityError(error)) {
     return `Failed to ${action} ${benchPackId}. Official Bench Pack registry is unavailable right now.`;
   }
 
-  return formatDesktopErrorMessage(error) || `Failed to ${action} ${benchPackId}.`;
+  return (
+    formatDesktopErrorMessage(error) || `Failed to ${action} ${benchPackId}.`
+  );
 }
 
 function getRequiredVerifierRunBlocker(
   manifest: BenchPackManifest | undefined,
-  benchPackConfig: BenchLocalConfig["benchpacks"][string] | undefined,
-  verifierStatus: BenchPackVerifierStatus | undefined
+  benchPackConfig: BenchLocalConfig['benchpacks'][string] | undefined,
+  verifierStatus: BenchPackVerifierStatus | undefined,
 ): BenchPackRunBlocker | null {
-  const requiredVerifierSpecs = (manifest?.verifiers ?? manifest?.sidecars ?? []).filter((spec) => spec.required);
+  const requiredVerifierSpecs = (
+    manifest?.verifiers ??
+    manifest?.sidecars ??
+    []
+  ).filter((spec) => spec.required);
 
   if (requiredVerifierSpecs.length === 0) {
     return null;
   }
 
-  if (verifierStatus?.docker.state === "not_installed") {
+  if (verifierStatus?.docker.state === 'not_installed') {
     return {
-      title: "Docker Required",
-      message: "This Bench Pack needs a local verifier runtime. Install Docker Desktop before starting the test run.",
-      actionLabel: "Open Verification"
+      title: 'Docker Required',
+      message:
+        'This Bench Pack needs a local verifier runtime. Install Docker Desktop before starting the test run.',
+      actionLabel: 'Open Verification',
     };
   }
 
-  if (verifierStatus?.docker.state === "not_running") {
+  if (verifierStatus?.docker.state === 'not_running') {
     return {
-      title: "Docker Not Running",
-      message: "This Bench Pack needs a local verifier runtime. Start Docker Desktop, then try the run again.",
-      actionLabel: "Open Verification"
+      title: 'Docker Not Running',
+      message:
+        'This Bench Pack needs a local verifier runtime. Start Docker Desktop, then try the run again.',
+      actionLabel: 'Open Verification',
     };
   }
 
   for (const spec of requiredVerifierSpecs) {
-    const runtimeConfig = benchPackConfig?.verifiers?.[spec.id] ?? benchPackConfig?.sidecars?.[spec.id];
-    const runtimeStatus = verifierStatus?.verifiers.find((entry) => entry.id === spec.id);
+    const runtimeConfig =
+      benchPackConfig?.verifiers?.[spec.id] ??
+      benchPackConfig?.sidecars?.[spec.id];
+    const runtimeStatus = verifierStatus?.verifiers.find(
+      (entry) => entry.id === spec.id,
+    );
 
-    if ((runtimeConfig?.mode ?? spec.defaultMode) === "docker" && runtimeConfig?.auto_start === false && runtimeStatus?.status !== "running") {
+    if (
+      (runtimeConfig?.mode ?? spec.defaultMode) === 'docker' &&
+      runtimeConfig?.auto_start === false &&
+      runtimeStatus?.status !== 'running'
+    ) {
       return {
-        title: "Verifier Not Started",
-        message: "Auto Start is disabled for this required verifier. Start it from Verification settings before running the Bench Pack.",
-        actionLabel: "Open Verification"
+        title: 'Verifier Not Started',
+        message:
+          'Auto Start is disabled for this required verifier. Start it from Verification settings before running the Bench Pack.',
+        actionLabel: 'Open Verification',
       };
     }
 
-    if (runtimeStatus?.status === "missing_dependency") {
+    if (runtimeStatus?.status === 'missing_dependency') {
       return {
-        title: "Docker Required",
-        message: runtimeStatus.details ?? "This Bench Pack needs Local Docker before it can run.",
-        actionLabel: "Open Verification"
+        title: 'Docker Required',
+        message:
+          runtimeStatus.details ??
+          'This Bench Pack needs Local Docker before it can run.',
+        actionLabel: 'Open Verification',
       };
     }
 
-    if (runtimeStatus?.status === "dependency_not_running") {
+    if (runtimeStatus?.status === 'dependency_not_running') {
       return {
-        title: "Docker Not Running",
-        message: runtimeStatus.details ?? "This Bench Pack needs Local Docker to be running before it can run.",
-        actionLabel: "Open Verification"
+        title: 'Docker Not Running',
+        message:
+          runtimeStatus.details ??
+          'This Bench Pack needs Local Docker to be running before it can run.',
+        actionLabel: 'Open Verification',
       };
     }
   }
@@ -1118,86 +1296,138 @@ function getRequiredVerifierRunBlocker(
   return null;
 }
 
-function getVerifierStatusTone(status: BenchPackVerifierStatus["verifiers"][number]["status"] | undefined): string {
+function getVerifierStatusTone(
+  status: BenchPackVerifierStatus['verifiers'][number]['status'] | undefined,
+): string {
   switch (status) {
-    case "running":
-      return "status-ready";
-    case "missing_dependency":
-      return "status-not-installed";
-    case "dependency_not_running":
-    case "failed":
-      return "status-danger";
+    case 'running':
+      return 'status-ready';
+    case 'missing_dependency':
+      return 'status-not-installed';
+    case 'dependency_not_running':
+    case 'failed':
+      return 'status-danger';
     default:
-      return "status-idle";
+      return 'status-idle';
   }
 }
 
-function formatVerifierRuntimeStatus(status: BenchPackVerifierStatus["verifiers"][number]["status"] | undefined): string {
+function formatVerifierRuntimeStatus(
+  status: BenchPackVerifierStatus['verifiers'][number]['status'] | undefined,
+): string {
   switch (status) {
-    case "missing_dependency":
-      return "docker required";
-    case "dependency_not_running":
-      return "docker not running";
+    case 'missing_dependency':
+      return 'docker required';
+    case 'dependency_not_running':
+      return 'docker not running';
     default:
-      return (status ?? "stopped").replaceAll("_", " ");
+      return (status ?? 'stopped').replaceAll('_', ' ');
   }
 }
 
 export function App() {
-  if (DETACHED_LOGS_VIEW) {
-    return <DetachedLogsWindow />;
-  }
+  // Removed detached logs view in web version
 
-  const isMacPlatform = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
+  const isMacPlatform =
+    typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [draft, setDraft] = useState<BenchLocalConfig | null>(null);
-  const [workspaceState, setWorkspaceState] = useState<BenchLocalWorkspaceState | null>(null);
-  const [benchPackInspections, setBenchPackInspections] = useState<BenchPackInspection[]>([]);
-  const [registryEntries, setRegistryEntries] = useState<BenchPackRegistryEntry[]>([]);
+  const [workspaceState, setWorkspaceState] =
+    useState<BenchLocalWorkspaceState | null>(null);
+  const [benchPackInspections, setBenchPackInspections] = useState<
+    BenchPackInspection[]
+  >([]);
+  const [registryEntries, setRegistryEntries] = useState<
+    BenchPackRegistryEntry[]
+  >([]);
   const [registryWarning, setRegistryWarning] = useState<string | null>(null);
-  const [availableThemes, setAvailableThemes] = useState<BenchLocalThemeDescriptor[]>([]);
-  const [activeThemeDefinition, setActiveThemeDefinition] = useState<BenchLocalThemeDefinition | null>(null);
+  const [availableThemes, setAvailableThemes] = useState<
+    BenchLocalThemeDescriptor[]
+  >([]);
+  const [activeThemeDefinition, setActiveThemeDefinition] =
+    useState<BenchLocalThemeDefinition | null>(null);
   const [systemPrefersDark, setSystemPrefersDark] = useState(
-    typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
+    typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false,
   );
-  const [verifierStatuses, setVerifierStatuses] = useState<Record<string, BenchPackVerifierStatus>>({});
+  const [verifierStatuses, setVerifierStatuses] = useState<
+    Record<string, BenchPackVerifierStatus>
+  >({});
   const [tabMenuOpen, setTabMenuOpen] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return true;
     }
 
-    return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== "false";
+    return window.localStorage.getItem(SIDEBAR_OPEN_STORAGE_KEY) !== 'false';
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("providers");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('providers');
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
-  const [appMetadata, setAppMetadata] = useState<BenchLocalAppMetadata | null>(null);
-  const [appUpdateState, setAppUpdateState] = useState<BenchLocalUpdateState | null>(null);
-  const [dismissedDownloadedUpdateVersion, setDismissedDownloadedUpdateVersion] = useState<string | null>(null);
-  const [providerModal, setProviderModal] = useState<ProviderModalState | null>(null);
+  const [appMetadata, setAppMetadata] = useState<BenchLocalAppMetadata | null>(
+    null,
+  );
+  const [appUpdateState, setAppUpdateState] =
+    useState<BenchLocalUpdateState | null>(null);
+  const [
+    dismissedDownloadedUpdateVersion,
+    setDismissedDownloadedUpdateVersion,
+  ] = useState<string | null>(null);
+  const [providerModal, setProviderModal] = useState<ProviderModalState | null>(
+    null,
+  );
   const [modelModal, setModelModal] = useState<ModelModalState | null>(null);
-  const [modelBrowserModal, setModelBrowserModal] = useState<ModelBrowserModalState | null>(null);
-  const [tabModelsModal, setTabModelsModal] = useState<TabModelsModalState | null>(null);
-  const [samplingModal, setSamplingModal] = useState<SamplingModalState | null>(null);
-  const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
-  const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
-  const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState>(null);
-  const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
+  const [modelBrowserModal, setModelBrowserModal] =
+    useState<ModelBrowserModalState | null>(null);
+  const [tabModelsModal, setTabModelsModal] =
+    useState<TabModelsModalState | null>(null);
+  const [samplingModal, setSamplingModal] = useState<SamplingModalState | null>(
+    null,
+  );
+  const [modelAliasModal, setModelAliasModal] =
+    useState<ModelAliasModalState | null>(null);
+  const [workspaceModal, setWorkspaceModal] =
+    useState<WorkspaceModalState>(null);
+  const [workspaceContextMenu, setWorkspaceContextMenu] =
+    useState<WorkspaceContextMenuState>(null);
+  const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(
+    null,
+  );
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
-  const [verifierPreparationModal, setVerifierPreparationModal] = useState<VerifierPreparationModalState | null>(null);
-  const [settingsVerifierPreparationModal, setSettingsVerifierPreparationModal] = useState<SettingsVerifierPreparationModalState | null>(null);
-  const [stoppingVerifierStarts, setStoppingVerifierStarts] = useState<Record<string, true>>({});
+  const [verifierPreparationModal, setVerifierPreparationModal] =
+    useState<VerifierPreparationModalState | null>(null);
+  const [
+    settingsVerifierPreparationModal,
+    setSettingsVerifierPreparationModal,
+  ] = useState<SettingsVerifierPreparationModalState | null>(null);
+  const [stoppingVerifierStarts, setStoppingVerifierStarts] = useState<
+    Record<string, true>
+  >({});
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
-  const [editingTab, setEditingTab] = useState<{ tabId: string; value: string; width: number } | null>(null);
-  const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>({});
+  const [editingTab, setEditingTab] = useState<{
+    tabId: string;
+    value: string;
+    width: number;
+  } | null>(null);
+  const [activeRuns, setActiveRuns] = useState<Record<string, ActiveRunEntry>>(
+    {},
+  );
   const [stoppingRuns, setStoppingRuns] = useState<Record<string, true>>({});
-  const [runSummaries, setRunSummaries] = useState<Record<string, BenchPackRunSummary>>({});
-  const [runHistories, setRunHistories] = useState<Record<string, BenchPackRunHistoryEntry[]>>({});
+  const [runSummaries, setRunSummaries] = useState<
+    Record<string, BenchPackRunSummary>
+  >({});
+  const [runHistories, setRunHistories] = useState<
+    Record<string, BenchPackRunHistoryEntry[]>
+  >({});
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
-  const [liveScenarioFocus, setLiveScenarioFocus] = useState<Record<string, LiveScenarioFocusState>>({});
-  const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<Record<string, LoadedHistoryEntry>>({});
+  const [liveScenarioFocus, setLiveScenarioFocus] = useState<
+    Record<string, LiveScenarioFocusState>
+  >({});
+  const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<
+    Record<string, LoadedHistoryEntry>
+  >({});
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsAutoScroll, setLogsAutoScroll] = useState(true);
   const [logsDetached, setLogsDetached] = useState(false);
@@ -1207,57 +1437,99 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
-  const [benchPackMutations, setBenchPackMutations] = useState<Record<string, BenchPackMutationState>>({});
+  const [benchPackMutations, setBenchPackMutations] = useState<
+    Record<string, BenchPackMutationState>
+  >({});
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsOpenRef = useRef(false);
 
-  const providerIds = useMemo(() => Object.keys(draft?.providers ?? {}), [draft]);
-  const themeOptions = useMemo(() => ["system", ...availableThemes.map((theme) => theme.id)], [availableThemes]);
-  const currentThemeLabel = useMemo(
-    () => resolveThemeLabel(draft?.ui.theme ?? "system", availableThemes, systemPrefersDark),
-    [draft?.ui.theme, availableThemes, systemPrefersDark]
+  const providerIds = useMemo(
+    () => Object.keys(draft?.providers ?? {}),
+    [draft],
   );
-  const readyInspections = useMemo(() => benchPackInspections.filter((inspection) => inspection.status === "ready"), [benchPackInspections]);
+  const themeOptions = useMemo(
+    () => ['system', ...availableThemes.map((theme) => theme.id)],
+    [availableThemes],
+  );
+  const currentThemeLabel = useMemo(
+    () =>
+      resolveThemeLabel(
+        draft?.ui.theme ?? 'system',
+        availableThemes,
+        systemPrefersDark,
+      ),
+    [draft?.ui.theme, availableThemes, systemPrefersDark],
+  );
+  const readyInspections = useMemo(
+    () =>
+      benchPackInspections.filter(
+        (inspection) => inspection.status === 'ready',
+      ),
+    [benchPackInspections],
+  );
   const activeWorkspace = useMemo<BenchLocalWorkspace | null>(
-    () => (workspaceState?.activeWorkspaceId ? workspaceState.workspaces[workspaceState.activeWorkspaceId] ?? null : null),
-    [workspaceState]
+    () =>
+      workspaceState?.activeWorkspaceId
+        ? (workspaceState.workspaces[workspaceState.activeWorkspaceId] ?? null)
+        : null,
+    [workspaceState],
   );
   const workspaceTabs = useMemo<BenchLocalWorkspaceTab[]>(
     () =>
       activeWorkspace?.tabIds
-        .map((tabId) => workspaceState?.tabs[tabId])
+        .map((tabId: any) => workspaceState?.tabs[tabId])
         .filter((tab): tab is BenchLocalWorkspaceTab => Boolean(tab)) ?? [],
-    [activeWorkspace, workspaceState]
+    [activeWorkspace, workspaceState],
   );
   const activeTab = useMemo<BenchLocalWorkspaceTab | null>(
-    () => (activeWorkspace?.activeTabId ? workspaceState?.tabs[activeWorkspace.activeTabId] ?? null : workspaceTabs[0] ?? null),
-    [activeWorkspace, workspaceState, workspaceTabs]
+    () =>
+      activeWorkspace?.activeTabId
+        ? (workspaceState?.tabs[activeWorkspace.activeTabId] ?? null)
+        : (workspaceTabs[0] ?? null),
+    [activeWorkspace, workspaceState, workspaceTabs],
   );
   const activeInspection = useMemo(
-    () => benchPackInspections.find((inspection) => inspection.id === activeTab?.benchPackId) ?? null,
-    [benchPackInspections, activeTab]
+    () =>
+      benchPackInspections.find(
+        (inspection) => inspection.id === activeTab?.benchPackId,
+      ) ?? null,
+    [benchPackInspections, activeTab],
   );
   const activeVerifierStatus = useMemo(
-    () => (activeInspection ? verifierStatuses[activeInspection.id] ?? null : null),
-    [activeInspection, verifierStatuses]
+    () =>
+      activeInspection ? (verifierStatuses[activeInspection.id] ?? null) : null,
+    [activeInspection, verifierStatuses],
   );
-  const activeTabModels = useMemo(() => (draft ? resolveTabModels(activeTab, draft.models) : []), [draft, activeTab]);
-  const activeRunSummary = useMemo(() => (activeTab ? runSummaries[activeTab.id] ?? null : null), [runSummaries, activeTab]);
-  const activeLiveRun = useMemo(() => (activeTab ? liveRuns[activeTab.id] ?? null : null), [liveRuns, activeTab]);
+  const activeTabModels = useMemo(
+    () => (draft ? resolveTabModels(activeTab, draft.models) : []),
+    [draft, activeTab],
+  );
+  const activeRunSummary = useMemo(
+    () => (activeTab ? (runSummaries[activeTab.id] ?? null) : null),
+    [runSummaries, activeTab],
+  );
+  const activeLiveRun = useMemo(
+    () => (activeTab ? (liveRuns[activeTab.id] ?? null) : null),
+    [liveRuns, activeTab],
+  );
   const activeLiveScenarioFocus = useMemo(
-    () => (activeTab ? liveScenarioFocus[activeTab.id] ?? null : null),
-    [liveScenarioFocus, activeTab]
+    () => (activeTab ? (liveScenarioFocus[activeTab.id] ?? null) : null),
+    [liveScenarioFocus, activeTab],
   );
   const activeRunBlocker = useMemo(
     () =>
       activeInspection && draft
-        ? getRequiredVerifierRunBlocker(activeInspection.manifest, draft.benchpacks[activeInspection.id], activeVerifierStatus ?? undefined)
+        ? getRequiredVerifierRunBlocker(
+            activeInspection.manifest,
+            draft.benchpacks[activeInspection.id],
+            activeVerifierStatus ?? undefined,
+          )
         : null,
-    [activeInspection, activeVerifierStatus, draft]
+    [activeInspection, activeVerifierStatus, draft],
   );
   const activeLoadedHistory = useMemo(
-    () => (activeTab ? loadedHistoryRuns[activeTab.id] ?? null : null),
-    [loadedHistoryRuns, activeTab]
+    () => (activeTab ? (loadedHistoryRuns[activeTab.id] ?? null) : null),
+    [loadedHistoryRuns, activeTab],
   );
   const activeDisplayModels = useMemo(() => {
     if (!draft) {
@@ -1270,33 +1542,47 @@ export function App() {
 
     return activeTabModels;
   }, [draft, activeLoadedHistory, activeRunSummary, activeTabModels]);
-  const downloadedUpdateVersion = appUpdateState?.downloadedVersion ?? appUpdateState?.availableVersion ?? null;
+  const downloadedUpdateVersion =
+    appUpdateState?.downloadedVersion ??
+    appUpdateState?.availableVersion ??
+    null;
   const showDownloadedUpdateBanner =
-    appUpdateState?.status === "downloaded" && downloadedUpdateVersion !== dismissedDownloadedUpdateVersion;
-  const activeLogEvents = activeLiveRun?.events ?? activeRunSummary?.events ?? [];
+    appUpdateState?.status === 'downloaded' &&
+    downloadedUpdateVersion !== dismissedDownloadedUpdateVersion;
+  const activeLogEvents =
+    activeLiveRun?.events ?? activeRunSummary?.events ?? [];
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const tabStripShellRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
-  const modelDiscoveryCacheRef = useRef<Record<string, BenchLocalDiscoveredModel[]>>({});
+  const modelDiscoveryCacheRef = useRef<
+    Record<string, BenchLocalDiscoveredModel[]>
+  >({});
   const replayRunTokensRef = useRef(new Map<string, symbol>());
   const appliedThemeKeysRef = useRef<string[]>([]);
   const [tabStripOverflow, setTabStripOverflow] = useState(false);
-  const [activeTabMask, setActiveTabMask] = useState<{ left: number; width: number } | null>(null);
+  const [activeTabMask, setActiveTabMask] = useState<{
+    left: number;
+    width: number;
+  } | null>(null);
 
   const hasUnsavedChanges =
-    loadState && draft ? JSON.stringify(loadState.config) !== JSON.stringify(draft) : false;
+    loadState && draft
+      ? JSON.stringify(loadState.config) !== JSON.stringify(draft)
+      : false;
   const effectiveThemeId = useMemo(() => {
-    const requested = draft?.ui.theme ?? "system";
+    const requested = draft?.ui.theme ?? 'system';
 
-    if (requested === "system") {
-      return systemPrefersDark ? "dark" : "light";
+    if (requested === 'system') {
+      return systemPrefersDark ? 'dark' : 'light';
     }
 
     return requested;
   }, [draft?.ui.theme, systemPrefersDark]);
 
-  const updateDraft = (updater: (current: BenchLocalConfig) => BenchLocalConfig) => {
+  const updateDraft = (
+    updater: (current: BenchLocalConfig) => BenchLocalConfig,
+  ) => {
     setDraft((current) => {
       if (!current) {
         return current;
@@ -1310,14 +1596,20 @@ export function App() {
     setWorkspaceState(nextState);
 
     try {
-      const saved = await window.benchlocal.workspaces.save(nextState);
+      const saved = await bl.workspaces.save(nextState);
       setWorkspaceState(saved.state);
     } catch (workspaceError) {
-      setError(workspaceError instanceof Error ? workspaceError.message : "Failed to save workspace state.");
+      setError(
+        workspaceError instanceof Error
+          ? workspaceError.message
+          : 'Failed to save workspace state.',
+      );
     }
   };
 
-  const updateWorkspaceState = (updater: (current: BenchLocalWorkspaceState) => BenchLocalWorkspaceState) => {
+  const updateWorkspaceState = (
+    updater: (current: BenchLocalWorkspaceState) => BenchLocalWorkspaceState,
+  ) => {
     setWorkspaceState((current) => {
       if (!current) {
         return current;
@@ -1331,16 +1623,20 @@ export function App() {
 
   const loadBenchPackInspections = async () => {
     try {
-      const inspections = await window.benchlocal.benchPacks.list();
+      const inspections = await bl.benchPacks.list();
       setBenchPackInspections(inspections);
     } catch (pluginError) {
-      setError(pluginError instanceof Error ? pluginError.message : "Failed to inspect configured Bench Packs.");
+      setError(
+        pluginError instanceof Error
+          ? pluginError.message
+          : 'Failed to inspect configured Bench Packs.',
+      );
     }
   };
 
   const loadRegistryEntries = async () => {
     try {
-      const entries = await window.benchlocal.benchPacks.registry();
+      const entries = await bl.benchPacks.registry();
       setRegistryEntries(entries);
       setRegistryWarning(null);
     } catch (registryError) {
@@ -1350,48 +1646,51 @@ export function App() {
 
   const loadVerifierStatuses = async () => {
     try {
-      const statuses = await window.benchlocal.verifiers.list();
-      setVerifierStatuses(Object.fromEntries(statuses.map((status) => [status.benchPackId, status])));
+      const statuses = await bl.verifiers.list();
+      setVerifierStatuses(
+        Object.fromEntries(
+          statuses.map((status: any) => [status.benchPackId, status]),
+        ),
+      );
     } catch (verifierError) {
-      setError(verifierError instanceof Error ? verifierError.message : "Failed to load verifier status.");
+      setError(
+        verifierError instanceof Error
+          ? verifierError.message
+          : 'Failed to load verifier status.',
+      );
     }
   };
 
   const loadThemes = async () => {
     try {
-      const themes = await window.benchlocal.themes.list();
+      const themes = await bl.themes.list();
       setAvailableThemes(themes);
     } catch (themeError) {
-      setError(themeError instanceof Error ? themeError.message : "Failed to load available themes.");
+      setError(
+        themeError instanceof Error
+          ? themeError.message
+          : 'Failed to load available themes.',
+      );
     }
   };
 
-  const checkForAppUpdates = async () => {
-    try {
-      const nextState = await window.benchlocal.updates.check();
-      setAppUpdateState(nextState);
-    } catch (updateError) {
-      setError(formatDesktopErrorMessage(updateError) || "Failed to check for BenchLocal updates.");
-    }
-  };
-
-  const installDownloadedAppUpdate = async () => {
-    try {
-      await window.benchlocal.updates.install();
-    } catch (updateError) {
-      setError(formatDesktopErrorMessage(updateError) || "Failed to install the downloaded BenchLocal update.");
-    }
-  };
+  // Updates removed in web version
+  const checkForAppUpdates = async () => {};
+  const installDownloadedAppUpdate = async () => {};
 
   const loadHistoryForBenchPack = async (benchPackId: string) => {
     try {
-      const history = await window.benchlocal.benchPacks.history({ benchPackId });
+      const history = await bl.benchPacks.history(benchPackId);
       setRunHistories((current) => ({
         ...current,
-        [benchPackId]: history
+        [benchPackId]: history,
       }));
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
+      setError(
+        historyError instanceof Error
+          ? historyError.message
+          : 'Failed to load Bench Pack history.',
+      );
     }
   };
 
@@ -1410,21 +1709,21 @@ export function App() {
           inspections,
           themes,
           verifierStatusList,
-          activeRunsResult
+          activeRunsResult,
         ] = await Promise.all([
-          window.benchlocal.config.load(),
-          window.benchlocal.workspaces.load(),
-          window.benchlocal.benchPacks.list(),
-          window.benchlocal.themes.list(),
-          window.benchlocal.verifiers.list(),
-          window.benchlocal.benchPacks.activeRuns()
+          bl.config.load(),
+          bl.workspaces.load(),
+          bl.benchPacks.list(),
+          bl.themes.list(),
+          bl.verifiers.list(),
+          bl.benchPacks.activeRuns(),
         ]);
 
         let registry: BenchPackRegistryEntry[] = [];
         let nextRegistryWarning: string | null = null;
 
         try {
-          registry = await window.benchlocal.benchPacks.registry();
+          registry = await bl.benchPacks.registry();
         } catch (registryError) {
           nextRegistryWarning = formatRegistryWarning(registryError);
         }
@@ -1435,18 +1734,18 @@ export function App() {
 
         const persistedRunEntries = await Promise.all(
           Object.values(workspaceResult.state.tabs)
-            .filter((tab) => tab.benchPackId && tab.loadedRunId)
-            .map(async (tab) => {
+            .filter((tab: any) => tab.benchPackId && tab.loadedRunId)
+            .map(async (tab: any) => {
               try {
-                const summary = await window.benchlocal.benchPacks.loadHistory({
-                  benchPackId: tab.benchPackId as string,
-                  runId: tab.loadedRunId as string
-                });
+                const summary = await bl.benchPacks.loadHistory(
+                  tab.benchPackId as string,
+                  tab.loadedRunId as string,
+                );
                 return [tab.id, summary] as const;
               } catch {
                 return null;
               }
-            })
+            }),
         );
 
         setLoadState(result);
@@ -1455,36 +1754,60 @@ export function App() {
         setRunSummaries(
           Object.fromEntries(
             persistedRunEntries.filter(
-              (entry): entry is readonly [string, BenchPackRunSummary] => entry !== null
-            )
-          )
+              (entry): entry is readonly [string, BenchPackRunSummary] =>
+                entry !== null,
+            ),
+          ),
         );
         setLoadedHistoryRuns(
           Object.fromEntries(
             persistedRunEntries
-              .filter((entry): entry is readonly [string, BenchPackRunSummary] => entry !== null)
+              .filter(
+                (entry): entry is readonly [string, BenchPackRunSummary] =>
+                  entry !== null,
+              )
               .map(([tabId, summary]) => [
                 tabId,
                 {
                   runId: summary.runId,
                   startedAt: summary.startedAt,
-                  mode: "history"
-                }
-              ])
-          )
+                  mode: 'history',
+                },
+              ]),
+          ),
         );
         setBenchPackInspections(inspections);
         setRegistryEntries(registry);
         setRegistryWarning(nextRegistryWarning);
         setAvailableThemes(themes);
-        setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status])));
-        setActiveRuns(
-          Object.fromEntries(activeRunsResult.map((run) => [run.tabId, { benchPackId: run.benchPackId }]))
+        setVerifierStatuses(
+          Object.fromEntries(
+            verifierStatusList.map((status: any) => [
+              status.benchPackId,
+              status,
+            ]),
+          ),
         );
-        setAppNotice(result.created ? "Created a fresh ~/.benchlocal/config.toml bootstrap." : null);
+        setActiveRuns(
+          Object.fromEntries(
+            activeRunsResult.map((run: any) => [
+              run.tabId,
+              { benchPackId: run.benchPackId },
+            ]),
+          ),
+        );
+        setAppNotice(
+          result.created
+            ? 'Created a fresh ~/.benchlocal/config.toml bootstrap.'
+            : null,
+        );
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load BenchLocal config.");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'Failed to load BenchLocal config.',
+          );
         }
       } finally {
         if (!cancelled) {
@@ -1501,27 +1824,27 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = () => {
       setSystemPrefersDark(media.matches);
     };
 
     handleChange();
-    media.addEventListener("change", handleChange);
+    media.addEventListener('change', handleChange);
 
     return () => {
-      media.removeEventListener("change", handleChange);
+      media.removeEventListener('change', handleChange);
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    void window.benchlocal.updates
+    void bl.updates
       .state()
       .then((state) => {
         if (!cancelled) {
@@ -1530,10 +1853,10 @@ export function App() {
       })
       .catch(() => undefined);
 
-    const unsubscribe = window.benchlocal.updates.onState((state) => {
+    const unsubscribe = bl.updates.onState((state) => {
       setAppUpdateState(state);
 
-      if (state.status !== "downloaded") {
+      if (state.status !== 'downloaded') {
         setDismissedDownloadedUpdateVersion(null);
       }
     });
@@ -1548,7 +1871,7 @@ export function App() {
     let cancelled = false;
 
     const loadTheme = async () => {
-      const theme = await window.benchlocal.themes.load({ themeId: effectiveThemeId });
+      const theme = await bl.themes.load(effectiveThemeId);
 
       if (!cancelled) {
         setActiveThemeDefinition(theme);
@@ -1563,7 +1886,7 @@ export function App() {
   }, [effectiveThemeId]);
 
   useEffect(() => {
-    if (!activeThemeDefinition || typeof document === "undefined") {
+    if (!activeThemeDefinition || typeof document === 'undefined') {
       return;
     }
 
@@ -1573,27 +1896,37 @@ export function App() {
       root.style.removeProperty(key);
     }
 
-    for (const [key, value] of Object.entries(activeThemeDefinition.variables)) {
+    for (const [key, value] of Object.entries(
+      activeThemeDefinition.variables,
+    )) {
       root.style.setProperty(key, value);
     }
 
     appliedThemeKeysRef.current = Object.keys(activeThemeDefinition.variables);
-    root.style.setProperty("color-scheme", activeThemeDefinition.colorScheme);
+    root.style.setProperty('color-scheme', activeThemeDefinition.colorScheme);
     root.dataset.theme = activeThemeDefinition.id;
   }, [activeThemeDefinition]);
 
   useEffect(() => {
-    return window.benchlocal.benchPacks.onRunEvent(({ tabId, event }) => {
-      if (event.type === "verifier_preparing") {
+    const sse = bl.sse();
+    const handleRunEvent = (e: MessageEvent) => {
+      const { tabId, event } = JSON.parse(e.data) as {
+        tabId: string;
+        event: ProgressEvent;
+      };
+
+      if (event.type === 'verifier_preparing') {
         setVerifierPreparationModal({
           tabId,
-          progress: event
+          progress: event,
         });
       } else {
-        setVerifierPreparationModal((current) => (current?.tabId === tabId ? null : current));
+        setVerifierPreparationModal((current) =>
+          current?.tabId === tabId ? null : current,
+        );
       }
 
-      if (event.type === "run_finished" || event.type === "run_error") {
+      if (event.type === 'run_finished' || event.type === 'run_error') {
         setActiveRuns((current) => {
           if (!current[tabId]) {
             return current;
@@ -1616,22 +1949,22 @@ export function App() {
 
       setLiveRuns((current) => ({
         ...current,
-        [tabId]: updateLiveRunState(current[tabId], event)
+        [tabId]: updateLiveRunState(current[tabId], event),
       }));
 
-      if (event.type === "run_started") {
+      if (event.type === 'run_started') {
         setLiveScenarioFocus((current) => ({
           ...current,
           [tabId]: {
             liveScenarioId: null,
-            autoFollow: true
-          }
+            autoFollow: true,
+          },
         }));
       } else if (
-        event.type === "scenario_started" ||
-        event.type === "model_progress" ||
-        event.type === "scenario_result" ||
-        event.type === "scenario_finished"
+        event.type === 'scenario_started' ||
+        event.type === 'model_progress' ||
+        event.type === 'scenario_result' ||
+        event.type === 'scenario_finished'
       ) {
         setLiveScenarioFocus((current) => {
           const existing = current[tabId];
@@ -1639,38 +1972,68 @@ export function App() {
             ...current,
             [tabId]: {
               liveScenarioId: event.scenarioId,
-              autoFollow: existing?.autoFollow ?? true
-            }
+              autoFollow: existing?.autoFollow ?? true,
+            },
           };
         });
       }
-    });
+    };
+    const handleMutationProgress = (e: MessageEvent) => {
+      const payload = JSON.parse(e.data) as BenchPackMutationProgress;
+      setBenchPackMutations((current) => ({
+        ...current,
+        [payload.benchPackId]: payload,
+      }));
+    };
+    const handleVerifierProgress = (e: MessageEvent) => {
+      const { benchPackId, event } = JSON.parse(e.data) as {
+        benchPackId: string;
+        event: ProgressEvent;
+      };
+      setSettingsVerifierPreparationModal((current) =>
+        current?.benchPackId === benchPackId || current === null
+          ? ({ benchPackId, progress: event } as any)
+          : current,
+      );
+    };
+    sse.addEventListener('run-event', handleRunEvent);
+    sse.addEventListener('benchpack-mutation-progress', handleMutationProgress);
+    sse.addEventListener('verifier-progress', handleVerifierProgress);
+    return () => {
+      sse.removeEventListener('run-event', handleRunEvent);
+      sse.removeEventListener(
+        'benchpack-mutation-progress',
+        handleMutationProgress,
+      );
+      sse.removeEventListener('verifier-progress', handleVerifierProgress);
+      sse.close();
+    };
   }, []);
 
   useEffect(() => {
-    return window.benchlocal.benchPacks.onMutationProgress((payload) => {
+    return bl.benchPacks.onMutationProgress((payload) => {
       setBenchPackMutations((current) => ({
         ...current,
-        [payload.benchPackId]: payload
+        [payload.benchPackId]: payload,
       }));
     });
   }, []);
 
   useEffect(() => {
-    return window.benchlocal.verifiers.onProgress(({ benchPackId, event }) => {
+    return bl.verifiers.onProgress(({ benchPackId, event }) => {
       setSettingsVerifierPreparationModal((current) =>
         current?.benchPackId === benchPackId || current === null
           ? {
               benchPackId,
-              progress: event
+              progress: event,
             }
-          : current
+          : current,
       );
     });
   }, []);
 
   useEffect(() => {
-    if (!settingsOpen || settingsTab !== "verification") {
+    if (!settingsOpen || settingsTab !== 'verification') {
       return;
     }
 
@@ -1678,11 +2041,11 @@ export function App() {
   }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
-    if (!settingsOpen || settingsTab !== "advanced") {
+    if (!settingsOpen || settingsTab !== 'advanced') {
       return;
     }
 
-    setSettingsTab("providers");
+    setSettingsTab('providers');
   }, [settingsOpen, settingsTab]);
 
   useEffect(() => {
@@ -1694,7 +2057,7 @@ export function App() {
   }, [activeLogEvents, logsOpen, logsAutoScroll]);
 
   useEffect(() => {
-    if (!activeInspection?.id || activeInspection.status !== "ready") {
+    if (!activeInspection?.id || activeInspection.status !== 'ready') {
       return;
     }
 
@@ -1702,7 +2065,7 @@ export function App() {
   }, [activeInspection?.id, activeInspection?.status]);
 
   useEffect(() => {
-    const dispose = window.benchlocal.logs.onDetachedWindowClosed(() => {
+    const dispose = bl.logs.onDetachedWindowClosed(() => {
       setLogsDetached(false);
     });
 
@@ -1710,24 +2073,27 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void window.benchlocal.logs.publishDetachedState({
-      workspaceName: activeWorkspace?.name ?? "No Workspace",
-      tabTitle: activeTab?.title ?? "No Active Tab",
+    void bl.logs.publishDetachedState({
+      workspaceName: activeWorkspace?.name ?? 'No Workspace',
+      tabTitle: activeTab?.title ?? 'No Active Tab',
       eventCount: activeLogEvents.length,
-      events: activeLogEvents
+      events: activeLogEvents,
     });
   }, [activeWorkspace?.name, activeTab?.title, activeLogEvents]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
-      const shell = document.querySelector<HTMLElement>(".desktop-shell");
+      const shell = document.querySelector<HTMLElement>('.desktop-shell');
 
       if (!shell || !document.body.dataset.logResizeActive) {
         return;
       }
 
       const shellRect = shell.getBoundingClientRect();
-      const nextHeight = Math.min(420, Math.max(160, shellRect.bottom - event.clientY - 30));
+      const nextHeight = Math.min(
+        420,
+        Math.max(160, shellRect.bottom - event.clientY - 30),
+      );
       setLogDrawerHeight(nextHeight);
     };
 
@@ -1735,12 +2101,12 @@ export function App() {
       delete document.body.dataset.logResizeActive;
     };
 
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
 
     return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
     };
   }, []);
 
@@ -1754,21 +2120,21 @@ export function App() {
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         closeMenu();
       }
     };
 
-    window.addEventListener("mousedown", closeMenu);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('mousedown', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener("mousedown", closeMenu);
-      window.removeEventListener("scroll", closeMenu, true);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener('mousedown', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [workspaceContextMenu]);
 
@@ -1785,26 +2151,26 @@ export function App() {
     };
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         setThemeMenuOpen(false);
       }
     };
 
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
 
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
     };
   }, [themeMenuOpen]);
 
   useEffect(() => {
-    return window.benchlocal.app.onOpenAbout(() => {
+    return bl.app.onOpenAbout(() => {
       setAboutDialogOpen(true);
 
       if (!appMetadata) {
-        void window.benchlocal.app
+        void bl.app
           .metadata()
           .then((metadata) => {
             setAppMetadata(metadata);
@@ -1815,7 +2181,7 @@ export function App() {
   }, [appMetadata]);
 
   useEffect(() => {
-    return window.benchlocal.app.onOpenSettings(() => {
+    return bl.app.onOpenSettings(() => {
       setSettingsOpen(true);
     });
   }, []);
@@ -1829,7 +2195,7 @@ export function App() {
   }, [settingsOpen]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
 
@@ -1849,10 +2215,10 @@ export function App() {
     };
 
     updateOverflow();
-    window.addEventListener("resize", updateOverflow);
+    window.addEventListener('resize', updateOverflow);
 
     return () => {
-      window.removeEventListener("resize", updateOverflow);
+      window.removeEventListener('resize', updateOverflow);
     };
   }, [workspaceTabs.length, activeWorkspace?.id, sidebarOpen]);
 
@@ -1879,18 +2245,18 @@ export function App() {
 
       setActiveTabMask({
         left: Math.round(tabRect.left - shellRect.left),
-        width: Math.round(tabRect.width)
+        width: Math.round(tabRect.width),
       });
     };
 
     const frameId = window.requestAnimationFrame(updateMask);
-    window.addEventListener("resize", updateMask);
-    strip.addEventListener("scroll", updateMask, { passive: true });
+    window.addEventListener('resize', updateMask);
+    strip.addEventListener('scroll', updateMask, { passive: true });
 
     return () => {
       window.cancelAnimationFrame(frameId);
-      window.removeEventListener("resize", updateMask);
-      strip.removeEventListener("scroll", updateMask);
+      window.removeEventListener('resize', updateMask);
+      strip.removeEventListener('scroll', updateMask);
     };
   }, [activeTab?.id, workspaceTabs, sidebarOpen, tabStripOverflow]);
 
@@ -1901,7 +2267,7 @@ export function App() {
       preserveFilesystemDraft?: boolean;
       previousDraft?: BenchLocalConfig | null;
       previousLoadConfig?: BenchLocalConfig | null;
-    }
+    },
   ): Promise<boolean> => {
     if (!nextConfig) {
       return false;
@@ -1911,12 +2277,18 @@ export function App() {
     setError(null);
 
     try {
-      const result = await window.benchlocal.config.save(nextConfig);
+      const result = await bl.config.save(nextConfig);
       setLoadState(result);
       setDraft(
-        options?.preserveFilesystemDraft && options.previousDraft && options.previousLoadConfig
-          ? reapplyPendingFilesystemDraft(result.config, options.previousDraft, options.previousLoadConfig)
-          : cloneConfig(result.config)
+        options?.preserveFilesystemDraft &&
+          options.previousDraft &&
+          options.previousLoadConfig
+          ? reapplyPendingFilesystemDraft(
+              result.config,
+              options.previousDraft,
+              options.previousLoadConfig,
+            )
+          : cloneConfig(result.config),
       );
       await loadBenchPackInspections();
       await loadRegistryEntries();
@@ -1925,7 +2297,11 @@ export function App() {
       }
       return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Failed to save BenchLocal config.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Failed to save BenchLocal config.',
+      );
       return false;
     } finally {
       setIsBusy(false);
@@ -1937,17 +2313,17 @@ export function App() {
       return false;
     }
 
-    return persistConfig(draft, { notice: "Saved ~/.benchlocal/config.toml" });
+    return persistConfig(draft, { notice: 'Saved ~/.benchlocal/config.toml' });
   };
 
   const refreshBenchPackState = async (result?: LoadState) => {
-    const nextLoadState = result ?? (await window.benchlocal.config.load());
-    const inspections = await window.benchlocal.benchPacks.list();
-    const verifierStatusList = await window.benchlocal.verifiers.list();
+    const nextLoadState = result ?? (await bl.config.load());
+    const inspections = await bl.benchPacks.list();
+    const verifierStatusList = await bl.verifiers.list();
     let registry = registryEntries;
 
     try {
-      registry = await window.benchlocal.benchPacks.registry();
+      registry = await bl.benchPacks.registry();
       setRegistryWarning(null);
     } catch (registryError) {
       setRegistryWarning(formatRegistryWarning(registryError));
@@ -1957,7 +2333,11 @@ export function App() {
     setDraft(cloneConfig(nextLoadState.config));
     setBenchPackInspections(inspections);
     setRegistryEntries(registry);
-    setVerifierStatuses(Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status])));
+    setVerifierStatuses(
+      Object.fromEntries(
+        verifierStatusList.map((status: any) => [status.benchPackId, status]),
+      ),
+    );
   };
 
   const ensureBenchPackMutationReady = async (): Promise<boolean> => {
@@ -1979,20 +2359,22 @@ export function App() {
       ...current,
       [benchPackId]: {
         benchPackId,
-        action: "install",
-        phase: "resolving",
-        message: "Resolving Bench Pack from registry."
-      }
+        action: 'install',
+        phase: 'resolving',
+        message: 'Resolving Bench Pack from registry.',
+      },
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.install({ benchPackId });
+      const result = await bl.benchPacks.install(benchPackId);
       await refreshBenchPackState(result);
       if (settingsOpenRef.current) {
         setSettingsNotice(`Installed ${benchPackId}.`);
       }
     } catch (installError) {
-      setError(formatRegistryMutationError("install", benchPackId, installError));
+      setError(
+        formatRegistryMutationError('install', benchPackId, installError),
+      );
     } finally {
       setIsBusy(false);
       setBenchPackMutations((current) => {
@@ -2011,7 +2393,7 @@ export function App() {
     const normalizedUrl = url.trim();
 
     if (!normalizedUrl) {
-      setError("Bench Pack URL is required.");
+      setError('Bench Pack URL is required.');
       return;
     }
 
@@ -2022,31 +2404,40 @@ export function App() {
       ...current,
       [THIRD_PARTY_INSTALL_MUTATION_ID]: {
         benchPackId: THIRD_PARTY_INSTALL_MUTATION_ID,
-        action: "install",
-        phase: "resolving",
-        message: "Resolving Bench Pack from URL."
-      }
+        action: 'install',
+        phase: 'resolving',
+        message: 'Resolving Bench Pack from URL.',
+      },
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.installFromUrl({ url: normalizedUrl });
+      const result = await bl.benchPacks.installFromUrl(normalizedUrl);
       await refreshBenchPackState(result);
       installedBenchPackId =
-        Object.entries(result.config.benchpacks).find(([, benchPack]) => benchPack.source === "archive" && benchPack.url === normalizedUrl)?.[0] ??
-        null;
+        Object.entries(result.config.benchpacks).find(
+          ([, benchPack]: any) =>
+            benchPack.source === 'archive' && benchPack.url === normalizedUrl,
+        )?.[0] ?? null;
       if (settingsOpenRef.current) {
-        setSettingsNotice(installedBenchPackId ? `Installed ${installedBenchPackId}.` : "Installed third-party Bench Pack.");
+        setSettingsNotice(
+          installedBenchPackId
+            ? `Installed ${installedBenchPackId}.`
+            : 'Installed third-party Bench Pack.',
+        );
       }
       return true;
     } catch (installError) {
-      setError(formatDesktopErrorMessage(installError) || "Failed to install Bench Pack from URL.");
+      setError(
+        formatDesktopErrorMessage(installError) ||
+          'Failed to install Bench Pack from URL.',
+      );
       return false;
     } finally {
       setIsBusy(false);
       setBenchPackMutations((current) => {
         const next = { ...current };
         delete next[THIRD_PARTY_INSTALL_MUTATION_ID];
-        delete next["third-party"];
+        delete next['third-party'];
         if (installedBenchPackId) {
           delete next[installedBenchPackId];
         }
@@ -2066,20 +2457,20 @@ export function App() {
       ...current,
       [benchPackId]: {
         benchPackId,
-        action: "update",
-        phase: "resolving",
-        message: "Resolving Bench Pack update."
-      }
+        action: 'update',
+        phase: 'resolving',
+        message: 'Resolving Bench Pack update.',
+      },
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.update({ benchPackId });
+      const result = await bl.benchPacks.update(benchPackId);
       await refreshBenchPackState(result);
       if (settingsOpenRef.current) {
         setSettingsNotice(`Updated ${benchPackId}.`);
       }
     } catch (updateError) {
-      setError(formatRegistryMutationError("update", benchPackId, updateError));
+      setError(formatRegistryMutationError('update', benchPackId, updateError));
     } finally {
       setIsBusy(false);
       setBenchPackMutations((current) => {
@@ -2095,8 +2486,10 @@ export function App() {
       return;
     }
 
-    if (Object.values(activeRuns).some((run) => run.benchPackId === benchPackId)) {
-      setError("Stop active Bench Pack runs before uninstalling this pack.");
+    if (
+      Object.values(activeRuns).some((run) => run.benchPackId === benchPackId)
+    ) {
+      setError('Stop active Bench Pack runs before uninstalling this pack.');
       return;
     }
 
@@ -2106,20 +2499,24 @@ export function App() {
       ...current,
       [benchPackId]: {
         benchPackId,
-        action: "uninstall",
-        phase: "removing",
-        message: "Removing Bench Pack."
-      }
+        action: 'uninstall',
+        phase: 'removing',
+        message: 'Removing Bench Pack.',
+      },
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.uninstall({ benchPackId });
+      const result = await bl.benchPacks.uninstall(benchPackId);
       await refreshBenchPackState(result);
       if (settingsOpenRef.current) {
         setSettingsNotice(`Uninstalled ${benchPackId}.`);
       }
     } catch (uninstallError) {
-      setError(uninstallError instanceof Error ? uninstallError.message : `Failed to uninstall ${benchPackId}.`);
+      setError(
+        uninstallError instanceof Error
+          ? uninstallError.message
+          : `Failed to uninstall ${benchPackId}.`,
+      );
     } finally {
       setIsBusy(false);
       setBenchPackMutations((current) => {
@@ -2139,7 +2536,7 @@ export function App() {
     setProviderModal(null);
     setModelModal(null);
     if (settingsOpenRef.current) {
-      setSettingsNotice("Reverted unsaved changes.");
+      setSettingsNotice('Reverted unsaved changes.');
     }
     setError(null);
   };
@@ -2151,14 +2548,16 @@ export function App() {
 
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
     nextConfig.ui.theme = themeId;
     setDraft(nextConfig);
 
     const saved = await persistConfig(nextConfig, {
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
     if (!saved) {
       setDraft(previousDraft);
@@ -2168,27 +2567,31 @@ export function App() {
   const saveVerifierConfig = async (
     benchPackId: string,
     verifierId: string,
-    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig
+    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig,
   ) => {
     if (!draft) {
       return;
     }
 
-    const currentVerifier = draft.benchpacks[benchPackId]?.verifiers?.[verifierId];
+    const currentVerifier =
+      draft.benchpacks[benchPackId]?.verifiers?.[verifierId];
     if (!currentVerifier) {
       return;
     }
 
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
-    nextConfig.benchpacks[benchPackId].verifiers![verifierId] = updater(currentVerifier);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
+    nextConfig.benchpacks[benchPackId].verifiers![verifierId] =
+      updater(currentVerifier);
     setDraft(nextConfig);
 
     const saved = await persistConfig(nextConfig, {
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
     if (!saved) {
       setDraft(previousDraft);
@@ -2198,7 +2601,7 @@ export function App() {
   const scrollTabStrip = (delta: number) => {
     tabStripRef.current?.scrollBy({
       left: delta,
-      behavior: "smooth"
+      behavior: 'smooth',
     });
   };
 
@@ -2209,7 +2612,10 @@ export function App() {
       return;
     }
 
-    const horizontalDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    const horizontalDelta =
+      Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
 
     if (Math.abs(horizontalDelta) < 1) {
       return;
@@ -2218,7 +2624,7 @@ export function App() {
     event.preventDefault();
     strip.scrollBy({
       left: horizontalDelta,
-      behavior: "auto"
+      behavior: 'auto',
     });
   };
 
@@ -2227,24 +2633,28 @@ export function App() {
     setAppNotice(null);
 
     if (!tab.benchPackId || !draft) {
-      setError("Select a Bench Pack for this tab first.");
+      setError('Select a Bench Pack for this tab first.');
       return;
     }
 
     const benchPackId = tab.benchPackId;
     const selectedModels = resolveTabModels(tab, draft.models);
-    const inspection = benchPackInspections.find((candidate) => candidate.id === benchPackId);
+    const inspection = benchPackInspections.find(
+      (candidate) => candidate.id === benchPackId,
+    );
 
     if (inspection?.manifest) {
       try {
-        const verifierStatusList = await window.benchlocal.verifiers.list();
-        const nextVerifierStatuses = Object.fromEntries(verifierStatusList.map((status) => [status.benchPackId, status]));
+        const verifierStatusList = await bl.verifiers.list();
+        const nextVerifierStatuses = Object.fromEntries(
+          verifierStatusList.map((status: any) => [status.benchPackId, status]),
+        );
         setVerifierStatuses(nextVerifierStatuses);
 
         const runBlocker = getRequiredVerifierRunBlocker(
           inspection.manifest,
           draft.benchpacks[benchPackId],
-          nextVerifierStatuses[benchPackId]
+          nextVerifierStatuses[benchPackId],
         );
 
         if (runBlocker) {
@@ -2253,20 +2663,26 @@ export function App() {
             subtitle: runBlocker.message,
             confirmLabel: runBlocker.actionLabel,
             onConfirm: () => {
-              setSettingsTab("verification");
+              setSettingsTab('verification');
               setSettingsOpen(true);
-            }
+            },
           });
           return;
         }
       } catch (verifierError) {
-        setError(verifierError instanceof Error ? verifierError.message : "Failed to refresh verifier status.");
+        setError(
+          verifierError instanceof Error
+            ? verifierError.message
+            : 'Failed to refresh verifier status.',
+        );
         return;
       }
     }
 
     if (selectedModels.length === 0) {
-      setError("Select at least one enabled model for this tab before running the Bench Pack.");
+      setError(
+        'Select at least one enabled model for this tab before running the Bench Pack.',
+      );
       return;
     }
 
@@ -2280,7 +2696,7 @@ export function App() {
 
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { benchPackId, mode: "host" }
+      [tab.id]: { benchPackId, mode: 'host' },
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -2296,8 +2712,8 @@ export function App() {
       [tab.id]: {
         events: [],
         resultsByModel: {},
-        activeCellKeys: []
-      }
+        activeCellKeys: [],
+      },
     }));
     setRunSummaries((current) => {
       if (!current[tab.id]) {
@@ -2319,16 +2735,16 @@ export function App() {
     });
 
     try {
-      const result = await window.benchlocal.benchPacks.run({
+      const result = await bl.benchPacks.run({
         tabId: tab.id,
         benchPackId,
         modelIds: selectedModels.map((model) => model.id),
         executionMode: tab.executionMode,
-        generation: tab.samplingOverrides
+        generation: tab.samplingOverrides,
       });
       setRunSummaries((current) => ({
         ...current,
-        [tab.id]: result
+        [tab.id]: result,
       }));
       updateWorkspaceState((current) => {
         const nextTab = current.tabs[tab.id];
@@ -2344,14 +2760,22 @@ export function App() {
       if (result.cancelled) {
         setAppNotice(`Stopped ${result.benchPackName}.`);
       } else {
-        setAppNotice(`Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`);
+        setAppNotice(
+          `Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? '' : 's'}.`,
+        );
       }
       await loadBenchPackInspections();
       await loadHistoryForBenchPack(benchPackId);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : `Failed to run Bench Pack for ${benchPackId}.`);
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : `Failed to run Bench Pack for ${benchPackId}.`,
+      );
     } finally {
-      setVerifierPreparationModal((current) => (current?.tabId === tab.id ? null : current));
+      setVerifierPreparationModal((current) =>
+        current?.tabId === tab.id ? null : current,
+      );
       setActiveRuns((current) => {
         const next = { ...current };
         delete next[tab.id];
@@ -2375,17 +2799,20 @@ export function App() {
     }
   };
 
-  const resumeTabRun = async (tab: BenchLocalWorkspaceTab, runSummary: BenchPackRunSummary) => {
+  const resumeTabRun = async (
+    tab: BenchLocalWorkspaceTab,
+    runSummary: BenchPackRunSummary,
+  ) => {
     setError(null);
     setAppNotice(null);
 
     if (!tab.benchPackId || !draft) {
-      setError("Select a Bench Pack for this tab first.");
+      setError('Select a Bench Pack for this tab first.');
       return;
     }
 
     if (isRunSummaryComplete(runSummary)) {
-      setError("This saved run is already complete.");
+      setError('This saved run is already complete.');
       return;
     }
 
@@ -2402,7 +2829,10 @@ export function App() {
       }
     }
 
-    const historicalSelections = buildHistoryModelSelections(runSummary, draft.models);
+    const historicalSelections = buildHistoryModelSelections(
+      runSummary,
+      draft.models,
+    );
     updateWorkspaceState((current) => {
       const nextTab = current.tabs[tab.id];
 
@@ -2410,7 +2840,8 @@ export function App() {
         return current;
       }
 
-      nextTab.modelSelections = normalizeTabModelSelections(historicalSelections);
+      nextTab.modelSelections =
+        normalizeTabModelSelections(historicalSelections);
       nextTab.executionMode = runSummary.executionMode ?? nextTab.executionMode;
       nextTab.updatedAt = new Date().toISOString();
       return current;
@@ -2427,7 +2858,7 @@ export function App() {
     });
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { benchPackId, mode: "host" }
+      [tab.id]: { benchPackId, mode: 'host' },
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -2444,21 +2875,21 @@ export function App() {
         runId: runSummary.runId,
         events: [],
         resultsByModel: {},
-        activeCellKeys: []
-      }
+        activeCellKeys: [],
+      },
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.resumeRun({
+      const result = await bl.benchPacks.resumeRun({
         tabId: tab.id,
         benchPackId,
         runId: runSummary.runId,
         executionMode: runSummary.executionMode ?? tab.executionMode,
-        generation: tab.samplingOverrides
+        generation: tab.samplingOverrides,
       });
       setRunSummaries((current) => ({
         ...current,
-        [tab.id]: result
+        [tab.id]: result,
       }));
       updateWorkspaceState((current) => {
         const nextTab = current.tabs[tab.id];
@@ -2476,8 +2907,8 @@ export function App() {
       } else {
         setAppNotice(
           isRunSummaryComplete(result)
-            ? `Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`
-            : `Resumed ${result.benchPackName}, but the run is still incomplete.`
+            ? `Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? '' : 's'}.`
+            : `Resumed ${result.benchPackName}, but the run is still incomplete.`,
         );
       }
       await loadBenchPackInspections();
@@ -2498,12 +2929,18 @@ export function App() {
       if (previousLoadedHistory) {
         setLoadedHistoryRuns((current) => ({
           ...current,
-          [tab.id]: previousLoadedHistory
+          [tab.id]: previousLoadedHistory,
         }));
       }
-      setError(runError instanceof Error ? runError.message : `Failed to resume Bench Pack for ${benchPackId}.`);
+      setError(
+        runError instanceof Error
+          ? runError.message
+          : `Failed to resume Bench Pack for ${benchPackId}.`,
+      );
     } finally {
-      setVerifierPreparationModal((current) => (current?.tabId === tab.id ? null : current));
+      setVerifierPreparationModal((current) =>
+        current?.tabId === tab.id ? null : current,
+      );
       setActiveRuns((current) => {
         const next = { ...current };
         delete next[tab.id];
@@ -2522,20 +2959,27 @@ export function App() {
     }
   };
 
-  const replayTabRun = async (tab: BenchLocalWorkspaceTab, runSummary: BenchPackRunSummary) => {
+  const replayTabRun = async (
+    tab: BenchLocalWorkspaceTab,
+    runSummary: BenchPackRunSummary,
+  ) => {
     if (!tab.benchPackId) {
-      setError("Select a Bench Pack for this tab first.");
+      setError('Select a Bench Pack for this tab first.');
       return;
     }
 
     if (!isRunSummaryComplete(runSummary)) {
-      setError("Replay is only available for completed test runs.");
+      setError('Replay is only available for completed test runs.');
       return;
     }
 
-    const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
+    const inspection = benchPackInspections.find(
+      (candidate) => candidate.id === tab.benchPackId,
+    );
     const scenarios = inspection?.scenarios ?? [];
-    const modelIds = resolveHistoryModels(runSummary, draft?.models ?? []).map((model) => model.id);
+    const modelIds = resolveHistoryModels(runSummary, draft?.models ?? []).map(
+      (model) => model.id,
+    );
     const replayGroups = buildReplayGroups(runSummary, scenarios, modelIds);
     const token = Symbol(`replay:${tab.id}`);
     replayRunTokensRef.current.set(tab.id, token);
@@ -2544,7 +2988,7 @@ export function App() {
     setAppNotice(null);
     setActiveRuns((current) => ({
       ...current,
-      [tab.id]: { benchPackId: tab.benchPackId as string, mode: "replay" }
+      [tab.id]: { benchPackId: tab.benchPackId as string, mode: 'replay' },
     }));
     setStoppingRuns((current) => {
       if (!current[tab.id]) {
@@ -2561,15 +3005,17 @@ export function App() {
         runId: runSummary.runId,
         events: [],
         resultsByModel: {},
-        activeCellKeys: []
-      }
+        activeCellKeys: [],
+      },
     }));
     setLiveScenarioFocus((current) => ({
       ...current,
       [tab.id]: {
         liveScenarioId: null,
-        autoFollow: supportsLiveScenarioColumnFocus(runSummary.executionMode ?? tab.executionMode)
-      }
+        autoFollow: supportsLiveScenarioColumnFocus(
+          runSummary.executionMode ?? tab.executionMode,
+        ),
+      },
     }));
 
     const wait = async (ms: number) => {
@@ -2582,7 +3028,9 @@ export function App() {
           return;
         }
 
-        const nextActiveCellKeys = group.map((cell) => getCellKey(cell.modelId, cell.scenarioId));
+        const nextActiveCellKeys = group.map((cell) =>
+          getCellKey(cell.modelId, cell.scenarioId),
+        );
         const leadScenarioId = group[0]?.scenarioId ?? null;
 
         setLiveRuns((current) => {
@@ -2593,17 +3041,22 @@ export function App() {
               runId: runSummary.runId,
               events: existing?.events ?? [],
               resultsByModel: existing?.resultsByModel ?? {},
-              activeCellKeys: nextActiveCellKeys
-            }
+              activeCellKeys: nextActiveCellKeys,
+            },
           };
         });
-        if (leadScenarioId && supportsLiveScenarioColumnFocus(runSummary.executionMode ?? tab.executionMode)) {
+        if (
+          leadScenarioId &&
+          supportsLiveScenarioColumnFocus(
+            runSummary.executionMode ?? tab.executionMode,
+          )
+        ) {
           setLiveScenarioFocus((current) => ({
             ...current,
             [tab.id]: {
               liveScenarioId: leadScenarioId,
-              autoFollow: true
-            }
+              autoFollow: true,
+            },
           }));
         }
 
@@ -2619,8 +3072,10 @@ export function App() {
 
           for (const cell of group) {
             nextResultsByModel[cell.modelId] = [
-              ...(nextResultsByModel[cell.modelId] ?? []).filter((candidate) => candidate.scenarioId !== cell.scenarioId),
-              cell.result
+              ...(nextResultsByModel[cell.modelId] ?? []).filter(
+                (candidate) => candidate.scenarioId !== cell.scenarioId,
+              ),
+              cell.result,
             ];
           }
 
@@ -2630,8 +3085,8 @@ export function App() {
               runId: runSummary.runId,
               events: existing?.events ?? [],
               resultsByModel: nextResultsByModel,
-              activeCellKeys: []
-            }
+              activeCellKeys: [],
+            },
           };
         });
       }
@@ -2658,7 +3113,7 @@ export function App() {
   const stopTabRun = async (tabId: string) => {
     const activeRun = activeRuns[tabId];
 
-    if (activeRun?.mode === "replay") {
+    if (activeRun?.mode === 'replay') {
       replayRunTokensRef.current.delete(tabId);
       setActiveRuns((current) => {
         const next = { ...current };
@@ -2676,25 +3131,25 @@ export function App() {
           ...(current[tabId] ?? {
             events: [],
             resultsByModel: {},
-            activeCellKeys: []
+            activeCellKeys: [],
           }),
-          activeCellKeys: []
-        }
+          activeCellKeys: [],
+        },
       }));
-      setAppNotice("Stopped replay.");
+      setAppNotice('Stopped replay.');
       return;
     }
 
     setStoppingRuns((current) => ({
       ...current,
-      [tabId]: true
+      [tabId]: true,
     }));
 
     try {
-      const result = await window.benchlocal.benchPacks.stop({ tabId });
+      const result = await bl.benchPacks.stop(tabId);
 
       if (!result.stopped) {
-        setAppNotice("That Bench Pack run was no longer active.");
+        setAppNotice('That Bench Pack run was no longer active.');
         setActiveRuns((current) => {
           const next = { ...current };
           delete next[tabId];
@@ -2708,28 +3163,34 @@ export function App() {
         return;
       }
 
-      setAppNotice("Stopping Bench Pack run...");
+      setAppNotice('Stopping Bench Pack run...');
     } catch (stopError) {
       setStoppingRuns((current) => {
         const next = { ...current };
         delete next[tabId];
         return next;
       });
-      setError(stopError instanceof Error ? stopError.message : "Failed to stop Bench Pack run.");
+      setError(
+        stopError instanceof Error
+          ? stopError.message
+          : 'Failed to stop Bench Pack run.',
+      );
     }
   };
 
   const cancelSettingsVerifierStart = async (benchPackId: string) => {
     setStoppingVerifierStarts((current) => ({
       ...current,
-      [benchPackId]: true
+      [benchPackId]: true,
     }));
 
     try {
-      const result = await window.benchlocal.verifiers.cancelStart({ benchPackId });
+      const result = await bl.verifiers.cancelStart(benchPackId);
 
       if (!result.cancelled) {
-        setSettingsVerifierPreparationModal((current) => (current?.benchPackId === benchPackId ? null : current));
+        setSettingsVerifierPreparationModal((current) =>
+          current?.benchPackId === benchPackId ? null : current,
+        );
         setStoppingVerifierStarts((current) => {
           if (!current[benchPackId]) {
             return current;
@@ -2750,7 +3211,11 @@ export function App() {
         delete next[benchPackId];
         return next;
       });
-      setError(cancelError instanceof Error ? cancelError.message : "Failed to cancel verifier start.");
+      setError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : 'Failed to cancel verifier start.',
+      );
     }
   };
 
@@ -2768,19 +3233,19 @@ export function App() {
         tabIds: [tabId],
         activeTabId: tabId,
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
-        current.tabs[tabId] = {
-          id: tabId,
-          title: "New Tab",
-          benchPackId: null,
-          loadedRunId: null,
-          focusedScenarioId: null,
-          modelSelections: [],
+      current.tabs[tabId] = {
+        id: tabId,
+        title: 'New Tab',
+        benchPackId: null,
+        loadedRunId: null,
+        focusedScenarioId: null,
+        modelSelections: [],
         samplingOverrides: {},
-        executionMode: "parallel_by_test_case",
+        executionMode: 'parallel_by_test_case',
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
 
       return current;
@@ -2802,10 +3267,12 @@ export function App() {
   };
 
   const deleteWorkspace = (workspaceId: string) => {
-    const removedTabIds = new Set(workspaceState?.workspaces[workspaceId]?.tabIds ?? []);
+    const removedTabIds = new Set(
+      workspaceState?.workspaces[workspaceId]?.tabIds ?? [],
+    );
 
     if (Array.from(removedTabIds).some((tabId) => activeRuns[tabId])) {
-      setError("Stop active Bench Pack runs before deleting this workspace.");
+      setError('Stop active Bench Pack runs before deleting this workspace.');
       return;
     }
 
@@ -2821,7 +3288,9 @@ export function App() {
       }
 
       delete current.workspaces[workspaceId];
-      current.workspaceOrder = current.workspaceOrder.filter((id) => id !== workspaceId);
+      current.workspaceOrder = current.workspaceOrder.filter(
+        (id) => id !== workspaceId,
+      );
 
       if (current.workspaceOrder.length === 0) {
         const now = new Date().toISOString();
@@ -2832,23 +3301,23 @@ export function App() {
         current.activeWorkspaceId = nextWorkspaceId;
         current.workspaces[nextWorkspaceId] = {
           id: nextWorkspaceId,
-          name: "My Workspace",
+          name: 'My Workspace',
           tabIds: [nextTabId],
           activeTabId: nextTabId,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         };
         current.tabs[nextTabId] = {
           id: nextTabId,
-          title: "New Tab",
+          title: 'New Tab',
           benchPackId: null,
           loadedRunId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
-          executionMode: "parallel_by_test_case",
+          executionMode: 'parallel_by_test_case',
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
         };
       } else if (current.activeWorkspaceId === workspaceId) {
         current.activeWorkspaceId = current.workspaceOrder[0] ?? null;
@@ -2859,16 +3328,33 @@ export function App() {
 
     if (removedTabIds.size > 0) {
       setRunSummaries((current) =>
-        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([tabId]) => !removedTabIds.has(tabId),
+          ),
+        ),
       );
       setLiveRuns((current) =>
-        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([tabId]) => !removedTabIds.has(tabId),
+          ),
+        ),
       );
       setActiveRuns((current) =>
-        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId)))
+        Object.fromEntries(
+          Object.entries(current).filter(
+            ([tabId]) => !removedTabIds.has(tabId),
+          ),
+        ),
       );
-      setStoppingRuns((current) =>
-        Object.fromEntries(Object.entries(current).filter(([tabId]) => !removedTabIds.has(tabId))) as Record<string, true>
+      setStoppingRuns(
+        (current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(
+              ([tabId]) => !removedTabIds.has(tabId),
+            ),
+          ) as Record<string, true>,
       );
     }
   };
@@ -2879,22 +3365,23 @@ export function App() {
     }
 
     try {
-      const result = await window.benchlocal.workspaces.export({
-        workspaceId,
-        state: workspaceState
-      });
+      const result = await bl.workspaces.export(workspaceId, workspaceState);
 
       if (result.exported) {
         setAppNotice(`Exported workspace to ${result.filePath}.`);
       }
     } catch (workspaceError) {
-      setError(workspaceError instanceof Error ? workspaceError.message : "Failed to export workspace.");
+      setError(
+        workspaceError instanceof Error
+          ? workspaceError.message
+          : 'Failed to export workspace.',
+      );
     }
   };
 
   const importWorkspace = async () => {
     try {
-      const result = await window.benchlocal.workspaces.import();
+      const result = await bl.workspaces.import(null);
 
       if (!result.imported || !result.workspace || !result.tabs) {
         return;
@@ -2909,7 +3396,7 @@ export function App() {
 
       updateWorkspaceState((current) => {
         const now = new Date().toISOString();
-        const nextTabIds = importedWorkspace.tabIds.map((tabId) => {
+        const nextTabIds = importedWorkspace.tabIds.map((tabId: any) => {
           const nextTabId = `tab-${crypto.randomUUID()}`;
           tabIdMap.set(tabId, nextTabId);
           const importedTab = importedTabs[tabId];
@@ -2921,10 +3408,13 @@ export function App() {
             current.tabs[nextTabId] = {
               ...importedTabRecord,
               id: nextTabId,
-              benchPackId: importedTabRecord.benchPackId ?? importedTabRecord.pluginId ?? null,
+              benchPackId:
+                importedTabRecord.benchPackId ??
+                importedTabRecord.pluginId ??
+                null,
               samplingOverrides: importedTab.samplingOverrides ?? {},
               createdAt: importedTab.createdAt ?? now,
-              updatedAt: now
+              updatedAt: now,
             };
           }
 
@@ -2936,14 +3426,19 @@ export function App() {
         current.workspaces[newWorkspaceId] = {
           ...importedWorkspace,
           id: newWorkspaceId,
-          name:
-            Object.values(current.workspaces).some((workspace) => workspace.name === importedWorkspace.name)
-              ? `${importedWorkspace.name} Imported`
-              : importedWorkspace.name,
+          name: Object.values(current.workspaces).some(
+            (workspace) => workspace.name === importedWorkspace.name,
+          )
+            ? `${importedWorkspace.name} Imported`
+            : importedWorkspace.name,
           tabIds: nextTabIds,
-          activeTabId: importedWorkspace.activeTabId ? tabIdMap.get(importedWorkspace.activeTabId) ?? nextTabIds[0] ?? null : nextTabIds[0] ?? null,
+          activeTabId: importedWorkspace.activeTabId
+            ? (tabIdMap.get(importedWorkspace.activeTabId) ??
+              nextTabIds[0] ??
+              null)
+            : (nextTabIds[0] ?? null),
           createdAt: importedWorkspace.createdAt ?? now,
-          updatedAt: now
+          updatedAt: now,
         };
 
         return current;
@@ -2951,7 +3446,11 @@ export function App() {
 
       setAppNotice(`Imported workspace "${importedWorkspace.name}".`);
     } catch (workspaceError) {
-      setError(workspaceError instanceof Error ? workspaceError.message : "Failed to import workspace.");
+      setError(
+        workspaceError instanceof Error
+          ? workspaceError.message
+          : 'Failed to import workspace.',
+      );
     }
   };
 
@@ -2985,9 +3484,9 @@ export function App() {
         focusedScenarioId: null,
         modelSelections: [],
         samplingOverrides: {},
-        executionMode: "parallel_by_test_case",
+        executionMode: 'parallel_by_test_case',
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
       };
       workspace.tabIds.push(tabId);
       workspace.activeTabId = tabId;
@@ -3040,7 +3539,7 @@ export function App() {
     setEditingTab({
       tabId,
       value: currentTitle,
-      width
+      width,
     });
   };
 
@@ -3049,7 +3548,7 @@ export function App() {
       return;
     }
 
-    const nextTitle = editingTab.value.trim() || "New Tab";
+    const nextTitle = editingTab.value.trim() || 'New Tab';
 
     updateWorkspaceState((current) => {
       const tab = current.tabs[editingTab.tabId];
@@ -3104,7 +3603,7 @@ export function App() {
     }
 
     if (activeRuns[tabId]) {
-      setError("Stop the Bench Pack run before closing this tab.");
+      setError('Stop the Bench Pack run before closing this tab.');
       return;
     }
 
@@ -3119,22 +3618,24 @@ export function App() {
       delete current.tabs[tabId];
 
       workspace.activeTabId =
-        workspace.activeTabId === tabId ? workspace.tabIds[workspace.tabIds.length - 1] ?? null : workspace.activeTabId;
+        workspace.activeTabId === tabId
+          ? (workspace.tabIds[workspace.tabIds.length - 1] ?? null)
+          : workspace.activeTabId;
       workspace.updatedAt = new Date().toISOString();
 
       if (workspace.tabIds.length === 0) {
         const replacementTabId = `tab-${crypto.randomUUID()}`;
         current.tabs[replacementTabId] = {
           id: replacementTabId,
-          title: "New Tab",
+          title: 'New Tab',
           benchPackId: null,
           loadedRunId: null,
           focusedScenarioId: null,
           modelSelections: [],
           samplingOverrides: {},
-          executionMode: "parallel_by_test_case",
+          executionMode: 'parallel_by_test_case',
           createdAt: workspace.updatedAt,
-          updatedAt: workspace.updatedAt
+          updatedAt: workspace.updatedAt,
         };
         workspace.tabIds = [replacementTabId];
         workspace.activeTabId = replacementTabId;
@@ -3159,16 +3660,20 @@ export function App() {
     });
   };
 
-  const restoreHistoryRun = async (benchPackId: string, runId: string, mode: "history" | "replay" = "history") => {
+  const restoreHistoryRun = async (
+    benchPackId: string,
+    runId: string,
+    mode: 'history' | 'replay' = 'history',
+  ) => {
     if (!activeTab) {
       return;
     }
 
     try {
-      const summary = await window.benchlocal.benchPacks.loadHistory({ benchPackId, runId });
+      const summary = await bl.benchPacks.loadHistory(benchPackId, runId);
       setRunSummaries((current) => ({
         ...current,
-        [activeTab.id]: summary
+        [activeTab.id]: summary,
       }));
       updateWorkspaceState((current) => {
         const tab = current.tabs[activeTab.id];
@@ -3191,8 +3696,8 @@ export function App() {
         [activeTab.id]: {
           runId,
           startedAt: summary.startedAt,
-          mode
-        }
+          mode,
+        },
       }));
       if (summary.executionMode) {
         updateWorkspaceState((current) => {
@@ -3208,7 +3713,11 @@ export function App() {
         });
       }
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
+      setError(
+        historyError instanceof Error
+          ? historyError.message
+          : 'Failed to load Bench Pack history.',
+      );
     }
   };
 
@@ -3218,14 +3727,14 @@ export function App() {
     }
 
     if (!detail.runId) {
-      setError("This scenario does not belong to a saved test run yet.");
+      setError('This scenario does not belong to a saved test run yet.');
       return;
     }
 
     const tab = workspaceState.tabs[detail.tabId];
 
     if (!tab || tab.benchPackId !== detail.benchPackId) {
-      setError("The original tab for this test is no longer available.");
+      setError('The original tab for this test is no longer available.');
       return;
     }
 
@@ -3239,7 +3748,9 @@ export function App() {
 
     const retryKey = detailModalKey(detail);
     const retryCellKey = getCellKey(detail.modelId, detail.scenarioId);
-    setDetailModal((current) => (current && detailModalKey(current) === retryKey ? null : current));
+    setDetailModal((current) =>
+      current && detailModalKey(current) === retryKey ? null : current,
+    );
     setLiveRuns((current) => {
       const existing = current[detail.tabId];
 
@@ -3251,8 +3762,8 @@ export function App() {
             runId: existing.runId ?? detail.runId ?? undefined,
             activeCellKeys: existing.activeCellKeys.includes(retryCellKey)
               ? existing.activeCellKeys
-              : [...existing.activeCellKeys, retryCellKey]
-          }
+              : [...existing.activeCellKeys, retryCellKey],
+          },
         };
       }
 
@@ -3262,29 +3773,29 @@ export function App() {
           runId: detail.runId ?? undefined,
           events: [],
           resultsByModel: {},
-          activeCellKeys: [retryCellKey]
-        }
+          activeCellKeys: [retryCellKey],
+        },
       };
     });
 
     try {
-      await window.benchlocal.benchPacks.retryScenario({
+      await bl.benchPacks.retryScenario({
         tabId: detail.tabId,
         benchPackId: detail.benchPackId,
         runId: detail.runId,
         scenarioId: detail.scenarioId,
         modelId: detail.modelId,
-        generation: tab.samplingOverrides
+        generation: tab.samplingOverrides,
       });
-      const refreshedSummary = await window.benchlocal.benchPacks.loadHistory({
-        benchPackId: detail.benchPackId,
-        runId: detail.runId
-      });
+      const refreshedSummary = await bl.benchPacks.loadHistory(
+        detail.benchPackId,
+        detail.runId,
+      );
 
       if (!activeRuns[detail.tabId]) {
         setRunSummaries((current) => ({
           ...current,
-          [detail.tabId]: refreshedSummary
+          [detail.tabId]: refreshedSummary,
         }));
       }
       await loadHistoryForBenchPack(detail.benchPackId);
@@ -3301,11 +3812,17 @@ export function App() {
           ...current,
           [detail.tabId]: {
             ...existing,
-            activeCellKeys: existing.activeCellKeys.filter((key) => key !== retryCellKey)
-          }
+            activeCellKeys: existing.activeCellKeys.filter(
+              (key) => key !== retryCellKey,
+            ),
+          },
         };
       });
-      setError(retryError instanceof Error ? retryError.message : "Failed to retry the selected test.");
+      setError(
+        retryError instanceof Error
+          ? retryError.message
+          : 'Failed to retry the selected test.',
+      );
     }
   };
 
@@ -3351,12 +3868,15 @@ export function App() {
   };
 
   const clearLoadedHistoryForBenchPack = (benchPackId: string) => {
-    const affectedTabIds =
-      workspaceState
-        ? Object.values(workspaceState.tabs)
-            .filter((tab) => tab.benchPackId === benchPackId && Boolean(loadedHistoryRuns[tab.id]))
-            .map((tab) => tab.id)
-        : [];
+    const affectedTabIds = workspaceState
+      ? Object.values(workspaceState.tabs)
+          .filter(
+            (tab) =>
+              tab.benchPackId === benchPackId &&
+              Boolean(loadedHistoryRuns[tab.id]),
+          )
+          .map((tab) => tab.id)
+      : [];
 
     if (affectedTabIds.length === 0) {
       return;
@@ -3402,18 +3922,25 @@ export function App() {
     });
   };
 
-  const removeAllHistoryForBenchPack = async (benchPackId: string, benchPackName: string) => {
+  const removeAllHistoryForBenchPack = async (
+    benchPackId: string,
+    benchPackName: string,
+  ) => {
     try {
-      await window.benchlocal.benchPacks.clearHistory({ benchPackId });
+      await bl.benchPacks.clearHistory(benchPackId);
       setRunHistories((current) => ({
         ...current,
-        [benchPackId]: []
+        [benchPackId]: [],
       }));
       clearLoadedHistoryForBenchPack(benchPackId);
       setHistoryModal(null);
       setAppNotice(`Removed all test histories for ${benchPackName}.`);
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to remove Bench Pack history.");
+      setError(
+        historyError instanceof Error
+          ? historyError.message
+          : 'Failed to remove Bench Pack history.',
+      );
     }
   };
 
@@ -3425,21 +3952,28 @@ export function App() {
     const providerId = providerModal.form.id.trim();
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
 
     nextConfig.providers[providerId] = {
       kind: providerModal.form.kind,
-      name: providerModal.form.name.trim() || defaultProviderName(providerModal.form.kind),
+      name:
+        providerModal.form.name.trim() ||
+        defaultProviderName(providerModal.form.kind),
       enabled: providerModal.form.enabled,
       base_url: providerModal.form.base_url.trim(),
-      api_key: providerModal.form.api_key.trim() || undefined
+      api_key: providerModal.form.api_key.trim() || undefined,
     };
 
     const saved = await persistConfig(nextConfig, {
-      notice: providerModal.mode === "create" ? "Added provider." : "Updated provider.",
+      notice:
+        providerModal.mode === 'create'
+          ? 'Added provider.'
+          : 'Updated provider.',
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
 
     if (!saved) {
@@ -3454,19 +3988,27 @@ export function App() {
       return false;
     }
 
-    const removedModelIds = new Set((draft?.models ?? []).filter((model) => model.provider === providerId).map((model) => model.id));
+    const removedModelIds = new Set(
+      (draft?.models ?? [])
+        .filter((model) => model.provider === providerId)
+        .map((model) => model.id),
+    );
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
 
     delete nextConfig.providers[providerId];
-    nextConfig.models = nextConfig.models.filter((model) => model.provider !== providerId);
+    nextConfig.models = nextConfig.models.filter(
+      (model) => model.provider !== providerId,
+    );
 
     const saved = await persistConfig(nextConfig, {
       notice: `Deleted provider "${providerId}".`,
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
 
     if (!saved) {
@@ -3476,7 +4018,9 @@ export function App() {
     if (removedModelIds.size > 0) {
       updateWorkspaceState((current) => {
         for (const tab of Object.values(current.tabs)) {
-          tab.modelSelections = tab.modelSelections.filter((selection) => !removedModelIds.has(selection.modelId));
+          tab.modelSelections = tab.modelSelections.filter(
+            (selection) => !removedModelIds.has(selection.modelId),
+          );
         }
         return current;
       });
@@ -3487,23 +4031,25 @@ export function App() {
 
   const confirmDeleteProvider = (providerId: string) => {
     const provider = draft?.providers[providerId];
-    const linkedModelCount = (draft?.models ?? []).filter((model) => model.provider === providerId).length;
+    const linkedModelCount = (draft?.models ?? []).filter(
+      (model) => model.provider === providerId,
+    ).length;
 
     setConfirmDialog({
-      title: "Delete Provider",
+      title: 'Delete Provider',
       subtitle:
         linkedModelCount > 0
-          ? `Delete ${provider?.name ?? "this provider"}? This will also delete ${linkedModelCount} linked ${linkedModelCount === 1 ? "model" : "models"} and remove them from any tab selections.`
-          : `Delete ${provider?.name ?? "this provider"}?`,
-      confirmLabel: "Delete Provider",
-      tone: "danger",
+          ? `Delete ${provider?.name ?? 'this provider'}? This will also delete ${linkedModelCount} linked ${linkedModelCount === 1 ? 'model' : 'models'} and remove them from any tab selections.`
+          : `Delete ${provider?.name ?? 'this provider'}?`,
+      confirmLabel: 'Delete Provider',
+      tone: 'danger',
       onConfirm: () => {
         void deleteProvider(providerId).then((deleted) => {
           if (deleted) {
             setProviderModal(null);
           }
         });
-      }
+      },
     });
   };
 
@@ -3515,7 +4061,7 @@ export function App() {
     const provider = draft.providers[modelModal.form.provider];
 
     if (!provider) {
-      setError("Select a provider first.");
+      setError('Select a provider first.');
       return;
     }
 
@@ -3531,10 +4077,11 @@ export function App() {
       providerId: modelModal.form.provider,
       providerName: provider.name,
       entries: cachedEntries ?? [],
-      query: "",
-      selectedModelId: modelModal.form.model.trim() || cachedEntries?.[0]?.id || null,
+      query: '',
+      selectedModelId:
+        modelModal.form.model.trim() || cachedEntries?.[0]?.id || null,
       loading: !cachedEntries,
-      error: null
+      error: null,
     });
 
     if (cachedEntries) {
@@ -3542,17 +4089,18 @@ export function App() {
     }
 
     try {
-      const entries = await window.benchlocal.models.discover({ provider });
+      const entries = await bl.models.discover(provider);
       modelDiscoveryCacheRef.current[cacheKey] = entries;
       setModelBrowserModal((current) =>
         current && current.providerId === modelModal.form.provider
           ? {
               ...current,
               entries,
-              selectedModelId: current.selectedModelId ?? entries[0]?.id ?? null,
-              loading: false
+              selectedModelId:
+                current.selectedModelId ?? entries[0]?.id ?? null,
+              loading: false,
             }
-          : current
+          : current,
       );
     } catch (discoverError) {
       setModelBrowserModal((current) =>
@@ -3563,9 +4111,9 @@ export function App() {
               error:
                 discoverError instanceof Error
                   ? discoverError.message
-                  : `Failed to load models from ${provider.name}.`
+                  : `Failed to load models from ${provider.name}.`,
             }
-          : current
+          : current,
       );
     }
   };
@@ -3575,10 +4123,13 @@ export function App() {
       return;
     }
 
-    const modelConfig = buildModelConfig(modelModal.form, draft?.providers ?? {});
+    const modelConfig = buildModelConfig(
+      modelModal.form,
+      draft?.providers ?? {},
+    );
 
     if (!modelConfig.provider || !modelConfig.model) {
-      setError("Model provider and model identifier are required.");
+      setError('Model provider and model identifier are required.');
       return;
     }
 
@@ -3587,22 +4138,27 @@ export function App() {
       return;
     }
 
-    const previousModelId = modelModal.mode === "edit" ? draft?.models[modelModal.index]?.id ?? null : null;
+    const previousModelId =
+      modelModal.mode === 'edit'
+        ? (draft?.models[modelModal.index]?.id ?? null)
+        : null;
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
 
-    if (modelModal.mode === "create") {
+    if (modelModal.mode === 'create') {
       nextConfig.models.push(modelConfig);
     } else {
       nextConfig.models[modelModal.index] = modelConfig;
     }
 
     const saved = await persistConfig(nextConfig, {
-      notice: modelModal.mode === "create" ? "Added model." : "Updated model.",
+      notice: modelModal.mode === 'create' ? 'Added model.' : 'Updated model.',
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
 
     if (!saved) {
@@ -3613,7 +4169,9 @@ export function App() {
       updateWorkspaceState((current) => {
         for (const tab of Object.values(current.tabs)) {
           tab.modelSelections = tab.modelSelections.map((selection) =>
-            selection.modelId === previousModelId ? { ...selection, modelId: modelConfig.id } : selection
+            selection.modelId === previousModelId
+              ? { ...selection, modelId: modelConfig.id }
+              : selection,
           );
         }
         return current;
@@ -3631,14 +4189,16 @@ export function App() {
     const removedModelId = draft?.models[index]?.id ?? null;
     const previousDraft = cloneConfig(draft);
     const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
-    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextConfig = previousLoadConfig
+      ? cloneConfig(previousLoadConfig)
+      : cloneConfig(draft);
     nextConfig.models.splice(index, 1);
 
     const saved = await persistConfig(nextConfig, {
-      notice: "Deleted model.",
+      notice: 'Deleted model.',
       preserveFilesystemDraft: true,
       previousDraft,
-      previousLoadConfig
+      previousLoadConfig,
     });
 
     if (!saved) {
@@ -3648,7 +4208,9 @@ export function App() {
     if (removedModelId) {
       updateWorkspaceState((current) => {
         for (const tab of Object.values(current.tabs)) {
-          tab.modelSelections = tab.modelSelections.filter((selection) => selection.modelId !== removedModelId);
+          tab.modelSelections = tab.modelSelections.filter(
+            (selection) => selection.modelId !== removedModelId,
+          );
         }
         return current;
       });
@@ -3665,25 +4227,27 @@ export function App() {
 
     const linkedTabCount = workspaceState
       ? Object.values(workspaceState.tabs).filter((tab) =>
-          tab.modelSelections.some((selection) => selection.modelId === model.id)
+          tab.modelSelections.some(
+            (selection) => selection.modelId === model.id,
+          ),
         ).length
       : 0;
 
     setConfirmDialog({
-      title: "Delete Model",
+      title: 'Delete Model',
       subtitle:
         linkedTabCount > 0
-          ? `Delete ${model.label}? This will also remove it from ${linkedTabCount} tab ${linkedTabCount === 1 ? "selection" : "selections"}.`
+          ? `Delete ${model.label}? This will also remove it from ${linkedTabCount} tab ${linkedTabCount === 1 ? 'selection' : 'selections'}.`
           : `Delete ${model.label}?`,
-      confirmLabel: "Delete Model",
-      tone: "danger",
+      confirmLabel: 'Delete Model',
+      tone: 'danger',
       onConfirm: () => {
         void deleteModel(index).then((deleted) => {
           if (deleted) {
             setModelModal(null);
           }
         });
-      }
+      },
     });
   };
 
@@ -3691,14 +4255,14 @@ export function App() {
     <div>
       <main className="page-shell">
         <section className="desktop-shell">
-          <header className={`topbar${isMacPlatform ? "" : " topbar-nonmac"}`}>
+          <header className={`topbar${isMacPlatform ? '' : ' topbar-nonmac'}`}>
             <div className="topbar-leading">
               <button
                 type="button"
                 onClick={() => setSidebarOpen((current) => !current)}
                 className="toolbar-icon-button"
-                aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-                title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+                title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
               >
                 <Sidebar size={16} />
               </button>
@@ -3742,13 +4306,17 @@ export function App() {
                     <Cog size={16} />
                     Settings
                   </button>
-                  {appUpdateState?.status === "downloaded" ? (
+                  {appUpdateState?.status === 'downloaded' ? (
                     <button
                       type="button"
                       onClick={() => void installDownloadedAppUpdate()}
                       className="button-warn header-update-button"
                       aria-label="Restart BenchLocal to install update"
-                      title={downloadedUpdateVersion ? `Install BenchLocal ${downloadedUpdateVersion}` : "Install BenchLocal update"}
+                      title={
+                        downloadedUpdateVersion
+                          ? `Install BenchLocal ${downloadedUpdateVersion}`
+                          : 'Install BenchLocal update'
+                      }
                     >
                       <ArrowUp size={16} />
                       Restart to Update
@@ -3766,24 +4334,33 @@ export function App() {
                       aria-expanded={themeMenuOpen}
                     >
                       <Palette size={15} />
-                      <span className="settings-theme-button-label">Theme: {currentThemeLabel}</span>
+                      <span className="settings-theme-button-label">
+                        Theme: {currentThemeLabel}
+                      </span>
                       <ChevronDown size={14} />
                     </button>
                     {themeMenuOpen ? (
-                      <div className="run-mode-menu settings-theme-menu" role="menu">
+                      <div
+                        className="run-mode-menu settings-theme-menu"
+                        role="menu"
+                      >
                         {themeOptions.map((themeId) => (
                           <button
                             key={themeId}
                             type="button"
                             role="menuitemradio"
                             aria-checked={draft.ui.theme === themeId}
-                            className={`run-mode-menu-item${draft.ui.theme === themeId ? " is-active" : ""}`}
+                            className={`run-mode-menu-item${draft.ui.theme === themeId ? ' is-active' : ''}`}
                             onClick={() => {
                               setThemeMenuOpen(false);
                               void saveThemeSelection(themeId);
                             }}
                           >
-                            {resolveThemeLabel(themeId, availableThemes, systemPrefersDark)}
+                            {resolveThemeLabel(
+                              themeId,
+                              availableThemes,
+                              systemPrefersDark,
+                            )}
                           </button>
                         ))}
                       </div>
@@ -3818,17 +4395,37 @@ export function App() {
               onDismissError={() => setError(null)}
               onSaveAdvanced={() => void save()}
               onResetAdvanced={reset}
-              onCreateProvider={() => setProviderModal({ mode: "create", form: createEmptyProvider() })}
-              onEditProvider={(providerId) =>
+              onCreateProvider={() =>
                 setProviderModal({
-                  mode: "edit",
-                  initialId: providerId,
-                  form: toProviderForm(providerId, draft.providers[providerId])
+                  mode: 'create',
+                  form: createEmptyProvider(),
                 })
               }
-              onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
-              onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
-              onStartVerifier={async (benchPackId, benchPackName, verifierId) => {
+              onEditProvider={(providerId) =>
+                setProviderModal({
+                  mode: 'edit',
+                  initialId: providerId,
+                  form: toProviderForm(providerId, draft.providers[providerId]),
+                })
+              }
+              onCreateModel={() =>
+                setModelModal({
+                  mode: 'create',
+                  form: createEmptyModel(providerIds[0] ?? 'openrouter'),
+                })
+              }
+              onEditModel={(index) =>
+                setModelModal({
+                  mode: 'edit',
+                  index,
+                  form: toModelForm(draft.models[index]),
+                })
+              }
+              onStartVerifier={async (
+                benchPackId,
+                benchPackName,
+                verifierId,
+              ) => {
                 setError(null);
                 setStoppingVerifierStarts((current) => {
                   if (!current[benchPackId]) {
@@ -3842,28 +4439,37 @@ export function App() {
                 setSettingsVerifierPreparationModal({
                   benchPackId,
                   progress: {
-                    type: "verifier_preparing",
+                    type: 'verifier_preparing',
                     benchPackId,
                     benchPackName,
                     verifierId,
-                    phase: "checking_docker",
-                    message: "Checking Local Docker availability."
-                  }
+                    phase: 'checking_docker',
+                    message: 'Checking Local Docker availability.',
+                  },
                 });
 
                 try {
-                  const status = await window.benchlocal.verifiers.start({ benchPackId });
-                  setVerifierStatuses((current) => ({ ...current, [benchPackId]: status }));
+                  const status = await bl.verifiers.start(benchPackId);
+                  setVerifierStatuses((current) => ({
+                    ...current,
+                    [benchPackId]: status,
+                  }));
                 } catch (verifierError) {
                   if (isAbortLikeError(verifierError)) {
                     if (settingsOpenRef.current) {
                       setSettingsNotice(`Cancelled preparing ${verifierId}.`);
                     }
                   } else {
-                    setError(verifierError instanceof Error ? verifierError.message : "Failed to start verifier.");
+                    setError(
+                      verifierError instanceof Error
+                        ? verifierError.message
+                        : 'Failed to start verifier.',
+                    );
                   }
                 } finally {
-                  setSettingsVerifierPreparationModal((current) => (current?.benchPackId === benchPackId ? null : current));
+                  setSettingsVerifierPreparationModal((current) =>
+                    current?.benchPackId === benchPackId ? null : current,
+                  );
                   setStoppingVerifierStarts((current) => {
                     if (!current[benchPackId]) {
                       return current;
@@ -3877,58 +4483,89 @@ export function App() {
               }}
               onStopVerifier={async (benchPackId) => {
                 try {
-                  const status = await window.benchlocal.verifiers.stop({ benchPackId });
-                  setVerifierStatuses((current) => ({ ...current, [benchPackId]: status }));
+                  const status = await bl.verifiers.stop(benchPackId);
+                  setVerifierStatuses((current) => ({
+                    ...current,
+                    [benchPackId]: status,
+                  }));
                 } catch (verifierError) {
-                  setError(verifierError instanceof Error ? verifierError.message : "Failed to stop verifier.");
+                  setError(
+                    verifierError instanceof Error
+                      ? verifierError.message
+                      : 'Failed to stop verifier.',
+                  );
                 }
               }}
-              onDeleteVerifierImage={(benchPackId, benchPackName, verifierId) => {
+              onDeleteVerifierImage={(
+                benchPackId,
+                benchPackName,
+                verifierId,
+              ) => {
                 setConfirmDialog({
-                  title: "Delete Verifier Image",
+                  title: 'Delete Verifier Image',
                   subtitle: `Delete the Local Docker image for verifier "${verifierId}" in ${benchPackName}? BenchLocal will pull or rebuild it again the next time this verifier starts.`,
-                  confirmLabel: "Delete Image",
-                  tone: "danger",
+                  confirmLabel: 'Delete Image',
+                  tone: 'danger',
                   onConfirm: () => {
                     void (async () => {
                       setIsBusy(true);
                       setError(null);
 
                       try {
-                        const result = await window.benchlocal.verifiers.deleteImage({ benchPackId, verifierId });
-                        setVerifierStatuses((current) => ({ ...current, [benchPackId]: result.status }));
+                        const result = await bl.verifiers.deleteImage(
+                          benchPackId,
+                          verifierId,
+                        );
+                        setVerifierStatuses((current) => ({
+                          ...current,
+                          [benchPackId]: result.status,
+                        }));
                         if (settingsOpenRef.current) {
                           setSettingsNotice(
                             result.removed
                               ? `Deleted Docker image ${result.image}.`
-                              : `Docker image ${result.image} was already absent.`
+                              : `Docker image ${result.image} was already absent.`,
                           );
                         }
                       } catch (verifierError) {
-                        setError(verifierError instanceof Error ? verifierError.message : "Failed to delete verifier image.");
+                        setError(
+                          verifierError instanceof Error
+                            ? verifierError.message
+                            : 'Failed to delete verifier image.',
+                        );
                       } finally {
                         setIsBusy(false);
                       }
                     })();
-                  }
+                  },
                 });
               }}
               onRefreshRegistry={() => void loadRegistryEntries()}
-              onInstallBenchPack={(benchPackId) => void installBenchPack(benchPackId)}
+              onInstallBenchPack={(benchPackId) =>
+                void installBenchPack(benchPackId)
+              }
               onInstallBenchPackFromUrl={(url) => installBenchPackFromUrl(url)}
-              onUpdateBenchPack={(benchPackId) => void updateBenchPack(benchPackId)}
-              onUninstallBenchPack={(benchPackId) => void uninstallInstalledBenchPack(benchPackId)}
+              onUpdateBenchPack={(benchPackId) =>
+                void updateBenchPack(benchPackId)
+              }
+              onUninstallBenchPack={(benchPackId) =>
+                void uninstallInstalledBenchPack(benchPackId)
+              }
               updateDraft={updateDraft}
               onUpdateVerifier={(benchPackId, verifierId, updater) => {
                 void saveVerifierConfig(benchPackId, verifierId, updater);
               }}
             />
           ) : (
-            <div className={`desktop-layout${sidebarOpen ? "" : " sidebar-collapsed"}`}>
-	            <aside className={`desktop-sidebar${sidebarOpen ? "" : " is-hidden"}`}>
-	              <div className="sidebar-section">
+            <div
+              className={`desktop-layout${sidebarOpen ? '' : ' sidebar-collapsed'}`}
+            >
+              <aside
+                className={`desktop-sidebar${sidebarOpen ? '' : ' is-hidden'}`}
+              >
+                <div className="sidebar-section">
                   <div className="sidebar-section-header">
-	                <p className="sidebar-label">Workspaces</p>
+                    <p className="sidebar-label">Workspaces</p>
                     <button
                       type="button"
                       onClick={createWorkspace}
@@ -3939,23 +4576,23 @@ export function App() {
                       <Plus size={14} />
                     </button>
                   </div>
-	              </div>
+                </div>
 
-	              <div className="sidebar-section">
-	                {workspaceState?.workspaceOrder.length ? (
-	                  workspaceState.workspaceOrder.map((workspaceId) => {
-	                    const workspace = workspaceState.workspaces[workspaceId];
+                <div className="sidebar-section">
+                  {workspaceState?.workspaceOrder.length ? (
+                    workspaceState.workspaceOrder.map((workspaceId) => {
+                      const workspace = workspaceState.workspaces[workspaceId];
 
-	                    if (!workspace) {
-	                      return null;
-	                    }
+                      if (!workspace) {
+                        return null;
+                      }
 
-	                    return (
-	                      <div
-	                        key={workspace.id}
+                      return (
+                        <div
+                          key={workspace.id}
                           role="button"
                           tabIndex={0}
-	                        onClick={() => activateWorkspace(workspace.id)}
+                          onClick={() => activateWorkspace(workspace.id)}
                           onContextMenu={(event) => {
                             event.preventDefault();
                             activateWorkspace(workspace.id);
@@ -3963,59 +4600,67 @@ export function App() {
                               workspaceId: workspace.id,
                               workspaceName: workspace.name,
                               x: event.clientX,
-                              y: event.clientY
+                              y: event.clientY,
                             });
                           }}
                           onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
+                            if (event.key === 'Enter' || event.key === ' ') {
                               event.preventDefault();
                               activateWorkspace(workspace.id);
                             }
                           }}
-	                        className={`sidebar-item${activeWorkspace?.id === workspace.id ? " is-active" : ""}`}
-		                      >
-		                        <div className="sidebar-item-main">
-		                          <div className="sidebar-item-title">{workspace.name}</div>
-                              <div className="sidebar-item-footer">
-		                            <div className="sidebar-item-meta">{workspace.tabIds.length} tab{workspace.tabIds.length === 1 ? "" : "s"}</div>
-	                            <div className="sidebar-item-actions">
-	                              <button
-	                                type="button"
-                                className="sidebar-item-action"
-                                title="Rename workspace"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setWorkspaceModal({
-                                    mode: "rename",
-                                    workspaceId: workspace.id,
-                                    name: workspace.name
-                                  });
-                                }}
-                              >
-                                <Pencil size={13} />
-                              </button>
-	                            </div>
+                          className={`sidebar-item${activeWorkspace?.id === workspace.id ? ' is-active' : ''}`}
+                        >
+                          <div className="sidebar-item-main">
+                            <div className="sidebar-item-title">
+                              {workspace.name}
+                            </div>
+                            <div className="sidebar-item-footer">
+                              <div className="sidebar-item-meta">
+                                {workspace.tabIds.length} tab
+                                {workspace.tabIds.length === 1 ? '' : 's'}
                               </div>
-		                        </div>
-		                      </div>
-	                    );
-	                  })
-	                ) : (
-	                  <div className="sidebar-empty">No workspaces yet.</div>
-	                )}
-	              </div>
+                              <div className="sidebar-item-actions">
+                                <button
+                                  type="button"
+                                  className="sidebar-item-action"
+                                  title="Rename workspace"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setWorkspaceModal({
+                                      mode: 'rename',
+                                      workspaceId: workspace.id,
+                                      name: workspace.name,
+                                    });
+                                  }}
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="sidebar-empty">No workspaces yet.</div>
+                  )}
+                </div>
 
                 <div className="sidebar-footer">
-                  <button type="button" onClick={() => void importWorkspace()} className="ghost-button sidebar-footer-button">
+                  <button
+                    type="button"
+                    onClick={() => void importWorkspace()}
+                    className="ghost-button sidebar-footer-button"
+                  >
                     <FolderOpen size={14} />
                     Import Workspace
                   </button>
                 </div>
+              </aside>
 
-	            </aside>
-
-	            <section className="desktop-main">
-	              {appNotice ? (
+              <section className="desktop-main">
+                {appNotice ? (
                   <Banner tone="success">
                     <div className="banner-row">
                       <span>{appNotice}</span>
@@ -4038,7 +4683,11 @@ export function App() {
                       <button
                         type="button"
                         className="banner-dismiss"
-                        onClick={() => setDismissedDownloadedUpdateVersion(downloadedUpdateVersion)}
+                        onClick={() =>
+                          setDismissedDownloadedUpdateVersion(
+                            downloadedUpdateVersion,
+                          )
+                        }
                         aria-label="Dismiss update notice"
                         title="Dismiss"
                       >
@@ -4047,75 +4696,97 @@ export function App() {
                     </div>
                   </Banner>
                 ) : null}
-	              {error ? <Banner tone="danger">{error}</Banner> : null}
-	              {isBusy && !draft ? <Banner tone="neutral">Loading BenchLocal config...</Banner> : null}
+                {error ? <Banner tone="danger">{error}</Banner> : null}
+                {isBusy && !draft ? (
+                  <Banner tone="neutral">Loading BenchLocal config...</Banner>
+                ) : null}
 
-	              <div className="workspace-scroll">
-	                {draft ? (
-	                  activeWorkspace ? (
-	                    <div className="tabbed-workspace">
-	                      <div ref={tabStripShellRef} className="tab-strip-shell" onWheel={handleTabStripWheel}>
+                <div className="workspace-scroll">
+                  {draft ? (
+                    activeWorkspace ? (
+                      <div className="tabbed-workspace">
+                        <div
+                          ref={tabStripShellRef}
+                          className="tab-strip-shell"
+                          onWheel={handleTabStripWheel}
+                        >
                           {activeTabMask ? (
                             <span
                               className="tab-strip-active-mask"
                               style={{
                                 left: `${activeTabMask.left}px`,
-                                width: `${activeTabMask.width}px`
+                                width: `${activeTabMask.width}px`,
                               }}
                             />
                           ) : null}
                           <div ref={tabStripRef} className="tab-strip">
-	                          {workspaceTabs.map((tab) => {
-	                            const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
+                            {workspaceTabs.map((tab) => {
+                              const inspection = benchPackInspections.find(
+                                (candidate) => candidate.id === tab.benchPackId,
+                              );
                               const isTabRunning = Boolean(activeRuns[tab.id]);
-                              const hasTabRetryActivity = (liveRuns[tab.id]?.activeCellKeys.length ?? 0) > 0;
-                              const showTabSpinner = isTabRunning || hasTabRetryActivity;
-                              const showWarning = !isTabRunning && inspection && inspection.status !== "ready";
+                              const hasTabRetryActivity =
+                                (liveRuns[tab.id]?.activeCellKeys.length ?? 0) >
+                                0;
+                              const showTabSpinner =
+                                isTabRunning || hasTabRetryActivity;
+                              const showWarning =
+                                !isTabRunning &&
+                                inspection &&
+                                inspection.status !== 'ready';
                               const isEditingTab = editingTab?.tabId === tab.id;
 
-		                            return (
-		                              <button
-		                                key={tab.id}
-		                                type="button"
-                                      ref={(element) => {
-                                        if (element) {
-                                          tabChipRefs.current.set(tab.id, element);
-                                        } else {
-                                          tabChipRefs.current.delete(tab.id);
-                                        }
-                                      }}
-                                      draggable={!isEditingTab}
-                                      onDragStart={(event) => {
-                                        event.dataTransfer.setData("text/plain", tab.id);
-                                        event.dataTransfer.effectAllowed = "move";
-                                        setDraggedTabId(tab.id);
-                                      }}
-                                      onDragEnd={() => setDraggedTabId(null)}
-                                      onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "move";
-                                      }}
-                                      onDrop={(event) => {
-                                        event.preventDefault();
-                                        const sourceTabId = event.dataTransfer.getData("text/plain");
-                                        reorderTab(sourceTabId, tab.id);
-                                        setDraggedTabId(null);
-                                      }}
-                                      onDoubleClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        startEditingTab(tab.id, tab.title);
-                                      }}
-		                                onClick={() => {
-                                        if (isEditingTab) {
-                                          return;
-                                        }
+                              return (
+                                <button
+                                  key={tab.id}
+                                  type="button"
+                                  ref={(element) => {
+                                    if (element) {
+                                      tabChipRefs.current.set(tab.id, element);
+                                    } else {
+                                      tabChipRefs.current.delete(tab.id);
+                                    }
+                                  }}
+                                  draggable={!isEditingTab}
+                                  onDragStart={(event) => {
+                                    event.dataTransfer.setData(
+                                      'text/plain',
+                                      tab.id,
+                                    );
+                                    event.dataTransfer.effectAllowed = 'move';
+                                    setDraggedTabId(tab.id);
+                                  }}
+                                  onDragEnd={() => setDraggedTabId(null)}
+                                  onDragOver={(event) => {
+                                    event.preventDefault();
+                                    event.dataTransfer.dropEffect = 'move';
+                                  }}
+                                  onDrop={(event) => {
+                                    event.preventDefault();
+                                    const sourceTabId =
+                                      event.dataTransfer.getData('text/plain');
+                                    reorderTab(sourceTabId, tab.id);
+                                    setDraggedTabId(null);
+                                  }}
+                                  onDoubleClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    startEditingTab(tab.id, tab.title);
+                                  }}
+                                  onClick={() => {
+                                    if (isEditingTab) {
+                                      return;
+                                    }
 
-                                        activateTab(tab.id);
-                                      }}
-		                                className={`tab-chip${activeTab?.id === tab.id ? " is-active" : ""}${draggedTabId === tab.id ? " is-dragging" : ""}`}
-                                      style={isEditingTab ? { width: `${editingTab.width}px` } : undefined}
-		                              >
+                                    activateTab(tab.id);
+                                  }}
+                                  className={`tab-chip${activeTab?.id === tab.id ? ' is-active' : ''}${draggedTabId === tab.id ? ' is-dragging' : ''}`}
+                                  style={
+                                    isEditingTab
+                                      ? { width: `${editingTab.width}px` }
+                                      : undefined
+                                  }
+                                >
                                   {isEditingTab ? (
                                     <input
                                       type="text"
@@ -4123,21 +4794,30 @@ export function App() {
                                       onChange={(event) =>
                                         setEditingTab((current) =>
                                           current && current.tabId === tab.id
-                                            ? { ...current, value: event.target.value }
-                                            : current
+                                            ? {
+                                                ...current,
+                                                value: event.target.value,
+                                              }
+                                            : current,
                                         )
                                       }
-                                      onClick={(event) => event.stopPropagation()}
-                                      onDoubleClick={(event) => event.stopPropagation()}
+                                      onClick={(event) =>
+                                        event.stopPropagation()
+                                      }
+                                      onDoubleClick={(event) =>
+                                        event.stopPropagation()
+                                      }
                                       onBlur={commitEditingTab}
-                                      onFocus={(event) => event.currentTarget.select()}
+                                      onFocus={(event) =>
+                                        event.currentTarget.select()
+                                      }
                                       onKeyDown={(event) => {
                                         event.stopPropagation();
 
-                                        if (event.key === "Enter") {
+                                        if (event.key === 'Enter') {
                                           event.preventDefault();
                                           commitEditingTab();
-                                        } else if (event.key === "Escape") {
+                                        } else if (event.key === 'Escape') {
                                           event.preventDefault();
                                           cancelEditingTab();
                                         }
@@ -4146,61 +4826,75 @@ export function App() {
                                       className="tab-chip-title-input"
                                     />
                                   ) : (
-	                                  <span className="tab-chip-title">{tab.title}</span>
+                                    <span className="tab-chip-title">
+                                      {tab.title}
+                                    </span>
                                   )}
-                                    {showTabSpinner ? (
-                                      <span className="tab-chip-spinner" title="Scenario pack running">
-                                        <span className="spinner" />
-                                      </span>
-                                    ) : null}
-                                    {showWarning ? (
-                                      <span className="tab-chip-warning" title={inspection.status.replaceAll("_", " ")}>
-                                        <CircleAlert size={14} />
-                                      </span>
-                                    ) : null}
-	                                <span
-	                                  role="button"
-	                                  tabIndex={0}
-	                                  className="tab-chip-close"
-	                                  onClick={(event) => {
-	                                    event.stopPropagation();
+                                  {showTabSpinner ? (
+                                    <span
+                                      className="tab-chip-spinner"
+                                      title="Scenario pack running"
+                                    >
+                                      <span className="spinner" />
+                                    </span>
+                                  ) : null}
+                                  {showWarning ? (
+                                    <span
+                                      className="tab-chip-warning"
+                                      title={inspection.status.replaceAll(
+                                        '_',
+                                        ' ',
+                                      )}
+                                    >
+                                      <CircleAlert size={14} />
+                                    </span>
+                                  ) : null}
+                                  <span
+                                    role="button"
+                                    tabIndex={0}
+                                    className="tab-chip-close"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
                                       if (isEditingTab) {
                                         cancelEditingTab();
                                       }
                                       setConfirmDialog({
-                                        title: "Close Tab",
+                                        title: 'Close Tab',
                                         subtitle: `Close "${tab.title}"? The Bench Pack tab will be removed from this workspace.`,
-                                        confirmLabel: "Close Tab",
-                                        onConfirm: () => closeTab(tab.id)
+                                        confirmLabel: 'Close Tab',
+                                        onConfirm: () => closeTab(tab.id),
                                       });
-	                                  }}
-	                                  onKeyDown={(event) => {
-	                                    if (event.key === "Enter" || event.key === " ") {
-	                                      event.preventDefault();
-	                                      event.stopPropagation();
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (
+                                        event.key === 'Enter' ||
+                                        event.key === ' '
+                                      ) {
+                                        event.preventDefault();
+                                        event.stopPropagation();
                                         setConfirmDialog({
-                                          title: "Close Tab",
+                                          title: 'Close Tab',
                                           subtitle: `Close "${tab.title}"? The Bench Pack tab will be removed from this workspace.`,
-                                          confirmLabel: "Close Tab",
-                                          onConfirm: () => closeTab(tab.id)
+                                          confirmLabel: 'Close Tab',
+                                          onConfirm: () => closeTab(tab.id),
                                         });
-	                                    }
-	                                  }}
-	                                >
-	                                  <X size={12} />
-	                                </span>
-	                              </button>
-	                            );
-	                          })}
-                              <button
-                                type="button"
-                                onClick={() => setTabMenuOpen(true)}
-                                className={`tab-chip-add-button${tabStripOverflow ? " is-sticky" : ""}`}
-                                aria-label="New tab"
-                                title="New tab"
-                              >
-                                <Plus size={14} />
-                              </button>
+                                      }
+                                    }}
+                                  >
+                                    <X size={12} />
+                                  </span>
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={() => setTabMenuOpen(true)}
+                              className={`tab-chip-add-button${tabStripOverflow ? ' is-sticky' : ''}`}
+                              aria-label="New tab"
+                              title="New tab"
+                            >
+                              <Plus size={14} />
+                            </button>
                           </div>
                           <div className="tab-strip-controls">
                             <button
@@ -4223,176 +4917,214 @@ export function App() {
                             </button>
                           </div>
                         </div>
-	                      <div className="tabbed-workspace-content">
-	                        {activeInspection && activeTab ? (
-	                          <BenchmarkSection
-                                tabId={activeTab.id}
-	                            inspection={activeInspection}
+                        <div className="tabbed-workspace-content">
+                          {activeInspection && activeTab ? (
+                            <BenchmarkSection
+                              tabId={activeTab.id}
+                              inspection={activeInspection}
                               verifierStatus={activeVerifierStatus}
                               runBlocker={activeRunBlocker}
-	                            selectedModels={activeDisplayModels}
-	                            runSummary={activeRunSummary}
-                              historyEntries={runHistories[activeInspection.id] ?? []}
-	                            liveRun={activeLiveRun}
+                              selectedModels={activeDisplayModels}
+                              runSummary={activeRunSummary}
+                              historyEntries={
+                                runHistories[activeInspection.id] ?? []
+                              }
+                              liveRun={activeLiveRun}
                               loadedHistory={activeLoadedHistory}
-	                            focusedScenarioId={
+                              focusedScenarioId={
                                 activeRuns[activeTab.id] &&
-                                supportsLiveScenarioColumnFocus(activeTab.executionMode) &&
+                                supportsLiveScenarioColumnFocus(
+                                  activeTab.executionMode,
+                                ) &&
                                 activeLiveScenarioFocus?.autoFollow &&
                                 activeLiveScenarioFocus.liveScenarioId
                                   ? activeLiveScenarioFocus.liveScenarioId
                                   : activeTab.focusedScenarioId
                               }
-	                            onFocusScenario={(scenarioId) => {
-                                  if (activeRuns[activeTab.id] && supportsLiveScenarioColumnFocus(activeTab.executionMode)) {
-                                    setLiveScenarioFocus((current) => {
-                                      const existing = current[activeTab.id];
-                                      const liveScenarioId = existing?.liveScenarioId ?? null;
+                              onFocusScenario={(scenarioId) => {
+                                if (
+                                  activeRuns[activeTab.id] &&
+                                  supportsLiveScenarioColumnFocus(
+                                    activeTab.executionMode,
+                                  )
+                                ) {
+                                  setLiveScenarioFocus((current) => {
+                                    const existing = current[activeTab.id];
+                                    const liveScenarioId =
+                                      existing?.liveScenarioId ?? null;
 
-                                      return {
-                                        ...current,
-                                        [activeTab.id]: {
-                                          liveScenarioId,
-                                          autoFollow: liveScenarioId === scenarioId
-                                        }
-                                      };
-                                    });
+                                    return {
+                                      ...current,
+                                      [activeTab.id]: {
+                                        liveScenarioId,
+                                        autoFollow:
+                                          liveScenarioId === scenarioId,
+                                      },
+                                    };
+                                  });
+                                }
+
+                                updateWorkspaceState((current) => {
+                                  const tab = activeTab
+                                    ? current.tabs[activeTab.id]
+                                    : null;
+                                  if (!tab) {
+                                    return current;
                                   }
-
-	                                updateWorkspaceState((current) => {
-	                                  const tab = activeTab ? current.tabs[activeTab.id] : null;
-	                                  if (!tab) {
-	                                    return current;
-	                                  }
-	                                  tab.focusedScenarioId = scenarioId;
-	                                  tab.updatedAt = new Date().toISOString();
-	                                  return current;
-	                                });
-                                }}
-	                            onEditModels={() =>
-	                              setTabModelsModal({
-	                                tabId: activeTab.id,
-	                                selections: structuredClone(activeTab.modelSelections)
-	                              })
-	                            }
+                                  tab.focusedScenarioId = scenarioId;
+                                  tab.updatedAt = new Date().toISOString();
+                                  return current;
+                                });
+                              }}
+                              onEditModels={() =>
+                                setTabModelsModal({
+                                  tabId: activeTab.id,
+                                  selections: structuredClone(
+                                    activeTab.modelSelections,
+                                  ),
+                                })
+                              }
                               onEditSampling={() =>
                                 setSamplingModal({
                                   tabId: activeTab.id,
                                   benchPackId: activeInspection.id,
-                                  benchPackName: activeInspection.manifest?.name ?? activeInspection.id,
+                                  benchPackName:
+                                    activeInspection.manifest?.name ??
+                                    activeInspection.id,
                                   defaults: {
                                     ...DEFAULT_BENCHLOCAL_GENERATION,
-                                    ...(activeInspection.manifest?.samplingDefaults ?? {})
+                                    ...(activeInspection.manifest
+                                      ?.samplingDefaults ?? {}),
                                   },
-                                  form: createSamplingForm(activeTab.samplingOverrides)
+                                  form: createSamplingForm(
+                                    activeTab.samplingOverrides,
+                                  ),
                                 })
                               }
-	                            executionMode={activeTab.executionMode}
+                              executionMode={activeTab.executionMode}
                               isViewingHistory={Boolean(activeLoadedHistory)}
                               onOpenHistory={() =>
                                 setHistoryModal({
                                   benchPackId: activeInspection.id,
-                                  benchPackName: activeInspection.manifest?.name ?? activeInspection.id,
-                                  entries: runHistories[activeInspection.id] ?? []
+                                  benchPackName:
+                                    activeInspection.manifest?.name ??
+                                    activeInspection.id,
+                                  entries:
+                                    runHistories[activeInspection.id] ?? [],
                                 })
                               }
-                            onEditModelAlias={(model) =>
-                              setModelAliasModal({
-                                tabId: activeTab.id,
-                                modelId: model.id,
-                                baseLabel: model.label,
-                                alias: model.alias ?? ""
-                              })
-                            }
-	                            onChangeExecutionMode={(executionMode) =>
-	                              updateWorkspaceState((current) => {
-	                                const tab = activeTab ? current.tabs[activeTab.id] : null;
-	                                if (!tab) {
-	                                  return current;
-	                                }
-	                                tab.executionMode = executionMode;
-	                                tab.updatedAt = new Date().toISOString();
-	                                return current;
-	                              })
-                            }
-	                            isRunning={Boolean(activeRuns[activeTab.id])}
-	                            isStopping={Boolean(stoppingRuns[activeTab.id])}
+                              onEditModelAlias={(model) =>
+                                setModelAliasModal({
+                                  tabId: activeTab.id,
+                                  modelId: model.id,
+                                  baseLabel: model.label,
+                                  alias: model.alias ?? '',
+                                })
+                              }
+                              onChangeExecutionMode={(executionMode) =>
+                                updateWorkspaceState((current) => {
+                                  const tab = activeTab
+                                    ? current.tabs[activeTab.id]
+                                    : null;
+                                  if (!tab) {
+                                    return current;
+                                  }
+                                  tab.executionMode = executionMode;
+                                  tab.updatedAt = new Date().toISOString();
+                                  return current;
+                                })
+                              }
+                              isRunning={Boolean(activeRuns[activeTab.id])}
+                              isStopping={Boolean(stoppingRuns[activeTab.id])}
                               onOpenVerification={() => {
-                                setSettingsTab("verification");
+                                setSettingsTab('verification');
                                 setSettingsOpen(true);
                               }}
-                              onRefreshVerification={() => void loadVerifierStatuses()}
-                              onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
-	                            onRun={() =>
-                                void (
-                                  activeLoadedHistory?.mode === "replay" && activeRunSummary
-                                    ? replayTabRun(activeTab, activeRunSummary)
-                                    : activeRunSummary && !isRunSummaryComplete(activeRunSummary)
-                                    ? resumeTabRun(activeTab, activeRunSummary)
-                                    : runTab(activeTab)
-                                )
+                              onRefreshVerification={() =>
+                                void loadVerifierStatuses()
                               }
-	                            onStop={() => void stopTabRun(activeTab.id)}
-	                            onOpenDetail={setDetailModal}
-	                          />
-	                        ) : (
-	                          <EmptyWorkspace
-                              providerCount={Object.keys(draft?.providers ?? {}).length}
+                              onClearHistory={() =>
+                                clearLoadedHistoryRun(activeTab.id)
+                              }
+                              onRun={() =>
+                                void (activeLoadedHistory?.mode === 'replay' &&
+                                activeRunSummary
+                                  ? replayTabRun(activeTab, activeRunSummary)
+                                  : activeRunSummary &&
+                                      !isRunSummaryComplete(activeRunSummary)
+                                    ? resumeTabRun(activeTab, activeRunSummary)
+                                    : runTab(activeTab))
+                              }
+                              onStop={() => void stopTabRun(activeTab.id)}
+                              onOpenDetail={setDetailModal}
+                            />
+                          ) : (
+                            <EmptyWorkspace
+                              providerCount={
+                                Object.keys(draft?.providers ?? {}).length
+                              }
                               modelCount={draft?.models.length ?? 0}
                               installedBenchPackCount={readyInspections.length}
                               onOpenProviders={() => {
-                                setSettingsTab("providers");
+                                setSettingsTab('providers');
                                 setSettingsOpen(true);
                               }}
                               onOpenModels={() => {
-                                setSettingsTab("models");
+                                setSettingsTab('models');
                                 setSettingsOpen(true);
                               }}
                               onOpenBenchPacks={() => {
-                                setSettingsTab("benchPacks");
+                                setSettingsTab('benchPacks');
                                 setSettingsOpen(true);
                               }}
                               onSelectBenchPack={
-                                activeTab ? () => setTabMenuOpen(true) : undefined
+                                activeTab
+                                  ? () => setTabMenuOpen(true)
+                                  : undefined
                               }
                             />
-	                        )}
-	                      </div>
-	                    </div>
-	                  ) : (
-	                    <EmptyWorkspace
-                        providerCount={Object.keys(draft?.providers ?? {}).length}
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <EmptyWorkspace
+                        providerCount={
+                          Object.keys(draft?.providers ?? {}).length
+                        }
                         modelCount={draft?.models.length ?? 0}
                         installedBenchPackCount={readyInspections.length}
                         onOpenProviders={() => {
-                          setSettingsTab("providers");
+                          setSettingsTab('providers');
                           setSettingsOpen(true);
                         }}
                         onOpenModels={() => {
-                          setSettingsTab("models");
+                          setSettingsTab('models');
                           setSettingsOpen(true);
                         }}
                         onOpenBenchPacks={() => {
-                          setSettingsTab("benchPacks");
+                          setSettingsTab('benchPacks');
                           setSettingsOpen(true);
                         }}
                       />
-	                  )
-	                ) : null}
-	              </div>
+                    )
+                  ) : null}
+                </div>
                 {logsOpen && !logsDetached ? (
-                  <section className="bottom-drawer" style={{ flexBasis: `${logDrawerHeight}px` }}>
+                  <section
+                    className="bottom-drawer"
+                    style={{ flexBasis: `${logDrawerHeight}px` }}
+                  >
                     <div
                       className="bottom-drawer-resizer"
                       onMouseDown={() => {
-                        document.body.dataset.logResizeActive = "true";
+                        document.body.dataset.logResizeActive = 'true';
                       }}
                     />
                     <div className="bottom-drawer-header">
                       <div>
                         <p className="eyebrow">Run Logs</p>
                         <div className="bottom-drawer-title">
-                          {activeTab ? activeTab.title : "No Active Tab"}
+                          {activeTab ? activeTab.title : 'No Active Tab'}
                         </div>
                       </div>
                       <div className="section-actions">
@@ -4400,11 +5132,15 @@ export function App() {
                           <input
                             type="checkbox"
                             checked={logsAutoScroll}
-                            onChange={(event) => setLogsAutoScroll(event.target.checked)}
+                            onChange={(event) =>
+                              setLogsAutoScroll(event.target.checked)
+                            }
                           />
                           <span>Auto Scroll</span>
                         </label>
-                        <span className="status-chip status-idle">{activeLogEvents.length} events</span>
+                        <span className="status-chip status-idle">
+                          {activeLogEvents.length} events
+                        </span>
                         <button
                           type="button"
                           onClick={() => setLogsOpen(false)}
@@ -4417,77 +5153,95 @@ export function App() {
                       </div>
                     </div>
                     {activeLogEvents.length > 0 ? (
-                      <div ref={logContainerRef} className="event-trail bottom-drawer-log">
+                      <div
+                        ref={logContainerRef}
+                        className="event-trail bottom-drawer-log"
+                      >
                         {activeLogEvents.map((event, index) => (
-                          <div key={`${event.type}-${index}`} className="event-row">
+                          <div
+                            key={`${event.type}-${index}`}
+                            className="event-row"
+                          >
                             <span className="event-type">{event.type}</span>
-                            <span className="event-payload"> {JSON.stringify(event)}</span>
+                            <span className="event-payload">
+                              {' '}
+                              {JSON.stringify(event)}
+                            </span>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="bottom-drawer-empty">No run logs yet for the active tab.</div>
+                      <div className="bottom-drawer-empty">
+                        No run logs yet for the active tab.
+                      </div>
                     )}
                   </section>
                 ) : null}
-	            </section>
+              </section>
             </div>
           )}
           {!settingsOpen ? (
             <footer className="status-footer">
               <div className="status-footer-group">
                 <span className="status-footer-item">
-                  {activeWorkspace?.name ?? "No Workspace"}
+                  {activeWorkspace?.name ?? 'No Workspace'}
                 </span>
                 <span className="status-footer-divider" />
                 <span className="status-footer-item">
-                  {activeTab?.title ?? "No Tab"}
+                  {activeTab?.title ?? 'No Tab'}
                 </span>
               </div>
               <div className="status-footer-group">
                 <button
                   type="button"
                   onClick={() => setLogsOpen((current) => !current)}
-                  className={`status-footer-button${logsOpen ? " is-active" : ""}`}
+                  className={`status-footer-button${logsOpen ? ' is-active' : ''}`}
                 >
                   <Logs size={13} />
-                  {logsOpen ? "Hide Logs" : "Show Logs"}
+                  {logsOpen ? 'Hide Logs' : 'Show Logs'}
                 </button>
                 <button
                   type="button"
                   onClick={async () => {
                     if (logsDetached) {
-                      await window.benchlocal.logs.closeDetachedWindow();
+                      await // detached logs removed;
                       setLogsDetached(false);
                       return;
                     }
 
-                    await window.benchlocal.logs.openDetachedWindow();
+                    await // detached logs removed;
                     setLogsDetached(true);
                     setLogsOpen(false);
                   }}
-                  className={`status-footer-button${logsDetached ? " is-active" : ""}`}
+                  className={`status-footer-button${logsDetached ? ' is-active' : ''}`}
                 >
                   <Sidebar size={13} />
-                  {logsDetached ? "Close Log Window" : "Detach Logs"}
+                  {logsDetached ? 'Close Log Window' : 'Detach Logs'}
                 </button>
-                <span className="status-footer-item">{activeLogEvents.length} events</span>
+                <span className="status-footer-item">
+                  {activeLogEvents.length} events
+                </span>
               </div>
             </footer>
           ) : null}
         </section>
-
       </main>
 
       {providerModal ? (
         <Modal
-          title={providerModal.mode === "create" ? "Add Provider" : "Edit Provider"}
+          title={
+            providerModal.mode === 'create' ? 'Add Provider' : 'Edit Provider'
+          }
           subtitle="Create or update a shared provider entry."
           onClose={() => setProviderModal(null)}
           onSubmit={saveProviderModal}
-          submitLabel={providerModal.mode === "create" ? "Create Provider" : "Save Provider"}
+          submitLabel={
+            providerModal.mode === 'create'
+              ? 'Create Provider'
+              : 'Save Provider'
+          }
           leadingActions={
-            providerModal.mode === "edit" ? (
+            providerModal.mode === 'edit' ? (
               <button
                 type="button"
                 onClick={() => {
@@ -4506,7 +5260,9 @@ export function App() {
               label="Provider Kind"
               value={providerModal.form.kind}
               options={PROVIDER_KIND_OPTIONS.map((option) => option.value)}
-              getOptionLabel={(value) => providerKindLabel(value as BenchLocalProviderKind)}
+              getOptionLabel={(value) =>
+                providerKindLabel(value as BenchLocalProviderKind)
+              }
               onChange={(value) =>
                 setProviderModal((current) =>
                   current
@@ -4515,21 +5271,28 @@ export function App() {
                         form: {
                           ...current.form,
                           id:
-                            current.mode === "create"
+                            current.mode === 'create'
                               ? `${value as BenchLocalProviderKind}-${crypto.randomUUID()}`
                               : current.form.id,
                           kind: value as BenchLocalProviderKind,
                           name:
-                            current.form.name.trim() === "" || current.form.name === defaultProviderName(current.form.kind)
-                              ? defaultProviderName(value as BenchLocalProviderKind)
+                            current.form.name.trim() === '' ||
+                            current.form.name ===
+                              defaultProviderName(current.form.kind)
+                              ? defaultProviderName(
+                                  value as BenchLocalProviderKind,
+                                )
                               : current.form.name,
                           base_url:
-                            current.form.base_url === defaultProviderBaseUrl(current.form.kind)
-                              ? defaultProviderBaseUrl(value as BenchLocalProviderKind)
-                              : current.form.base_url
-                        }
+                            current.form.base_url ===
+                            defaultProviderBaseUrl(current.form.kind)
+                              ? defaultProviderBaseUrl(
+                                  value as BenchLocalProviderKind,
+                                )
+                              : current.form.base_url,
+                        },
                       }
-                    : current
+                    : current,
                 )
               }
             />
@@ -4538,115 +5301,221 @@ export function App() {
               value={providerModal.form.name}
               placeholder={defaultProviderName(providerModal.form.kind)}
               onChange={(value) =>
-                setProviderModal((current) => current ? { ...current, form: { ...current.form, name: value } } : current)
+                setProviderModal((current) =>
+                  current
+                    ? { ...current, form: { ...current.form, name: value } }
+                    : current,
+                )
               }
             />
             <Field
               label="API Key"
               type="password"
               value={providerModal.form.api_key}
-              placeholder={defaultProviderApiKeyPlaceholder(providerModal.form.kind)}
-              onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, api_key: value } } : current)}
+              placeholder={defaultProviderApiKeyPlaceholder(
+                providerModal.form.kind,
+              )}
+              onChange={(value) =>
+                setProviderModal((current) =>
+                  current
+                    ? { ...current, form: { ...current.form, api_key: value } }
+                    : current,
+                )
+              }
             />
             <FieldToggle
               label="Enabled"
               checked={providerModal.form.enabled}
-              onChange={(checked) => setProviderModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
+              onChange={(checked) =>
+                setProviderModal((current) =>
+                  current
+                    ? {
+                        ...current,
+                        form: { ...current.form, enabled: checked },
+                      }
+                    : current,
+                )
+              }
             />
           </div>
-          <Field label="Base URL" value={providerModal.form.base_url} onChange={(value) => setProviderModal((current) => current ? { ...current, form: { ...current.form, base_url: value } } : current)} />
+          <Field
+            label="Base URL"
+            value={providerModal.form.base_url}
+            onChange={(value) =>
+              setProviderModal((current) =>
+                current
+                  ? { ...current, form: { ...current.form, base_url: value } }
+                  : current,
+              )
+            }
+          />
         </Modal>
       ) : null}
 
-      {modelModal ? (
-        (() => {
-          const selectedProvider = draft?.providers[modelModal.form.provider];
-          const canBrowseModels = providerSupportsModelDiscovery(selectedProvider);
+      {modelModal
+        ? (() => {
+            const selectedProvider = draft?.providers[modelModal.form.provider];
+            const canBrowseModels =
+              providerSupportsModelDiscovery(selectedProvider);
 
-          return (
-            <Modal
-              title={modelModal.mode === "create" ? "Add Model" : "Edit Model"}
-              subtitle="Models are shared across every installed Bench Pack."
-              onClose={() => setModelModal(null)}
-              onSubmit={saveModelModal}
-              submitLabel={modelModal.mode === "create" ? "Create Model" : "Save Model"}
-              leadingActions={
-                modelModal.mode === "edit" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      confirmDeleteModel(modelModal.index);
-                    }}
-                    className="button-danger"
-                  >
-                    <Trash2 size={14} />
-                    Delete Model
-                  </button>
-                ) : undefined
-              }
-            >
-              <div className="entry-grid two-col">
-                <InlineSelectField
-                  label="Provider"
-                  value={modelModal.form.provider}
-                  options={providerIds.length > 0 ? providerIds : ["openrouter"]}
-                  getOptionLabel={(value) => {
-                    const provider = draft?.providers[value];
-                    return provider ? provider.name : value;
-                  }}
-                  onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, provider: value } } : current)}
-                />
-                <Field label="Group" value={modelModal.form.group} placeholder="primary" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, group: value } } : current)} />
-                <label className="field-block model-field-with-action">
-                  <span className="field-label">Model Identifier</span>
-                  <div className="model-field-with-action-row">
-                    <input
-                      type="text"
-                      value={modelModal.form.model}
-                      placeholder="openai/gpt-4.1"
-                      onChange={(event) =>
-                        setModelModal((current) => current ? { ...current, form: { ...current.form, model: event.target.value } } : current)
-                      }
-                      className="config-input"
-                    />
+            return (
+              <Modal
+                title={
+                  modelModal.mode === 'create' ? 'Add Model' : 'Edit Model'
+                }
+                subtitle="Models are shared across every installed Bench Pack."
+                onClose={() => setModelModal(null)}
+                onSubmit={saveModelModal}
+                submitLabel={
+                  modelModal.mode === 'create' ? 'Create Model' : 'Save Model'
+                }
+                leadingActions={
+                  modelModal.mode === 'edit' ? (
                     <button
                       type="button"
-                      onClick={() => void openModelBrowser()}
-                      className="ghost-button ghost-button-compact"
-                      disabled={!canBrowseModels}
-                      title={
-                        canBrowseModels
-                          ? "Browse models"
-                          : "Model browsing is currently available only for OpenRouter and OpenAI-compatible providers."
-                      }
+                      onClick={() => {
+                        confirmDeleteModel(modelModal.index);
+                      }}
+                      className="button-danger"
                     >
-                      <LayoutList size={14} />
-                      Browse Models
+                      <Trash2 size={14} />
+                      Delete Model
                     </button>
-                  </div>
-                </label>
-                <Field label="Display Label" value={modelModal.form.label} placeholder="GPT-4.1 via OpenRouter" onChange={(value) => setModelModal((current) => current ? { ...current, form: { ...current.form, label: value } } : current)} />
-                <Field label="Computed ID" value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(/:$/, "")} readOnly onChange={() => undefined} />
-                <FieldToggle
-                  label="Enabled"
-                  checked={modelModal.form.enabled}
-                  onChange={(checked) => setModelModal((current) => current ? { ...current, form: { ...current.form, enabled: checked } } : current)}
-                />
-              </div>
-            </Modal>
-          );
-        })()
-      ) : null}
+                  ) : undefined
+                }
+              >
+                <div className="entry-grid two-col">
+                  <InlineSelectField
+                    label="Provider"
+                    value={modelModal.form.provider}
+                    options={
+                      providerIds.length > 0 ? providerIds : ['openrouter']
+                    }
+                    getOptionLabel={(value) => {
+                      const provider = draft?.providers[value];
+                      return provider ? provider.name : value;
+                    }}
+                    onChange={(value) =>
+                      setModelModal((current) =>
+                        current
+                          ? {
+                              ...current,
+                              form: { ...current.form, provider: value },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                  <Field
+                    label="Group"
+                    value={modelModal.form.group}
+                    placeholder="primary"
+                    onChange={(value) =>
+                      setModelModal((current) =>
+                        current
+                          ? {
+                              ...current,
+                              form: { ...current.form, group: value },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                  <label className="field-block model-field-with-action">
+                    <span className="field-label">Model Identifier</span>
+                    <div className="model-field-with-action-row">
+                      <input
+                        type="text"
+                        value={modelModal.form.model}
+                        placeholder="openai/gpt-4.1"
+                        onChange={(event) =>
+                          setModelModal((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  form: {
+                                    ...current.form,
+                                    model: event.target.value,
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                        className="config-input"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void openModelBrowser()}
+                        className="ghost-button ghost-button-compact"
+                        disabled={!canBrowseModels}
+                        title={
+                          canBrowseModels
+                            ? 'Browse models'
+                            : 'Model browsing is currently available only for OpenRouter and OpenAI-compatible providers.'
+                        }
+                      >
+                        <LayoutList size={14} />
+                        Browse Models
+                      </button>
+                    </div>
+                  </label>
+                  <Field
+                    label="Display Label"
+                    value={modelModal.form.label}
+                    placeholder="GPT-4.1 via OpenRouter"
+                    onChange={(value) =>
+                      setModelModal((current) =>
+                        current
+                          ? {
+                              ...current,
+                              form: { ...current.form, label: value },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                  <Field
+                    label="Computed ID"
+                    value={`${modelModal.form.provider}:${modelModal.form.model}`.replace(
+                      /:$/,
+                      '',
+                    )}
+                    readOnly
+                    onChange={() => undefined}
+                  />
+                  <FieldToggle
+                    label="Enabled"
+                    checked={modelModal.form.enabled}
+                    onChange={(checked) =>
+                      setModelModal((current) =>
+                        current
+                          ? {
+                              ...current,
+                              form: { ...current.form, enabled: checked },
+                            }
+                          : current,
+                      )
+                    }
+                  />
+                </div>
+              </Modal>
+            );
+          })()
+        : null}
 
       {modelBrowserModal ? (
         <ModelBrowserModal
           state={modelBrowserModal}
           onClose={() => setModelBrowserModal(null)}
           onQueryChange={(query) =>
-            setModelBrowserModal((current) => (current ? { ...current, query } : current))
+            setModelBrowserModal((current) =>
+              current ? { ...current, query } : current,
+            )
           }
           onSelect={(modelId) =>
-            setModelBrowserModal((current) => (current ? { ...current, selectedModelId: modelId } : current))
+            setModelBrowserModal((current) =>
+              current ? { ...current, selectedModelId: modelId } : current,
+            )
           }
           onSubmit={() => {
             if (!modelBrowserModal.selectedModelId) {
@@ -4654,7 +5523,7 @@ export function App() {
             }
 
             const selectedEntry = modelBrowserModal.entries.find(
-              (entry) => entry.id === modelBrowserModal.selectedModelId
+              (entry) => entry.id === modelBrowserModal.selectedModelId,
             );
 
             if (!selectedEntry) {
@@ -4667,21 +5536,27 @@ export function App() {
               }
 
               const providerName =
-                draft?.providers[current.form.provider]?.name ?? current.form.provider;
+                draft?.providers[current.form.provider]?.name ??
+                current.form.provider;
               const currentDefaultLabel = current.form.model.trim()
                 ? defaultModelLabel(providerName, current.form.model, undefined)
-                : "";
-              const nextLabel = defaultModelLabel(providerName, selectedEntry.id, selectedEntry.name);
+                : '';
+              const nextLabel = defaultModelLabel(
+                providerName,
+                selectedEntry.id,
+                selectedEntry.name,
+              );
               const shouldAutofillLabel =
-                current.form.label.trim() === "" || current.form.label.trim() === currentDefaultLabel;
+                current.form.label.trim() === '' ||
+                current.form.label.trim() === currentDefaultLabel;
 
               return {
                 ...current,
                 form: {
                   ...current.form,
                   model: selectedEntry.id,
-                  label: shouldAutofillLabel ? nextLabel : current.form.label
-                }
+                  label: shouldAutofillLabel ? nextLabel : current.form.label,
+                },
               };
             });
             setModelBrowserModal(null);
@@ -4695,9 +5570,15 @@ export function App() {
           models={draft.models}
           selections={tabModelsModal.selections}
           onClose={() => setTabModelsModal(null)}
-          onChange={(selections) => setTabModelsModal((current) => (current ? { ...current, selections } : current))}
+          onChange={(selections) =>
+            setTabModelsModal((current) =>
+              current ? { ...current, selections } : current,
+            )
+          }
           onSubmit={() => {
-            const nextSelections = normalizeTabModelSelections(tabModelsModal.selections);
+            const nextSelections = normalizeTabModelSelections(
+              tabModelsModal.selections,
+            );
 
             updateWorkspaceState((current) => {
               const tab = current.tabs[tabModelsModal.tabId];
@@ -4722,7 +5603,11 @@ export function App() {
           defaults={samplingModal.defaults}
           form={samplingModal.form}
           onClose={() => setSamplingModal(null)}
-          onChange={(form) => setSamplingModal((current) => (current ? { ...current, form } : current))}
+          onChange={(form) =>
+            setSamplingModal((current) =>
+              current ? { ...current, form } : current,
+            )
+          }
           onSubmit={() => {
             const parsed = parseSamplingForm(samplingModal.form);
 
@@ -4765,7 +5650,7 @@ export function App() {
                 tab,
                 draft.models,
                 modelAliasModal.modelId,
-                modelAliasModal.alias
+                modelAliasModal.alias,
               );
               tab.updatedAt = new Date().toISOString();
               return current;
@@ -4780,7 +5665,9 @@ export function App() {
             value={modelAliasModal.alias}
             placeholder={modelAliasModal.baseLabel}
             onChange={(value) =>
-              setModelAliasModal((current) => (current ? { ...current, alias: value } : current))
+              setModelAliasModal((current) =>
+                current ? { ...current, alias: value } : current,
+              )
             }
           />
         </Modal>
@@ -4803,7 +5690,7 @@ export function App() {
           onClose={() => setWorkspaceModal(null)}
           onSubmit={() => {
             if (!workspaceModal.name.trim()) {
-              setError("Workspace name is required.");
+              setError('Workspace name is required.');
               return;
             }
 
@@ -4815,7 +5702,11 @@ export function App() {
           <Field
             label="Workspace Name"
             value={workspaceModal.name}
-            onChange={(value) => setWorkspaceModal((current) => (current ? { ...current, name: value } : current))}
+            onChange={(value) =>
+              setWorkspaceModal((current) =>
+                current ? { ...current, name: value } : current,
+              )
+            }
           />
         </Modal>
       ) : null}
@@ -4832,12 +5723,16 @@ export function App() {
           onRemoveAll={() =>
             setConfirmDialog({
               title: `Remove all histories for ${historyModal.benchPackName}?`,
-              subtitle: "This permanently deletes all saved test runs for this Bench Pack.",
-              confirmLabel: "Remove All Histories",
-              tone: "danger",
+              subtitle:
+                'This permanently deletes all saved test runs for this Bench Pack.',
+              confirmLabel: 'Remove All Histories',
+              tone: 'danger',
               onConfirm: () => {
-                void removeAllHistoryForBenchPack(historyModal.benchPackId, historyModal.benchPackName);
-              }
+                void removeAllHistoryForBenchPack(
+                  historyModal.benchPackId,
+                  historyModal.benchPackName,
+                );
+              },
             })
           }
         />
@@ -4853,17 +5748,27 @@ export function App() {
             setConfirmDialog(null);
           }}
           submitLabel={confirmDialog.confirmLabel}
-          submitTone={confirmDialog.tone === "danger" ? "danger" : "primary"}
+          submitTone={confirmDialog.tone === 'danger' ? 'danger' : 'primary'}
         />
       ) : null}
 
       {settingsVerifierPreparationModal ? (
         <VerifierPreparationModal
-          benchPackName={settingsVerifierPreparationModal.progress.benchPackName}
+          benchPackName={
+            settingsVerifierPreparationModal.progress.benchPackName
+          }
           verifierId={settingsVerifierPreparationModal.progress.verifierId}
           message={settingsVerifierPreparationModal.progress.message}
-          isCancelling={Boolean(stoppingVerifierStarts[settingsVerifierPreparationModal.benchPackId])}
-          onCancel={() => void cancelSettingsVerifierStart(settingsVerifierPreparationModal.benchPackId)}
+          isCancelling={Boolean(
+            stoppingVerifierStarts[
+              settingsVerifierPreparationModal.benchPackId
+            ],
+          )}
+          onCancel={() =>
+            void cancelSettingsVerifierStart(
+              settingsVerifierPreparationModal.benchPackId,
+            )
+          }
         />
       ) : verifierPreparationModal ? (
         <VerifierPreparationModal
@@ -4880,7 +5785,7 @@ export function App() {
           className="workspace-context-menu"
           style={{
             left: Math.min(workspaceContextMenu.x, window.innerWidth - 196),
-            top: Math.min(workspaceContextMenu.y, window.innerHeight - 116)
+            top: Math.min(workspaceContextMenu.y, window.innerHeight - 116),
           }}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -4901,11 +5806,12 @@ export function App() {
             onClick={() => {
               setWorkspaceContextMenu(null);
               setConfirmDialog({
-                title: "Delete Workspace",
+                title: 'Delete Workspace',
                 subtitle: `Delete "${workspaceContextMenu.workspaceName}" and all of its tabs? This cannot be undone.`,
-                confirmLabel: "Delete Workspace",
-                tone: "danger",
-                onConfirm: () => deleteWorkspace(workspaceContextMenu.workspaceId)
+                confirmLabel: 'Delete Workspace',
+                tone: 'danger',
+                onConfirm: () =>
+                  deleteWorkspace(workspaceContextMenu.workspaceId),
               });
             }}
           >
@@ -4941,11 +5847,11 @@ export function App() {
             </div>
             <span
               className={`status-chip ${
-                detailModal.status === "pass"
-                  ? "status-done"
-                  : detailModal.status === "partial"
-                    ? "status-not-installed"
-                    : "status-danger"
+                detailModal.status === 'pass'
+                  ? 'status-done'
+                  : detailModal.status === 'partial'
+                    ? 'status-not-installed'
+                    : 'status-danger'
               }`}
             >
               {detailModal.status}
@@ -4963,9 +5869,9 @@ function BenchPackPickerDialog({
   open,
   setOpen,
   onSelectBenchPack,
-  title = "New Tab",
-  subtitle = "Pick a Bench Pack to open in this workspace.",
-  actionLabel = "Open Bench Pack"
+  title = 'New Tab',
+  subtitle = 'Pick a Bench Pack to open in this workspace.',
+  actionLabel = 'Open Bench Pack',
 }: {
   inspections: BenchPackInspection[];
   open: boolean;
@@ -4975,16 +5881,16 @@ function BenchPackPickerDialog({
   subtitle?: string;
   actionLabel?: string;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const filteredInspections = inspections.filter((inspection) => {
     const haystack = [
       inspection.manifest?.name,
       inspection.id,
       inspection.manifest?.description,
-      inspection.manifest?.author
+      inspection.manifest?.author,
     ]
       .filter(Boolean)
-      .join(" ")
+      .join(' ')
       .toLowerCase();
 
     return haystack.includes(query.trim().toLowerCase());
@@ -5001,7 +5907,10 @@ function BenchPackPickerDialog({
     }
 
     setSelectedId((current) => {
-      if (current && filteredInspections.some((inspection) => inspection.id === current)) {
+      if (
+        current &&
+        filteredInspections.some((inspection) => inspection.id === current)
+      ) {
         return current;
       }
 
@@ -5019,9 +5928,16 @@ function BenchPackPickerDialog({
         <div className="dialog-header">
           <div>
             <h3 className="dialog-title">{title}</h3>
-            <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p>
+            <p className="section-copy" style={{ marginTop: '12px' }}>
+              {subtitle}
+            </p>
           </div>
-          <button type="button" onClick={() => setOpen(false)} className="dialog-close-button" aria-label="Close dialog">
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="dialog-close-button"
+            aria-label="Close dialog"
+          >
             <X size={16} />
           </button>
         </div>
@@ -5044,20 +5960,28 @@ function BenchPackPickerDialog({
                 <button
                   key={inspection.id}
                   type="button"
-                  className={`benchpack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
+                  className={`benchpack-option${selectedInspection?.id === inspection.id ? ' is-selected' : ''}`}
                   onClick={() => setSelectedId(inspection.id)}
                 >
                   <div className="benchpack-option-main">
-                    <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
-                    <div className="settings-row-secondary settings-mono-cell">{inspection.id}</div>
+                    <div className="settings-row-primary">
+                      {inspection.manifest?.name ?? inspection.id}
+                    </div>
+                    <div className="settings-row-secondary settings-mono-cell">
+                      {inspection.id}
+                    </div>
                   </div>
-                  <span className={`status-chip ${statusClasses(inspection.status)}`}>
-                    {inspection.status.replaceAll("_", " ")}
+                  <span
+                    className={`status-chip ${statusClasses(inspection.status)}`}
+                  >
+                    {inspection.status.replaceAll('_', ' ')}
                   </span>
                 </button>
               ))}
               {filteredInspections.length === 0 ? (
-                <div className="sidebar-empty">No Bench Packs match your search.</div>
+                <div className="sidebar-empty">
+                  No Bench Packs match your search.
+                </div>
               ) : null}
             </div>
           </div>
@@ -5067,11 +5991,12 @@ function BenchPackPickerDialog({
               <>
                 <div>
                   <p className="eyebrow">Bench Pack</p>
-                  <h3 className="panel-title" style={{ marginTop: "8px" }}>
+                  <h3 className="panel-title" style={{ marginTop: '8px' }}>
                     {selectedInspection.manifest?.name ?? selectedInspection.id}
                   </h3>
-                  <p className="section-copy" style={{ marginTop: "10px" }}>
-                    {selectedInspection.manifest?.description ?? "No description provided."}
+                  <p className="section-copy" style={{ marginTop: '10px' }}>
+                    {selectedInspection.manifest?.description ??
+                      'No description provided.'}
                   </p>
                 </div>
 
@@ -5079,30 +6004,38 @@ function BenchPackPickerDialog({
                   <div className="benchpack-stat-card">
                     <span className="benchpack-stat-label">Author</span>
                     <span className="benchpack-stat-value benchpack-meta-value">
-                      {selectedInspection.manifest?.author ?? "Unknown"}
+                      {selectedInspection.manifest?.author ?? 'Unknown'}
                     </span>
                   </div>
                   <div className="benchpack-stat-card">
                     <span className="benchpack-stat-label">Tests</span>
-                    <span className="benchpack-stat-value">{selectedInspection.scenarioCount ?? 0}</span>
+                    <span className="benchpack-stat-value">
+                      {selectedInspection.scenarioCount ?? 0}
+                    </span>
                   </div>
                   <div className="benchpack-stat-card">
                     <span className="benchpack-stat-label">Version</span>
                     <span className="benchpack-stat-value benchpack-meta-value">
-                      {selectedInspection.manifest?.version ?? "n/a"}
+                      {selectedInspection.manifest?.version ?? 'n/a'}
                     </span>
                   </div>
                 </div>
 
                 <div className="benchpack-picker-badges">
-                  <span className={`status-chip ${statusClasses(selectedInspection.status)}`}>
-                    {selectedInspection.status.replaceAll("_", " ")}
+                  <span
+                    className={`status-chip ${statusClasses(selectedInspection.status)}`}
+                  >
+                    {selectedInspection.status.replaceAll('_', ' ')}
                   </span>
                   <span className="status-chip status-idle">
-                    {selectedInspection.manifest?.capabilities.tools ? "Supports tools" : "No tools"}
+                    {selectedInspection.manifest?.capabilities.tools
+                      ? 'Supports tools'
+                      : 'No tools'}
                   </span>
                   <span className="status-chip status-idle">
-                    {selectedInspection.manifest?.capabilities.verification ? "Requires verifier" : "No extra dependencies"}
+                    {selectedInspection.manifest?.capabilities.verification
+                      ? 'Requires verifier'
+                      : 'No extra dependencies'}
                   </span>
                 </div>
 
@@ -5114,7 +6047,7 @@ function BenchPackPickerDialog({
                       onSelectBenchPack(selectedInspection.id);
                       setOpen(false);
                     }}
-                    disabled={selectedInspection.status !== "ready"}
+                    disabled={selectedInspection.status !== 'ready'}
                   >
                     <Plus size={14} />
                     {actionLabel}
@@ -5122,11 +6055,15 @@ function BenchPackPickerDialog({
                 </div>
               </>
             ) : (
-              <div className="entry-card" style={{ marginTop: "40px" }}>
+              <div className="entry-card" style={{ marginTop: '40px' }}>
                 <p className="eyebrow">No Installed Bench Packs</p>
-                <h3 className="panel-title" style={{ marginTop: "8px" }}>Install a Bench Pack from Settings</h3>
-                <p className="section-copy" style={{ marginTop: "10px" }}>
-                  BenchLocal now starts with zero installed Bench Packs. Open Settings, go to Bench Packs, and install one from the official registry.
+                <h3 className="panel-title" style={{ marginTop: '8px' }}>
+                  Install a Bench Pack from Settings
+                </h3>
+                <p className="section-copy" style={{ marginTop: '10px' }}>
+                  BenchLocal now starts with zero installed Bench Packs. Open
+                  Settings, go to Bench Packs, and install one from the official
+                  registry.
                 </p>
               </div>
             )}
@@ -5142,7 +6079,7 @@ function BenchPackPickerTrigger({
   open,
   setOpen,
   onCreateTab,
-  disabled
+  disabled,
 }: {
   inspections: BenchPackInspection[];
   open: boolean;
@@ -5198,7 +6135,7 @@ function BenchmarkSection({
   onClearHistory,
   onRun,
   onStop,
-  onOpenDetail
+  onOpenDetail,
 }: {
   tabId: string;
   inspection: BenchPackInspection;
@@ -5238,46 +6175,73 @@ function BenchmarkSection({
   const [tableScrollMetrics, setTableScrollMetrics] = useState({
     clientWidth: 0,
     scrollWidth: 0,
-    scrollLeft: 0
+    scrollLeft: 0,
   });
   const scenarios = inspection.scenarios ?? [];
-  const currentScenario = scenarios.find((scenario) => scenario.id === focusedScenarioId) ?? scenarios[0] ?? null;
+  const currentScenario =
+    scenarios.find((scenario) => scenario.id === focusedScenarioId) ??
+    scenarios[0] ??
+    null;
   const highlightedScenarioId = supportsLiveScenarioColumnFocus(executionMode)
-    ? currentScenario?.id ?? null
+    ? (currentScenario?.id ?? null)
     : focusedScenarioId;
   const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
-  const isReplayMode = loadedHistory?.mode === "replay";
-  const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
-  const replayRevealedCellCount = Object.values(liveRun?.resultsByModel ?? {}).reduce(
-    (total, results) => total + results.length,
-    0
-  );
-  const replayTotalCellCount = Object.values(runSummary?.resultsByModel ?? {}).reduce(
-    (total, results) => total + results.length,
-    0
-  );
+  const isReplayMode = loadedHistory?.mode === 'replay';
+  const isResumableRun =
+    Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
+  const replayRevealedCellCount = Object.values(
+    liveRun?.resultsByModel ?? {},
+  ).reduce((total, results) => total + results.length, 0);
+  const replayTotalCellCount = Object.values(
+    runSummary?.resultsByModel ?? {},
+  ).reduce((total, results) => total + results.length, 0);
   const currentExecutionModeLabel =
-    EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
-  const canReplayRun = isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
-  const runButtonLabel = isRunning ? "Stop" : canReplayRun ? "Replay" : isResumableRun ? "Resume Test" : "Run";
+    EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)
+      ?.label ?? 'Run Mode';
+  const canReplayRun =
+    isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
+  const runButtonLabel = isRunning
+    ? 'Stop'
+    : canReplayRun
+      ? 'Replay'
+      : isResumableRun
+        ? 'Resume Test'
+        : 'Run';
   const hasLiveActivity = isRunning || hasRetryActivity;
   const hasCompletedReplay =
     isReplayMode &&
     !hasLiveActivity &&
     replayTotalCellCount > 0 &&
     replayRevealedCellCount >= replayTotalCellCount;
-  const canStartFreshRun = inspection.status === "ready" && selectedModels.length > 0;
+  const canStartFreshRun =
+    inspection.status === 'ready' && selectedModels.length > 0;
   const canResumeRun = Boolean(runSummary) && isResumableRun;
   const isRunButtonDisabled = isRunning
     ? false
-    : hasRetryActivity || isStopping || !(canReplayRun || canResumeRun || (!isViewingHistory && canStartFreshRun));
-  const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
+    : hasRetryActivity ||
+      isStopping ||
+      !(
+        canReplayRun ||
+        canResumeRun ||
+        (!isViewingHistory && canStartFreshRun)
+      );
+  const hasHorizontalOverflow =
+    tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
   const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
-  const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
+  const scrollbarThumbWidth = hasHorizontalOverflow
+    ? getTableScrollbarThumbWidth(tableScrollMetrics)
+    : 0;
   const scrollbarThumbOffset =
     hasHorizontalOverflow && tableScrollbarTrackRef.current
-      ? ((tableScrollMetrics.scrollLeft / Math.max(1, tableScrollMetrics.scrollWidth - tableScrollMetrics.clientWidth)) *
-          Math.max(0, tableScrollbarTrackRef.current.clientWidth - scrollbarThumbWidth))
+      ? (tableScrollMetrics.scrollLeft /
+          Math.max(
+            1,
+            tableScrollMetrics.scrollWidth - tableScrollMetrics.clientWidth,
+          )) *
+        Math.max(
+          0,
+          tableScrollbarTrackRef.current.clientWidth - scrollbarThumbWidth,
+        )
       : 0;
 
   useEffect(() => {
@@ -5295,17 +6259,17 @@ function BenchmarkSection({
     };
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         setRunModeOpen(false);
       }
     };
 
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleEscape);
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
 
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
     };
   }, [runModeOpen]);
 
@@ -5319,7 +6283,7 @@ function BenchmarkSection({
       setTableScrollMetrics({
         clientWidth: viewport.clientWidth,
         scrollWidth: viewport.scrollWidth,
-        scrollLeft: viewport.scrollLeft
+        scrollLeft: viewport.scrollLeft,
       });
     };
 
@@ -5328,12 +6292,12 @@ function BenchmarkSection({
     };
 
     updateMetrics();
-    viewport.addEventListener("scroll", syncFromViewport);
-    window.addEventListener("resize", updateMetrics);
+    viewport.addEventListener('scroll', syncFromViewport);
+    window.addEventListener('resize', updateMetrics);
 
     return () => {
-      viewport.removeEventListener("scroll", syncFromViewport);
-      window.removeEventListener("resize", updateMetrics);
+      viewport.removeEventListener('scroll', syncFromViewport);
+      window.removeEventListener('resize', updateMetrics);
     };
   }, [selectedModels.length, scenarios.length, runSummary, liveRun]);
 
@@ -5347,52 +6311,72 @@ function BenchmarkSection({
         return;
       }
 
-      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-      const maxThumbOffset = Math.max(1, track.clientWidth - getTableScrollbarThumbWidth(tableScrollMetrics));
+      const maxScrollLeft = Math.max(
+        0,
+        viewport.scrollWidth - viewport.clientWidth,
+      );
+      const maxThumbOffset = Math.max(
+        1,
+        track.clientWidth - getTableScrollbarThumbWidth(tableScrollMetrics),
+      );
       const deltaX = event.clientX - drag.startX;
       const nextScrollLeft = Math.min(
         maxScrollLeft,
-        Math.max(0, drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft)
+        Math.max(
+          0,
+          drag.startScrollLeft + (deltaX / maxThumbOffset) * maxScrollLeft,
+        ),
       );
       viewport.scrollLeft = nextScrollLeft;
     };
 
     const handleUp = () => {
       tableScrollbarDragRef.current = null;
-      document.body.style.userSelect = "";
+      document.body.style.userSelect = '';
     };
 
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
 
     return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
     };
   }, [tableScrollMetrics]);
 
-  if (inspection.status !== "ready") {
+  if (inspection.status !== 'ready') {
     return (
       <section className="workspace-panel">
         <div className="workspace-toolbar">
           <div className="workspace-toolbar-copy">
             <p className="eyebrow">Bench Pack Session</p>
             <div className="workspace-toolbar-heading">
-              <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
+              <div className="workspace-toolbar-title">
+                {inspection.manifest?.name ?? inspection.id}
+              </div>
               <div className="workspace-stat-chips">
-                <span className="status-chip status-preview">{inspection.scenarioCount ?? 0} scenarios</span>
-                <span className="status-chip status-idle">{selectedModels.length} models</span>
+                <span className="status-chip status-preview">
+                  {inspection.scenarioCount ?? 0} scenarios
+                </span>
+                <span className="status-chip status-idle">
+                  {selectedModels.length} models
+                </span>
                 <span className="status-chip status-idle">Idle</span>
               </div>
             </div>
           </div>
           <div className="section-actions">
-            <button type="button" onClick={onEditModels} className="ghost-button" disabled={isRunning}>
+            <button
+              type="button"
+              onClick={onEditModels}
+              className="ghost-button"
+              disabled={isRunning}
+            >
               <Bot size={14} />
               Edit Models
             </button>
             <span className={`status-chip ${statusClasses(inspection.status)}`}>
-              {inspection.status.replaceAll("_", " ")}
+              {inspection.status.replaceAll('_', ' ')}
             </span>
           </div>
         </div>
@@ -5403,17 +6387,25 @@ function BenchmarkSection({
               <CircleAlert size={22} />
             </div>
             <p className="eyebrow">Bench Pack Unavailable</p>
-            <h3 className="panel-title" style={{ marginTop: "8px" }}>
+            <h3 className="panel-title" style={{ marginTop: '8px' }}>
               {inspection.manifest?.name ?? inspection.id} cannot run yet
             </h3>
-            <p className="muted-copy" style={{ marginTop: "10px", maxWidth: "56ch" }}>
-              {inspection.error ?? "This Bench Pack is not installed or is missing its BenchLocal runtime entry."}
+            <p
+              className="muted-copy"
+              style={{ marginTop: '10px', maxWidth: '56ch' }}
+            >
+              {inspection.error ??
+                'This Bench Pack is not installed or is missing its BenchLocal runtime entry.'}
             </p>
-            <div className="category-chip-row" style={{ marginTop: "14px" }}>
-              <span className={`status-chip ${statusClasses(inspection.status)}`}>
-                {inspection.status.replaceAll("_", " ")}
+            <div className="category-chip-row" style={{ marginTop: '14px' }}>
+              <span
+                className={`status-chip ${statusClasses(inspection.status)}`}
+              >
+                {inspection.status.replaceAll('_', ' ')}
               </span>
-              <span className="status-chip status-idle">{selectedModels.length} selected models</span>
+              <span className="status-chip status-idle">
+                {selectedModels.length} selected models
+              </span>
             </div>
           </div>
         </div>
@@ -5422,12 +6414,17 @@ function BenchmarkSection({
   }
 
   function renderResultCell(modelId: string, scenarioId: string) {
-    const liveResult = liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const liveResult = liveRun?.resultsByModel[modelId]?.find(
+      (candidate) => candidate.scenarioId === scenarioId,
+    );
     const persistedResult = isReplayMode
       ? undefined
-      : runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+      : runSummary?.resultsByModel[modelId]?.find(
+          (candidate) => candidate.scenarioId === scenarioId,
+        );
     const result = liveResult ?? persistedResult;
-    const isActive = liveRun?.activeCellKeys.includes(`${modelId}::${scenarioId}`) ?? false;
+    const isActive =
+      liveRun?.activeCellKeys.includes(`${modelId}::${scenarioId}`) ?? false;
 
     if (isActive) {
       return (
@@ -5439,14 +6436,24 @@ function BenchmarkSection({
 
     if (!result) {
       return (
-        <div className={`result-icon-shell ${isActive ? "result-loading" : "result-idle"}`}>
-          {isActive ? <span className="spinner" /> : <span style={{ fontSize: "0.75rem" }}>-</span>}
+        <div
+          className={`result-icon-shell ${isActive ? 'result-loading' : 'result-idle'}`}
+        >
+          {isActive ? (
+            <span className="spinner" />
+          ) : (
+            <span style={{ fontSize: '0.75rem' }}>-</span>
+          )}
         </div>
       );
     }
 
     const tone =
-      result.status === "pass" ? "result-pass" : result.status === "partial" ? "result-partial" : "result-fail";
+      result.status === 'pass'
+        ? 'result-pass'
+        : result.status === 'partial'
+          ? 'result-partial'
+          : 'result-fail';
 
     return (
       <button
@@ -5460,23 +6467,28 @@ function BenchmarkSection({
             scenarioId,
             summary: result.summary,
             rawLog: result.rawLog,
-            status: result.status
+            status: result.status,
           })
         }
         className={`result-icon-button ${tone}`}
       >
-        {result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
+        {result.status === 'pass'
+          ? '✓'
+          : result.status === 'partial'
+            ? '!'
+            : '×'}
       </button>
     );
   }
 
   return (
     <section className="workspace-panel">
-      {loadedHistory && loadedHistory.mode !== "replay" ? (
+      {loadedHistory && loadedHistory.mode !== 'replay' ? (
         <div className="history-banner">
           <div className="banner-row">
             <span>
-              Loaded test history from {new Date(loadedHistory.startedAt).toLocaleString()}.
+              Loaded test history from{' '}
+              {new Date(loadedHistory.startedAt).toLocaleString()}.
             </span>
             <button
               type="button"
@@ -5492,18 +6504,31 @@ function BenchmarkSection({
         <div className="workspace-toolbar-copy">
           <p className="eyebrow">Bench Pack Session</p>
           <div className="workspace-toolbar-heading">
-            <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
+            <div className="workspace-toolbar-title">
+              {inspection.manifest?.name ?? inspection.id}
+            </div>
             <div className="workspace-stat-chips">
-              <span className="status-chip status-preview">{inspection.scenarioCount ?? 0} scenarios</span>
-              <span className="status-chip status-idle">{selectedModels.length} models</span>
-              <span className={`status-chip ${isRunning ? "status-live" : runSummary ? "status-done" : "status-idle"}`}>
-                {hasLiveActivity ? "Live" : runSummary ? "Done" : "Idle"}
+              <span className="status-chip status-preview">
+                {inspection.scenarioCount ?? 0} scenarios
+              </span>
+              <span className="status-chip status-idle">
+                {selectedModels.length} models
+              </span>
+              <span
+                className={`status-chip ${isRunning ? 'status-live' : runSummary ? 'status-done' : 'status-idle'}`}
+              >
+                {hasLiveActivity ? 'Live' : runSummary ? 'Done' : 'Idle'}
               </span>
             </div>
           </div>
         </div>
         <div className="section-actions">
-          <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onOpenHistory}
+            disabled={historyEntries.length === 0}
+          >
             <RotateCcw size={14} />
             Test Histories
           </button>
@@ -5511,10 +6536,10 @@ function BenchmarkSection({
             type="button"
             onClick={isRunning ? onStop : onRun}
             disabled={isRunButtonDisabled}
-            className={isRunning ? "button-warn" : "primary-button"}
+            className={isRunning ? 'button-warn' : 'primary-button'}
           >
             {isRunning ? <Square size={15} /> : <Play size={15} />}
-            {isStopping ? "Stopping..." : runButtonLabel}
+            {isStopping ? 'Stopping...' : runButtonLabel}
           </button>
         </div>
       </div>
@@ -5522,20 +6547,32 @@ function BenchmarkSection({
       {runBlocker ? (
         <div className="workspace-verifier-warning">
           <div className="workspace-verifier-warning-copy">
-            <span className={`status-chip ${getVerifierStatusTone(verifierStatus?.verifiers.find((entry) => entry.required)?.status)}`}>
+            <span
+              className={`status-chip ${getVerifierStatusTone(verifierStatus?.verifiers.find((entry) => entry.required)?.status)}`}
+            >
               Verifier blocked
             </span>
             <div>
-              <div className="workspace-verifier-warning-title">{runBlocker.title}</div>
+              <div className="workspace-verifier-warning-title">
+                {runBlocker.title}
+              </div>
               <div className="settings-row-secondary">{runBlocker.message}</div>
             </div>
           </div>
           <div className="workspace-verifier-warning-actions">
-            <button type="button" className="ghost-button ghost-button-compact" onClick={onRefreshVerification}>
+            <button
+              type="button"
+              className="ghost-button ghost-button-compact"
+              onClick={onRefreshVerification}
+            >
               <RotateCcw size={14} />
               Refresh
             </button>
-            <button type="button" className="ghost-button ghost-button-compact" onClick={onOpenVerification}>
+            <button
+              type="button"
+              className="ghost-button ghost-button-compact"
+              onClick={onOpenVerification}
+            >
               <Wrench size={14} />
               Verification
             </button>
@@ -5550,7 +6587,9 @@ function BenchmarkSection({
               <div>
                 <p className="eyebrow">Scenario Detail</p>
                 <h3>
-                  {currentScenario ? `${currentScenario.id} · ${currentScenario.title}` : "No scenario selected"}
+                  {currentScenario
+                    ? `${currentScenario.id} · ${currentScenario.title}`
+                    : 'No scenario selected'}
                 </h3>
               </div>
               <div className="scenario-focus-summary-actions">
@@ -5563,26 +6602,30 @@ function BenchmarkSection({
                 ? currentScenario.detailCards
                 : [
                     {
-                      title: "What this tests",
+                      title: 'What this tests',
                       content:
                         currentScenario?.description ??
-                        "Click a scenario column in the Bench Pack table below to inspect that scenario."
+                        'Click a scenario column in the Bench Pack table below to inspect that scenario.',
                     },
                     {
-                      title: "Prompt Contract",
+                      title: 'Prompt Contract',
                       content:
                         currentScenario?.description ??
-                        "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as Bench Pack metadata expands."
+                        'The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as Bench Pack metadata expands.',
                     },
                     {
-                      title: "Run Notes",
+                      title: 'Run Notes',
                       content: runSummary
-                        ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
-                        : "Run this Bench Pack, then use the scenario columns in the table below to switch the preview context."
-                    }
+                        ? 'Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario.'
+                        : 'Run this Bench Pack, then use the scenario columns in the table below to switch the preview context.',
+                    },
                   ]
               ).map((card) => (
-                <DetailCard key={card.title} title={card.title} content={card.content} />
+                <DetailCard
+                  key={card.title}
+                  title={card.title}
+                  content={card.content}
+                />
               ))}
             </div>
           </details>
@@ -5605,7 +6648,9 @@ function BenchmarkSection({
                 >
                   <SlidersHorizontal size={14} />
                   <span className="run-mode-button-label">Run Mode:</span>
-                  <span className="run-mode-button-value">{currentExecutionModeLabel}</span>
+                  <span className="run-mode-button-value">
+                    {currentExecutionModeLabel}
+                  </span>
                   <ChevronDown size={15} />
                 </button>
                 {runModeOpen ? (
@@ -5616,7 +6661,7 @@ function BenchmarkSection({
                         type="button"
                         role="menuitemradio"
                         aria-checked={executionMode === option.value}
-                        className={`run-mode-menu-item${executionMode === option.value ? " is-active" : ""}`}
+                        className={`run-mode-menu-item${executionMode === option.value ? ' is-active' : ''}`}
                         onClick={() => {
                           onChangeExecutionMode(option.value);
                           setRunModeOpen(false);
@@ -5628,11 +6673,21 @@ function BenchmarkSection({
                   </div>
                 ) : null}
               </div>
-              <button type="button" onClick={onEditSampling} className="ghost-button" disabled={hasLiveActivity}>
+              <button
+                type="button"
+                onClick={onEditSampling}
+                className="ghost-button"
+                disabled={hasLiveActivity}
+              >
                 <SlidersHorizontal size={14} />
                 Samplings
               </button>
-              <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
+              <button
+                type="button"
+                onClick={onEditModels}
+                className="ghost-button"
+                disabled={hasLiveActivity}
+              >
                 <Bot size={14} />
                 Edit Models
               </button>
@@ -5646,15 +6701,29 @@ function BenchmarkSection({
                   <Bot size={22} />
                 </div>
                 <div className="table-empty-callout-copy">
-                  <h3 className="table-empty-callout-title">No models selected</h3>
-                  <p className="muted-copy">Add one or more models to start running this Bench Pack.</p>
+                  <h3 className="table-empty-callout-title">
+                    No models selected
+                  </h3>
+                  <p className="muted-copy">
+                    Add one or more models to start running this Bench Pack.
+                  </p>
                 </div>
                 <div className="table-empty-callout-actions">
-                  <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={onOpenHistory}
+                    disabled={historyEntries.length === 0}
+                  >
                     <RotateCcw size={14} />
                     Test Histories
                   </button>
-                  <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
+                  <button
+                    type="button"
+                    onClick={onEditModels}
+                    className="ghost-button"
+                    disabled={hasLiveActivity}
+                  >
                     <Bot size={14} />
                     Add Models
                   </button>
@@ -5664,67 +6733,75 @@ function BenchmarkSection({
               <>
                 <div ref={tableScrollViewportRef} className="table-scroll">
                   <table className="result-table">
-                  <thead>
-                    <tr>
-                      <th className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
-                        <span>Model</span>
-                      </th>
-                      {scenarios.map((scenario) => (
+                    <thead>
+                      <tr>
                         <th
-                          key={scenario.id}
-                          className={`${scenario.id === highlightedScenarioId ? "active-column selected-column" : ""}`}
+                          className={`scenario-row-label${stickyColumnShadow ? ' has-scroll-shadow' : ''}`}
                         >
-                          <div className="column-heading">
-                            <button
-                              type="button"
-                              onClick={() => onFocusScenario(scenario.id)}
-                              className="column-button"
-                              title={`${scenario.id} · ${scenario.title}`}
-                            >
-                              <span className="scenario-id">{scenario.id}</span>
-                            </button>
-                          </div>
+                          <span>Model</span>
                         </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedModels.map((model) => (
-                      <tr key={model.id}>
-                        <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
-                          {isViewingHistory ? (
-                            <div
-                              className={`model-badge${isReplayMode ? "" : " model-badge-history"}`}
-                              title={
-                                isReplayMode
-                                  ? "Replay mode uses the models from the saved run."
-                                  : "This history view uses the models from the saved run."
-                              }
-                            >
-                              {model.displayLabel}
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="model-badge-button"
-                              onClick={() => onEditModelAlias(model)}
-                              title="Edit model alias"
-                            >
-                              <div className="model-badge">{model.displayLabel}</div>
-                            </button>
-                          )}
-                        </td>
                         {scenarios.map((scenario) => (
-                          <td
-                            key={`${model.id}-${scenario.id}`}
-                            className={`result-icon-cell ${scenario.id === highlightedScenarioId ? "active-column" : ""}`}
+                          <th
+                            key={scenario.id}
+                            className={`${scenario.id === highlightedScenarioId ? 'active-column selected-column' : ''}`}
                           >
-                            {renderResultCell(model.id, scenario.id)}
-                          </td>
+                            <div className="column-heading">
+                              <button
+                                type="button"
+                                onClick={() => onFocusScenario(scenario.id)}
+                                className="column-button"
+                                title={`${scenario.id} · ${scenario.title}`}
+                              >
+                                <span className="scenario-id">
+                                  {scenario.id}
+                                </span>
+                              </button>
+                            </div>
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
+                    </thead>
+                    <tbody>
+                      {selectedModels.map((model) => (
+                        <tr key={model.id}>
+                          <td
+                            className={`scenario-row-label${stickyColumnShadow ? ' has-scroll-shadow' : ''}`}
+                          >
+                            {isViewingHistory ? (
+                              <div
+                                className={`model-badge${isReplayMode ? '' : ' model-badge-history'}`}
+                                title={
+                                  isReplayMode
+                                    ? 'Replay mode uses the models from the saved run.'
+                                    : 'This history view uses the models from the saved run.'
+                                }
+                              >
+                                {model.displayLabel}
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="model-badge-button"
+                                onClick={() => onEditModelAlias(model)}
+                                title="Edit model alias"
+                              >
+                                <div className="model-badge">
+                                  {model.displayLabel}
+                                </div>
+                              </button>
+                            )}
+                          </td>
+                          {scenarios.map((scenario) => (
+                            <td
+                              key={`${model.id}-${scenario.id}`}
+                              className={`result-icon-cell ${scenario.id === highlightedScenarioId ? 'active-column' : ''}`}
+                            >
+                              {renderResultCell(model.id, scenario.id)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
                 {hasHorizontalOverflow ? (
@@ -5743,17 +6820,30 @@ function BenchmarkSection({
                       const rect = track.getBoundingClientRect();
                       const clickX = event.clientX - rect.left;
 
-                      if (clickX >= scrollbarThumbOffset && clickX <= scrollbarThumbOffset + scrollbarThumbWidth) {
+                      if (
+                        clickX >= scrollbarThumbOffset &&
+                        clickX <= scrollbarThumbOffset + scrollbarThumbWidth
+                      ) {
                         return;
                       }
 
                       const nextOffset = Math.max(
                         0,
-                        Math.min(track.clientWidth - scrollbarThumbWidth, clickX - scrollbarThumbWidth / 2)
+                        Math.min(
+                          track.clientWidth - scrollbarThumbWidth,
+                          clickX - scrollbarThumbWidth / 2,
+                        ),
                       );
                       const nextScrollLeft =
-                        (nextOffset / Math.max(1, track.clientWidth - scrollbarThumbWidth)) *
-                        Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+                        (nextOffset /
+                          Math.max(
+                            1,
+                            track.clientWidth - scrollbarThumbWidth,
+                          )) *
+                        Math.max(
+                          0,
+                          viewport.scrollWidth - viewport.clientWidth,
+                        );
                       viewport.scrollLeft = nextScrollLeft;
                     }}
                   >
@@ -5761,7 +6851,7 @@ function BenchmarkSection({
                       className="table-scrollbar-thumb"
                       style={{
                         width: `${scrollbarThumbWidth}px`,
-                        transform: `translateX(${scrollbarThumbOffset}px)`
+                        transform: `translateX(${scrollbarThumbOffset}px)`,
                       }}
                       onMouseDown={(event) => {
                         event.preventDefault();
@@ -5773,9 +6863,9 @@ function BenchmarkSection({
 
                         tableScrollbarDragRef.current = {
                           startX: event.clientX,
-                          startScrollLeft: viewport.scrollLeft
+                          startScrollLeft: viewport.scrollLeft,
                         };
-                        document.body.style.userSelect = "none";
+                        document.body.style.userSelect = 'none';
                       }}
                     />
                   </div>
@@ -5784,19 +6874,32 @@ function BenchmarkSection({
             )}
           </section>
 
-          {runSummary && !hasLiveActivity && (!isReplayMode || hasCompletedReplay) ? (
+          {runSummary &&
+          !hasLiveActivity &&
+          (!isReplayMode || hasCompletedReplay) ? (
             <section className="scoreboard">
               {Object.entries(runSummary.scores).map(([modelId, score]) => (
                 <div key={modelId} className="score-card score-card-compact">
                   <div>
-                    <h3 style={{ margin: 0, fontSize: "1rem" }}>{selectedModels.find((model) => model.id === modelId)?.displayLabel ?? modelId}</h3>
-                    <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.76rem" }}>{modelId}</p>
+                    <h3 style={{ margin: 0, fontSize: '1rem' }}>
+                      {selectedModels.find((model) => model.id === modelId)
+                        ?.displayLabel ?? modelId}
+                    </h3>
+                    <p
+                      className="muted-copy"
+                      style={{ marginTop: '6px', fontSize: '0.76rem' }}
+                    >
+                      {modelId}
+                    </p>
                   </div>
                   <div className="score-card-foot">
                     <span className="score-value">{score.totalScore}</span>
                     <div className="category-chip-row">
                       {score.categories.map((category) => (
-                        <span key={category.id} className="status-chip category-chip">
+                        <span
+                          key={category.id}
+                          className="status-chip category-chip"
+                        >
                           {category.id}: {category.score}
                         </span>
                       ))}
@@ -5818,7 +6921,7 @@ function TabModelsModal({
   selections,
   onClose,
   onChange,
-  onSubmit
+  onSubmit,
 }: {
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
@@ -5827,49 +6930,61 @@ function TabModelsModal({
   onChange: (selections: BenchLocalWorkspaceTabModelSelection[]) => void;
   onSubmit: () => void;
 }) {
-  const [providerFilter, setProviderFilter] = useState("all");
-  const [groupFilter, setGroupFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [providerFilter, setProviderFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const enabledModels = models.filter((model) => model.enabled);
   const editableSelections = normalizeEditableTabModelSelections(selections);
-  const selectionMap = new Map(editableSelections.map((selection) => [selection.modelId, selection]));
+  const selectionMap = new Map(
+    editableSelections.map((selection) => [selection.modelId, selection]),
+  );
   const availableIds = new Set(enabledModels.map((model) => model.id));
-  const orderedSelectedIds = editableSelections.map((selection) => selection.modelId).filter((modelId) => availableIds.has(modelId));
+  const orderedSelectedIds = editableSelections
+    .map((selection) => selection.modelId)
+    .filter((modelId) => availableIds.has(modelId));
   const selectedIdSet = new Set(orderedSelectedIds);
   const providerOptions = [
-    { value: "all", label: "All Providers" },
+    { value: 'all', label: 'All Providers' },
     ...Array.from(new Set(enabledModels.map((model) => model.provider)))
-      .sort((left, right) => (providers[left]?.name ?? left).localeCompare(providers[right]?.name ?? right))
+      .sort((left, right) =>
+        (providers[left]?.name ?? left).localeCompare(
+          providers[right]?.name ?? right,
+        ),
+      )
       .map((providerId) => ({
         value: providerId,
-        label: providers[providerId]?.name ?? providerId
-      }))
+        label: providers[providerId]?.name ?? providerId,
+      })),
   ];
   const groupOptions = [
-    { value: "all", label: "All Groups" },
-    ...Array.from(new Set(enabledModels.map((model) => model.group.trim() || "__ungrouped__")))
+    { value: 'all', label: 'All Groups' },
+    ...Array.from(
+      new Set(
+        enabledModels.map((model) => model.group.trim() || '__ungrouped__'),
+      ),
+    )
       .sort((left, right) => left.localeCompare(right))
       .map((group) => ({
         value: group,
-        label: group === "__ungrouped__" ? "Ungrouped" : group
-      }))
+        label: group === '__ungrouped__' ? 'Ungrouped' : group,
+      })),
   ];
   const filteredAvailableModels = enabledModels.filter((model) => {
-    const normalizedGroup = model.group.trim() || "__ungrouped__";
+    const normalizedGroup = model.group.trim() || '__ungrouped__';
     const normalizedQuery = searchQuery.trim().toLowerCase();
     const haystack = [
       model.label,
       model.id,
       model.group,
-      providers[model.provider]?.name ?? model.provider
+      providers[model.provider]?.name ?? model.provider,
     ]
       .filter(Boolean)
-      .join(" ")
+      .join(' ')
       .toLowerCase();
 
     return (
-      (providerFilter === "all" || model.provider === providerFilter) &&
-      (groupFilter === "all" || normalizedGroup === groupFilter) &&
+      (providerFilter === 'all' || model.provider === providerFilter) &&
+      (groupFilter === 'all' || normalizedGroup === groupFilter) &&
       (!normalizedQuery || haystack.includes(normalizedQuery))
     );
   });
@@ -5884,12 +6999,16 @@ function TabModelsModal({
       return;
     }
 
-    onChange(editableSelections.filter((selection) => selection.modelId !== modelId));
+    onChange(
+      editableSelections.filter((selection) => selection.modelId !== modelId),
+    );
   };
 
   const updateAlias = (modelId: string, alias: string) => {
     const next = editableSelections.map((selection) =>
-      selection.modelId === modelId ? { ...selection, alias: alias || undefined } : selection
+      selection.modelId === modelId
+        ? { ...selection, alias: alias || undefined }
+        : selection,
     );
     onChange(next);
   };
@@ -5900,8 +7019,12 @@ function TabModelsModal({
     }
 
     const next = [...editableSelections];
-    const fromIndex = next.findIndex((selection) => selection.modelId === draggedId);
-    const toIndex = next.findIndex((selection) => selection.modelId === targetId);
+    const fromIndex = next.findIndex(
+      (selection) => selection.modelId === draggedId,
+    );
+    const toIndex = next.findIndex(
+      (selection) => selection.modelId === targetId,
+    );
 
     if (fromIndex < 0 || toIndex < 0) {
       return;
@@ -5913,14 +7036,20 @@ function TabModelsModal({
   };
 
   useEffect(() => {
-    if (providerFilter !== "all" && !providerOptions.some((option) => option.value === providerFilter)) {
-      setProviderFilter("all");
+    if (
+      providerFilter !== 'all' &&
+      !providerOptions.some((option) => option.value === providerFilter)
+    ) {
+      setProviderFilter('all');
     }
   }, [providerFilter, providerOptions]);
 
   useEffect(() => {
-    if (groupFilter !== "all" && !groupOptions.some((option) => option.value === groupFilter)) {
-      setGroupFilter("all");
+    if (
+      groupFilter !== 'all' &&
+      !groupOptions.some((option) => option.value === groupFilter)
+    ) {
+      setGroupFilter('all');
     }
   }, [groupFilter, groupOptions]);
 
@@ -5936,7 +7065,9 @@ function TabModelsModal({
         <section className="tab-models-column">
           <div className="tab-models-column-header">
             <h4 className="tab-models-column-title">Available Models</h4>
-            <span className="status-chip status-idle">{filteredAvailableModels.length}</span>
+            <span className="status-chip status-idle">
+              {filteredAvailableModels.length}
+            </span>
           </div>
           <div className="entry-grid two-col tab-models-filters">
             <InlineSelectField
@@ -5962,95 +7093,129 @@ function TabModelsModal({
           <div className="tab-models-list">
             {filteredAvailableModels.length === 0 ? (
               <div className="tab-models-empty">
-                <p className="muted-copy">No models match the current filters.</p>
+                <p className="muted-copy">
+                  No models match the current filters.
+                </p>
               </div>
-            ) : filteredAvailableModels.map((model) => {
-              const isSelected = selectedIdSet.has(model.id);
+            ) : (
+              filteredAvailableModels.map((model) => {
+                const isSelected = selectedIdSet.has(model.id);
 
-              return (
-              <div key={model.id} className="tab-model-row">
-                <label className="tab-model-toggle">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={(event) => toggleModel(model.id, event.target.checked)}
-                    className="h-4 w-4 accent-[var(--accent)]"
-                  />
-                  <span className="tab-model-toggle-copy">
-                    <span className="settings-row-primary">{model.label}</span>
-                    <span className="settings-row-secondary settings-mono-cell">{providers[model.provider]?.name ?? model.provider}</span>
-                    <span className="settings-row-secondary settings-mono-cell">{model.id}</span>
-                  </span>
-                </label>
+                return (
+                  <div key={model.id} className="tab-model-row">
+                    <label className="tab-model-toggle">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(event) =>
+                          toggleModel(model.id, event.target.checked)
+                        }
+                        className="h-4 w-4 accent-[var(--accent)]"
+                      />
+                      <span className="tab-model-toggle-copy">
+                        <span className="settings-row-primary">
+                          {model.label}
+                        </span>
+                        <span className="settings-row-secondary settings-mono-cell">
+                          {providers[model.provider]?.name ?? model.provider}
+                        </span>
+                        <span className="settings-row-secondary settings-mono-cell">
+                          {model.id}
+                        </span>
+                      </span>
+                    </label>
 
-                <div className="tab-model-row-meta">
-                  <span className="status-chip status-idle">{model.group.trim() || "Ungrouped"}</span>
-                </div>
-              </div>
-            );
-            })}
+                    <div className="tab-model-row-meta">
+                      <span className="status-chip status-idle">
+                        {model.group.trim() || 'Ungrouped'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </section>
 
         <section className="tab-models-column">
           <div className="tab-models-column-header">
             <h4 className="tab-models-column-title">Selected Models</h4>
-            <span className="status-chip status-preview">{selectedModels.length}</span>
+            <span className="status-chip status-preview">
+              {selectedModels.length}
+            </span>
           </div>
           <div className="tab-models-list">
             {selectedModels.length === 0 ? (
               <div className="tab-models-empty">
-                <p className="muted-copy">Select models from the left to add them to this tab.</p>
+                <p className="muted-copy">
+                  Select models from the left to add them to this tab.
+                </p>
               </div>
-            ) : selectedModels.map((model) => {
-              const selection = selectionMap.get(model.id);
+            ) : (
+              selectedModels.map((model) => {
+                const selection = selectionMap.get(model.id);
 
-              return (
-                <div
-                  key={model.id}
-                  className="tab-model-row is-selected"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("text/plain", model.id);
-                    event.dataTransfer.effectAllowed = "move";
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    moveSelection(event.dataTransfer.getData("text/plain"), model.id);
-                  }}
-                >
-                  <label className="tab-model-toggle">
-                    <input
-                      type="checkbox"
-                      checked
-                      onChange={(event) => toggleModel(model.id, event.target.checked)}
-                      className="h-4 w-4 accent-[var(--accent)]"
-                    />
-                    <span className="tab-model-toggle-copy">
-                      <span className="settings-row-primary">{model.label}</span>
-                      <span className="settings-row-secondary settings-mono-cell">{model.id}</span>
-                    </span>
-                  </label>
+                return (
+                  <div
+                    key={model.id}
+                    className="tab-model-row is-selected"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData('text/plain', model.id);
+                      event.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      moveSelection(
+                        event.dataTransfer.getData('text/plain'),
+                        model.id,
+                      );
+                    }}
+                  >
+                    <label className="tab-model-toggle">
+                      <input
+                        type="checkbox"
+                        checked
+                        onChange={(event) =>
+                          toggleModel(model.id, event.target.checked)
+                        }
+                        className="h-4 w-4 accent-[var(--accent)]"
+                      />
+                      <span className="tab-model-toggle-copy">
+                        <span className="settings-row-primary">
+                          {model.label}
+                        </span>
+                        <span className="settings-row-secondary settings-mono-cell">
+                          {model.id}
+                        </span>
+                      </span>
+                    </label>
 
-                  <div className="tab-model-row-meta">
-                    <input
-                      type="text"
-                      value={selection?.alias ?? ""}
-                      placeholder="Optional alias"
-                      onChange={(event) => updateAlias(model.id, event.target.value)}
-                      className="config-input tab-model-alias-input"
-                    />
-                    <div className="tab-model-drag-handle" title="Drag to reorder selected models">
-                      <GripVertical size={16} />
+                    <div className="tab-model-row-meta">
+                      <input
+                        type="text"
+                        value={selection?.alias ?? ''}
+                        placeholder="Optional alias"
+                        onChange={(event) =>
+                          updateAlias(model.id, event.target.value)
+                        }
+                        className="config-input tab-model-alias-input"
+                      />
+                      <div
+                        className="tab-model-drag-handle"
+                        title="Drag to reorder selected models"
+                      >
+                        <GripVertical size={16} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </section>
       </div>
@@ -6063,7 +7228,7 @@ function ModelBrowserModal({
   onClose,
   onQueryChange,
   onSelect,
-  onSubmit
+  onSubmit,
 }: {
   state: ModelBrowserModalState;
   onClose: () => void;
@@ -6073,9 +7238,15 @@ function ModelBrowserModal({
 }) {
   const normalizedQuery = state.query.trim().toLowerCase();
   const filteredEntries = state.entries.filter((entry) => {
-    const haystack = [entry.id, entry.name, entry.ownedBy, entry.modality, entry.pricing]
+    const haystack = [
+      entry.id,
+      entry.name,
+      entry.ownedBy,
+      entry.modality,
+      entry.pricing,
+    ]
       .filter(Boolean)
-      .join(" ")
+      .join(' ')
       .toLowerCase();
 
     return !normalizedQuery || haystack.includes(normalizedQuery);
@@ -6102,7 +7273,9 @@ function ModelBrowserModal({
         {state.loading ? (
           <div className="tab-models-empty">
             <span className="spinner" />
-            <p className="muted-copy">Loading models from {state.providerName}...</p>
+            <p className="muted-copy">
+              Loading models from {state.providerName}...
+            </p>
           </div>
         ) : state.error ? (
           <div className="tab-models-empty">
@@ -6117,19 +7290,33 @@ function ModelBrowserModal({
             <button
               key={entry.id}
               type="button"
-              className={`model-browser-row${state.selectedModelId === entry.id ? " is-selected" : ""}`}
+              className={`model-browser-row${state.selectedModelId === entry.id ? ' is-selected' : ''}`}
               onClick={() => onSelect(entry.id)}
             >
               <div className="model-browser-main">
-                <div className="settings-row-primary">{entry.name ?? entry.id}</div>
-                <div className="settings-row-secondary settings-mono-cell">{entry.id}</div>
+                <div className="settings-row-primary">
+                  {entry.name ?? entry.id}
+                </div>
+                <div className="settings-row-secondary settings-mono-cell">
+                  {entry.id}
+                </div>
               </div>
               <div className="model-browser-meta">
                 {entry.contextLength ? (
-                  <span className="status-chip status-idle">{entry.contextLength.toLocaleString()} ctx</span>
+                  <span className="status-chip status-idle">
+                    {entry.contextLength.toLocaleString()} ctx
+                  </span>
                 ) : null}
-                {entry.modality ? <span className="status-chip status-idle">{entry.modality}</span> : null}
-                {entry.pricing ? <span className="status-chip status-idle">{entry.pricing}</span> : null}
+                {entry.modality ? (
+                  <span className="status-chip status-idle">
+                    {entry.modality}
+                  </span>
+                ) : null}
+                {entry.pricing ? (
+                  <span className="status-chip status-idle">
+                    {entry.pricing}
+                  </span>
+                ) : null}
               </div>
             </button>
           ))
@@ -6145,7 +7332,7 @@ function SamplingModal({
   form,
   onChange,
   onClose,
-  onSubmit
+  onSubmit,
 }: {
   benchPackName: string;
   defaults: GenerationRequest;
@@ -6154,7 +7341,9 @@ function SamplingModal({
   onClose: () => void;
   onSubmit: () => void;
 }) {
-  const hasEffectiveDefaults = Object.values(defaults).some((value) => value !== undefined);
+  const hasEffectiveDefaults = Object.values(defaults).some(
+    (value) => value !== undefined,
+  );
 
   return (
     <Modal
@@ -6178,8 +7367,7 @@ function SamplingModal({
       {hasEffectiveDefaults ? (
         <div className="helper-copy">
           <p>
-            Effective defaults:
-            {" "}
+            Effective defaults:{' '}
             {SAMPLING_FIELDS.map((field) => {
               const value = defaults[field.key as keyof GenerationRequest];
               return value === undefined ? null : (
@@ -6187,18 +7375,24 @@ function SamplingModal({
                   <strong>{field.label}:</strong> {value}
                 </span>
               );
-            }).filter(Boolean).reduce<ReactNode[]>((items, item, index) => {
-              if (index > 0) {
-                items.push(<span key={`sep-${index}`}> · </span>);
-              }
-              items.push(item);
-              return items;
-            }, [])}
+            })
+              .filter(Boolean)
+              .reduce<ReactNode[]>((items, item, index) => {
+                if (index > 0) {
+                  items.push(<span key={`sep-${index}`}> · </span>);
+                }
+                items.push(item);
+                return items;
+              }, [])}
           </p>
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will use its platform defaults and omit any values that are still unset.</p>
+          <p>
+            This Bench Pack does not define recommended defaults yet. Blank
+            fields mean BenchLocal will use its platform defaults and omit any
+            values that are still unset.
+          </p>
         </div>
       )}
       <div className="entry-grid two-col">
@@ -6207,11 +7401,17 @@ function SamplingModal({
             key={field.key}
             label={field.label}
             value={form[field.key]}
-            placeholder={defaults[field.key as keyof GenerationRequest] === undefined ? field.placeholder : `Default: ${defaults[field.key as keyof GenerationRequest]}`}
-            onChange={(value) => onChange({
-              ...form,
-              [field.key]: value
-            })}
+            placeholder={
+              defaults[field.key as keyof GenerationRequest] === undefined
+                ? field.placeholder
+                : `Default: ${defaults[field.key as keyof GenerationRequest]}`
+            }
+            onChange={(value) =>
+              onChange({
+                ...form,
+                [field.key]: value,
+              })
+            }
           />
         ))}
       </div>
@@ -6226,7 +7426,7 @@ function EmptyWorkspace({
   onOpenProviders,
   onOpenModels,
   onOpenBenchPacks,
-  onSelectBenchPack
+  onSelectBenchPack,
 }: {
   providerCount: number;
   modelCount: number;
@@ -6241,29 +7441,35 @@ function EmptyWorkspace({
   const hasInstalledBenchPacks = installedBenchPackCount > 0;
   const checklist = [
     {
-      key: "providers",
+      key: 'providers',
       complete: hasProviders,
-      title: "Set up providers",
-      detail: hasProviders ? `${providerCount} configured` : "Add at least one provider endpoint.",
-      actionLabel: "Providers",
-      onAction: onOpenProviders
+      title: 'Set up providers',
+      detail: hasProviders
+        ? `${providerCount} configured`
+        : 'Add at least one provider endpoint.',
+      actionLabel: 'Providers',
+      onAction: onOpenProviders,
     },
     {
-      key: "models",
+      key: 'models',
       complete: hasModels,
-      title: "Add models",
-      detail: hasModels ? `${modelCount} configured` : "Create shared models that point to your providers.",
-      actionLabel: "Models",
-      onAction: onOpenModels
+      title: 'Add models',
+      detail: hasModels
+        ? `${modelCount} configured`
+        : 'Create shared models that point to your providers.',
+      actionLabel: 'Models',
+      onAction: onOpenModels,
     },
     {
-      key: "benchpacks",
+      key: 'benchpacks',
       complete: hasInstalledBenchPacks,
-      title: "Install Bench Packs",
-      detail: hasInstalledBenchPacks ? `${installedBenchPackCount} installed` : "Install at least one Bench Pack from the official registry.",
-      actionLabel: "Bench Packs",
-      onAction: onOpenBenchPacks
-    }
+      title: 'Install Bench Packs',
+      detail: hasInstalledBenchPacks
+        ? `${installedBenchPackCount} installed`
+        : 'Install at least one Bench Pack from the official registry.',
+      actionLabel: 'Bench Packs',
+      onAction: onOpenBenchPacks,
+    },
   ];
 
   return (
@@ -6273,16 +7479,30 @@ function EmptyWorkspace({
           <FolderOpen size={22} />
         </div>
         <p className="eyebrow">No Active Bench Pack</p>
-        <h3 className="panel-title">Select a Bench Pack to open its workspace</h3>
-        <p className="section-copy" style={{ marginTop: "12px", maxWidth: "52ch" }}>
-          Complete the setup checklist below. BenchLocal keeps providers and models shared across the app, while each Bench Pack owns its own scenarios, sampling defaults, and scoring.
+        <h3 className="panel-title">
+          Select a Bench Pack to open its workspace
+        </h3>
+        <p
+          className="section-copy"
+          style={{ marginTop: '12px', maxWidth: '52ch' }}
+        >
+          Complete the setup checklist below. BenchLocal keeps providers and
+          models shared across the app, while each Bench Pack owns its own
+          scenarios, sampling defaults, and scoring.
         </p>
 
         <div className="welcome-checklist">
           {checklist.map((item) => (
-            <div key={item.key} className={`welcome-checklist-item${item.complete ? " is-complete" : ""}`}>
+            <div
+              key={item.key}
+              className={`welcome-checklist-item${item.complete ? ' is-complete' : ''}`}
+            >
               <div className="welcome-checklist-icon" aria-hidden="true">
-                {item.complete ? <Check size={14} /> : <span className="welcome-checklist-dot" />}
+                {item.complete ? (
+                  <Check size={14} />
+                ) : (
+                  <span className="welcome-checklist-dot" />
+                )}
               </div>
               <div className="welcome-checklist-copy">
                 <div className="welcome-checklist-title">{item.title}</div>
@@ -6291,7 +7511,11 @@ function EmptyWorkspace({
               {item.complete ? (
                 <span className="status-chip status-done">Done</span>
               ) : (
-                <button type="button" onClick={item.onAction} className="ghost-button ghost-button-compact">
+                <button
+                  type="button"
+                  onClick={item.onAction}
+                  className="ghost-button ghost-button-compact"
+                >
                   {item.actionLabel}
                 </button>
               )}
@@ -6300,7 +7524,12 @@ function EmptyWorkspace({
         </div>
 
         {hasInstalledBenchPacks && onSelectBenchPack ? (
-          <button type="button" onClick={onSelectBenchPack} className="primary-button" style={{ marginTop: "20px" }}>
+          <button
+            type="button"
+            onClick={onSelectBenchPack}
+            className="primary-button"
+            style={{ marginTop: '20px' }}
+          >
             <FolderOpen size={16} />
             Select Bench Pack
           </button>
@@ -6312,40 +7541,42 @@ function EmptyWorkspace({
 
 function DetachedLogsWindow() {
   const [state, setState] = useState<DetachedLogsState>({
-    workspaceName: "No Workspace",
-    tabTitle: "No Active Tab",
+    workspaceName: 'No Workspace',
+    tabTitle: 'No Active Tab',
     eventCount: 0,
-    events: []
+    events: [],
   });
   const [autoScroll, setAutoScroll] = useState(true);
   const [systemPrefersDark, setSystemPrefersDark] = useState(
-    typeof window !== "undefined" ? window.matchMedia("(prefers-color-scheme: dark)").matches : false
+    typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+      : false,
   );
-  const [themeDefinition, setThemeDefinition] = useState<BenchLocalThemeDefinition | null>(null);
+  const [themeDefinition, setThemeDefinition] =
+    useState<BenchLocalThemeDefinition | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const appliedThemeKeysRef = useRef<string[]>([]);
 
   useEffect(() => {
-    return window.benchlocal.logs.onDetachedState((nextState) => {
-      setState(nextState);
-    });
+    // onDetachedState removed in web version
+    return () => {};
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === 'undefined') {
       return;
     }
 
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = () => {
       setSystemPrefersDark(media.matches);
     };
 
     handleChange();
-    media.addEventListener("change", handleChange);
+    media.addEventListener('change', handleChange);
 
     return () => {
-      media.removeEventListener("change", handleChange);
+      media.removeEventListener('change', handleChange);
     };
   }, []);
 
@@ -6353,13 +7584,14 @@ function DetachedLogsWindow() {
     let cancelled = false;
 
     const loadTheme = async () => {
-      const configResult = await window.benchlocal.config.load();
-      const requestedThemeId = configResult.config.ui.theme === "system"
-        ? systemPrefersDark
-          ? "dark"
-          : "light"
-        : configResult.config.ui.theme;
-      const nextTheme = await window.benchlocal.themes.load({ themeId: requestedThemeId });
+      const configResult = await bl.config.load();
+      const requestedThemeId =
+        configResult.config.ui.theme === 'system'
+          ? systemPrefersDark
+            ? 'dark'
+            : 'light'
+          : configResult.config.ui.theme;
+      const nextTheme = await bl.themes.load(requestedThemeId);
 
       if (!cancelled) {
         setThemeDefinition(nextTheme);
@@ -6374,7 +7606,7 @@ function DetachedLogsWindow() {
   }, [systemPrefersDark]);
 
   useEffect(() => {
-    if (!themeDefinition || typeof document === "undefined") {
+    if (!themeDefinition || typeof document === 'undefined') {
       return;
     }
 
@@ -6389,7 +7621,7 @@ function DetachedLogsWindow() {
     }
 
     appliedThemeKeysRef.current = Object.keys(themeDefinition.variables);
-    root.style.setProperty("color-scheme", themeDefinition.colorScheme);
+    root.style.setProperty('color-scheme', themeDefinition.colorScheme);
     root.dataset.theme = themeDefinition.id;
   }, [themeDefinition]);
 
@@ -6409,20 +7641,28 @@ function DetachedLogsWindow() {
     <div className="detached-logs-shell">
       <header className="detached-logs-header">
         <div>
-          <h2 className="detached-logs-title">{state.workspaceName} · {state.tabTitle}</h2>
+          <h2 className="detached-logs-title">
+            {state.workspaceName} · {state.tabTitle}
+          </h2>
         </div>
         <div className="section-actions">
           <label className="drawer-toggle">
-            <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={autoScroll}
+              onChange={(event) => setAutoScroll(event.target.checked)}
+            />
             <span>Auto Scroll</span>
           </label>
-          <span className="status-chip status-idle">{state.eventCount} events</span>
+          <span className="status-chip status-idle">
+            {state.eventCount} events
+          </span>
           <button
             type="button"
             className="toolbar-icon-button"
             aria-label="Close window"
             title="Close window"
-            onClick={() => void window.benchlocal.logs.closeDetachedWindow()}
+            onClick={() => window.close()}
           >
             <X size={14} />
           </button>
@@ -6439,7 +7679,9 @@ function DetachedLogsWindow() {
           ))}
         </div>
       ) : (
-        <div className="detached-logs-empty">No run logs are being streamed yet.</div>
+        <div className="detached-logs-empty">
+          No run logs are being streamed yet.
+        </div>
       )}
     </div>
   );
@@ -6478,7 +7720,7 @@ function SettingsScene({
   onUpdateBenchPack,
   onUninstallBenchPack,
   updateDraft,
-  onUpdateVerifier
+  onUpdateVerifier,
 }: {
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
@@ -6503,26 +7745,40 @@ function SettingsScene({
   onEditProvider: (providerId: string) => void;
   onCreateModel: () => void;
   onEditModel: (index: number) => void;
-  onStartVerifier: (benchPackId: string, benchPackName: string, verifierId: string) => Promise<void>;
+  onStartVerifier: (
+    benchPackId: string,
+    benchPackName: string,
+    verifierId: string,
+  ) => Promise<void>;
   onStopVerifier: (benchPackId: string) => Promise<void>;
-  onDeleteVerifierImage: (benchPackId: string, benchPackName: string, verifierId: string) => void;
+  onDeleteVerifierImage: (
+    benchPackId: string,
+    benchPackName: string,
+    verifierId: string,
+  ) => void;
   onRefreshRegistry: () => void;
   onInstallBenchPack: (benchPackId: string) => void;
   onInstallBenchPackFromUrl: (url: string) => Promise<boolean | void>;
   onUpdateBenchPack: (benchPackId: string) => void;
   onUninstallBenchPack: (benchPackId: string) => void;
-  updateDraft: (updater: (current: BenchLocalConfig) => BenchLocalConfig) => void;
+  updateDraft: (
+    updater: (current: BenchLocalConfig) => BenchLocalConfig,
+  ) => void;
   onUpdateVerifier: (
     benchPackId: string,
     verifierId: string,
-    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig
+    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig,
   ) => void;
 }) {
   return (
     <section className="settings-scene">
       <aside className="settings-sidebar">
         <div className="settings-sidebar-header">
-          <button type="button" onClick={onBack} className="settings-back-button">
+          <button
+            type="button"
+            onClick={onBack}
+            className="settings-back-button"
+          >
             <ChevronLeft size={16} />
             Back to Main Scene
           </button>
@@ -6538,7 +7794,7 @@ function SettingsScene({
               key={tab.id}
               type="button"
               onClick={() => setSettingsTab(tab.id)}
-              className={`settings-sidebar-item${settingsTab === tab.id ? " is-active" : ""}`}
+              className={`settings-sidebar-item${settingsTab === tab.id ? ' is-active' : ''}`}
             >
               {tab.label}
             </button>
@@ -6580,103 +7836,140 @@ function SettingsScene({
           </Banner>
         ) : null}
         <div className="settings-body settings-body-scene">
-            {settingsTab === "providers" ? (
-              <ProvidersView
-                providers={draft.providers}
-                models={draft.models}
-                onCreate={onCreateProvider}
-                onEdit={onEditProvider}
-              />
-            ) : null}
+          {settingsTab === 'providers' ? (
+            <ProvidersView
+              providers={draft.providers}
+              models={draft.models}
+              onCreate={onCreateProvider}
+              onEdit={onEditProvider}
+            />
+          ) : null}
 
-            {settingsTab === "models" ? (
-              <ModelsView
-                models={draft.models}
-                providers={draft.providers}
-                providerIds={providerIds}
-                onCreate={onCreateModel}
-                onEdit={onEditModel}
-              />
-            ) : null}
+          {settingsTab === 'models' ? (
+            <ModelsView
+              models={draft.models}
+              providers={draft.providers}
+              providerIds={providerIds}
+              onCreate={onCreateModel}
+              onEdit={onEditModel}
+            />
+          ) : null}
 
-            {settingsTab === "benchPacks" ? (
-              <BenchPackRegistryView
-                draft={draft}
-                inspections={benchPackInspections}
-                registryEntries={registryEntries}
-                registryWarning={registryWarning}
-                benchPackMutations={benchPackMutations}
-                onRefresh={onRefreshRegistry}
-                onInstall={onInstallBenchPack}
-                onInstallFromUrl={onInstallBenchPackFromUrl}
-                onUpdate={onUpdateBenchPack}
-                onUninstall={onUninstallBenchPack}
-              />
-            ) : null}
+          {settingsTab === 'benchPacks' ? (
+            <BenchPackRegistryView
+              draft={draft}
+              inspections={benchPackInspections}
+              registryEntries={registryEntries}
+              registryWarning={registryWarning}
+              benchPackMutations={benchPackMutations}
+              onRefresh={onRefreshRegistry}
+              onInstall={onInstallBenchPack}
+              onInstallFromUrl={onInstallBenchPackFromUrl}
+              onUpdate={onUpdateBenchPack}
+              onUninstall={onUninstallBenchPack}
+            />
+          ) : null}
 
-            {settingsTab === "verification" ? (
-              <VerificationView
-                draft={draft}
-                statuses={verifierStatuses}
-                onUpdate={onUpdateVerifier}
-                onStart={async (benchPackId, benchPackName, verifierId) => {
-                  await onStartVerifier(benchPackId, benchPackName, verifierId);
-                }}
-                onStop={async (benchPackId) => {
-                  await onStopVerifier(benchPackId);
-                }}
-                onDeleteImage={(benchPackId, benchPackName, verifierId) => {
-                  onDeleteVerifierImage(benchPackId, benchPackName, verifierId);
-                }}
-              />
-            ) : null}
+          {settingsTab === 'verification' ? (
+            <VerificationView
+              draft={draft}
+              statuses={verifierStatuses}
+              onUpdate={onUpdateVerifier}
+              onStart={async (benchPackId, benchPackName, verifierId) => {
+                await onStartVerifier(benchPackId, benchPackName, verifierId);
+              }}
+              onStop={async (benchPackId) => {
+                await onStopVerifier(benchPackId);
+              }}
+              onDeleteImage={(benchPackId, benchPackName, verifierId) => {
+                onDeleteVerifierImage(benchPackId, benchPackName, verifierId);
+              }}
+            />
+          ) : null}
 
-            {settingsTab === "advanced" ? (
-              <section className="advanced-grid">
-                <Panel title="Filesystem" subtitle="BenchLocal-owned storage paths and config location." tone="sky" icon={<FolderOpen size={16} />}>
-                  <Field label="Config File" value={loadState?.path ?? ""} readOnly onChange={() => undefined} />
-                  <Field label="Run Storage" value={draft.run_storage_dir} onChange={(value) => updateDraft((current) => {
-                    current.run_storage_dir = value;
-                    return current;
-                  })} />
-                  <Field label="Bench Pack Storage" value={draft.benchpack_storage_dir} onChange={(value) => updateDraft((current) => {
-                    current.benchpack_storage_dir = value;
-                    return current;
-                  })} />
-                  <Field label="Log Storage" value={draft.log_storage_dir} onChange={(value) => updateDraft((current) => {
-                    current.log_storage_dir = value;
-                    return current;
-                  })} />
-                  <Field label="Cache Storage" value={draft.cache_dir} onChange={(value) => updateDraft((current) => {
-                    current.cache_dir = value;
-                    return current;
-                  })} />
-                  <div className="helper-copy helper-copy-compact">
-                    <p>These paths are saved to <strong>~/.benchlocal/config.toml</strong>.</p>
-                  </div>
-                  <div className="settings-actions advanced-filesystem-actions">
-                    <button
-                      type="button"
-                      onClick={onResetAdvanced}
-                      disabled={isBusy || !hasUnsavedChanges}
-                      className="ghost-button"
-                    >
-                      <RotateCcw size={14} />
-                      Reset
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onSaveAdvanced}
-                      disabled={isBusy || !hasUnsavedChanges}
-                      className="primary-button"
-                    >
-                      <Save size={14} />
-                      Save
-                    </button>
-                  </div>
-                </Panel>
-              </section>
-            ) : null}
+          {settingsTab === 'advanced' ? (
+            <section className="advanced-grid">
+              <Panel
+                title="Filesystem"
+                subtitle="BenchLocal-owned storage paths and config location."
+                tone="sky"
+                icon={<FolderOpen size={16} />}
+              >
+                <Field
+                  label="Config File"
+                  value={loadState?.path ?? ''}
+                  readOnly
+                  onChange={() => undefined}
+                />
+                <Field
+                  label="Run Storage"
+                  value={draft.run_storage_dir}
+                  onChange={(value) =>
+                    updateDraft((current) => {
+                      current.run_storage_dir = value;
+                      return current;
+                    })
+                  }
+                />
+                <Field
+                  label="Bench Pack Storage"
+                  value={draft.benchpack_storage_dir}
+                  onChange={(value) =>
+                    updateDraft((current) => {
+                      current.benchpack_storage_dir = value;
+                      return current;
+                    })
+                  }
+                />
+                <Field
+                  label="Log Storage"
+                  value={draft.log_storage_dir}
+                  onChange={(value) =>
+                    updateDraft((current) => {
+                      current.log_storage_dir = value;
+                      return current;
+                    })
+                  }
+                />
+                <Field
+                  label="Cache Storage"
+                  value={draft.cache_dir}
+                  onChange={(value) =>
+                    updateDraft((current) => {
+                      current.cache_dir = value;
+                      return current;
+                    })
+                  }
+                />
+                <div className="helper-copy helper-copy-compact">
+                  <p>
+                    These paths are saved to{' '}
+                    <strong>~/.benchlocal/config.toml</strong>.
+                  </p>
+                </div>
+                <div className="settings-actions advanced-filesystem-actions">
+                  <button
+                    type="button"
+                    onClick={onResetAdvanced}
+                    disabled={isBusy || !hasUnsavedChanges}
+                    className="ghost-button"
+                  >
+                    <RotateCcw size={14} />
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onSaveAdvanced}
+                    disabled={isBusy || !hasUnsavedChanges}
+                    className="primary-button"
+                  >
+                    <Save size={14} />
+                    Save
+                  </button>
+                </div>
+              </Panel>
+            </section>
+          ) : null}
         </div>
       </div>
     </section>
@@ -6687,7 +7980,7 @@ function ProvidersView({
   providers,
   models,
   onCreate,
-  onEdit
+  onEdit,
 }: {
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
@@ -6703,7 +7996,10 @@ function ProvidersView({
       tone="sky"
       icon={<Server size={16} />}
       actions={
-        <button type="button" onClick={onCreate} className="primary-button"><Plus size={14} />Add Provider</button>
+        <button type="button" onClick={onCreate} className="primary-button">
+          <Plus size={14} />
+          Add Provider
+        </button>
       }
     >
       <SettingsTableShell>
@@ -6721,7 +8017,9 @@ function ProvidersView({
           <tbody>
             {providerIds.map((providerId) => {
               const provider = providers[providerId];
-              const linkedModels = models.filter((model) => model.provider === providerId).length;
+              const linkedModels = models.filter(
+                (model) => model.provider === providerId,
+              ).length;
 
               return (
                 <tr key={providerId}>
@@ -6729,18 +8027,29 @@ function ProvidersView({
                     <div className="settings-row-primary">{provider.name}</div>
                   </td>
                   <td>
-                    <div className="settings-row-secondary">{providerKindLabel(provider.kind)}</div>
+                    <div className="settings-row-secondary">
+                      {providerKindLabel(provider.kind)}
+                    </div>
                   </td>
                   <td>
-                    <span className={`status-chip ${provider.enabled ? "status-ready" : "status-inactive"}`}>
-                      {provider.enabled ? "active" : "inactive"}
+                    <span
+                      className={`status-chip ${provider.enabled ? 'status-ready' : 'status-inactive'}`}
+                    >
+                      {provider.enabled ? 'active' : 'inactive'}
                     </span>
                   </td>
                   <td className="settings-mono-cell">{provider.base_url}</td>
                   <td>{linkedModels}</td>
                   <td>
                     <div className="settings-table-actions">
-                      <button type="button" onClick={() => onEdit(providerId)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
+                      <button
+                        type="button"
+                        onClick={() => onEdit(providerId)}
+                        className="ghost-button ghost-button-compact"
+                      >
+                        <Pencil size={14} />
+                        Edit
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -6758,7 +8067,7 @@ function ModelsView({
   providers,
   providerIds,
   onCreate,
-  onEdit
+  onEdit,
 }: {
   models: BenchLocalModelConfig[];
   providers: Record<string, BenchLocalProviderConfig>;
@@ -6766,54 +8075,73 @@ function ModelsView({
   onCreate: () => void;
   onEdit: (index: number) => void;
 }) {
-  const [providerFilter, setProviderFilter] = useState("all");
-  const [groupFilter, setGroupFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [providerFilter, setProviderFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const providerOptions = [
-    { value: "all", label: "All Providers" },
+    { value: 'all', label: 'All Providers' },
     ...Array.from(new Set(models.map((model) => model.provider)))
-      .sort((left, right) => (providers[left]?.name ?? left).localeCompare(providers[right]?.name ?? right))
+      .sort((left, right) =>
+        (providers[left]?.name ?? left).localeCompare(
+          providers[right]?.name ?? right,
+        ),
+      )
       .map((providerId) => ({
         value: providerId,
-        label: providers[providerId]?.name ?? providerId
-      }))
+        label: providers[providerId]?.name ?? providerId,
+      })),
   ];
   const groupOptions = [
-    { value: "all", label: "All Groups" },
-    ...Array.from(new Set(models.map((model) => model.group.trim() || "__ungrouped__")))
+    { value: 'all', label: 'All Groups' },
+    ...Array.from(
+      new Set(models.map((model) => model.group.trim() || '__ungrouped__')),
+    )
       .sort((left, right) => left.localeCompare(right))
       .map((group) => ({
         value: group,
-        label: group === "__ungrouped__" ? "Ungrouped" : group
-      }))
+        label: group === '__ungrouped__' ? 'Ungrouped' : group,
+      })),
   ];
   const filteredModels = models
     .map((model, index) => ({ model, index }))
     .filter(({ model }) => {
-      const normalizedGroup = model.group.trim() || "__ungrouped__";
+      const normalizedGroup = model.group.trim() || '__ungrouped__';
       const normalizedQuery = searchQuery.trim().toLowerCase();
       const providerName = providers[model.provider]?.name ?? model.provider;
-      const haystack = [model.label, model.id, model.model, model.group, providerName, model.provider]
+      const haystack = [
+        model.label,
+        model.id,
+        model.model,
+        model.group,
+        providerName,
+        model.provider,
+      ]
         .filter(Boolean)
-        .join(" ")
+        .join(' ')
         .toLowerCase();
 
       return (
-        (providerFilter === "all" || model.provider === providerFilter) &&
-        (groupFilter === "all" || normalizedGroup === groupFilter) &&
+        (providerFilter === 'all' || model.provider === providerFilter) &&
+        (groupFilter === 'all' || normalizedGroup === groupFilter) &&
         (!normalizedQuery || haystack.includes(normalizedQuery))
       );
     });
 
   useEffect(() => {
-    if (providerFilter !== "all" && !providerOptions.some((option) => option.value === providerFilter)) {
-      setProviderFilter("all");
+    if (
+      providerFilter !== 'all' &&
+      !providerOptions.some((option) => option.value === providerFilter)
+    ) {
+      setProviderFilter('all');
     }
   }, [providerFilter, providerOptions]);
 
   useEffect(() => {
-    if (groupFilter !== "all" && !groupOptions.some((option) => option.value === groupFilter)) {
-      setGroupFilter("all");
+    if (
+      groupFilter !== 'all' &&
+      !groupOptions.some((option) => option.value === groupFilter)
+    ) {
+      setGroupFilter('all');
     }
   }, [groupFilter, groupOptions]);
 
@@ -6871,7 +8199,9 @@ function ModelsView({
             {filteredModels.length === 0 ? (
               <tr>
                 <td colSpan={6}>
-                  <div className="settings-row-secondary">No models match the current filters.</div>
+                  <div className="settings-row-secondary">
+                    No models match the current filters.
+                  </div>
                 </td>
               </tr>
             ) : (
@@ -6879,19 +8209,34 @@ function ModelsView({
                 <tr key={`${model.id}-${index}`}>
                   <td>
                     <div className="settings-row-primary">{model.label}</div>
-                    <div className="settings-row-secondary settings-mono-cell">{model.id}</div>
+                    <div className="settings-row-secondary settings-mono-cell">
+                      {model.id}
+                    </div>
                   </td>
                   <td>
-                    <span className={`status-chip ${model.enabled ? "status-ready" : "status-inactive"}`}>
-                      {model.enabled ? "active" : "inactive"}
+                    <span
+                      className={`status-chip ${model.enabled ? 'status-ready' : 'status-inactive'}`}
+                    >
+                      {model.enabled ? 'active' : 'inactive'}
                     </span>
                   </td>
-                  <td>{providers[model.provider]?.name ?? model.provider.split("-")[0] ?? model.provider}</td>
+                  <td>
+                    {providers[model.provider]?.name ??
+                      model.provider.split('-')[0] ??
+                      model.provider}
+                  </td>
                   <td className="settings-mono-cell">{model.model}</td>
                   <td>{model.group}</td>
                   <td>
                     <div className="settings-table-actions">
-                      <button type="button" onClick={() => onEdit(index)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
+                      <button
+                        type="button"
+                        onClick={() => onEdit(index)}
+                        className="ghost-button ghost-button-compact"
+                      >
+                        <Pencil size={14} />
+                        Edit
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -6914,7 +8259,7 @@ function BenchPackRegistryView({
   onInstall,
   onInstallFromUrl,
   onUpdate,
-  onUninstall
+  onUninstall,
 }: {
   draft: BenchLocalConfig;
   inspections: BenchPackInspection[];
@@ -6927,33 +8272,39 @@ function BenchPackRegistryView({
   onUpdate: (benchPackId: string) => void;
   onUninstall: (benchPackId: string) => void;
 }) {
-  const [manualUrl, setManualUrl] = useState("");
-  const inspectionsById = Object.fromEntries(inspections.map((inspection) => [inspection.id, inspection]));
+  const [manualUrl, setManualUrl] = useState('');
+  const inspectionsById = Object.fromEntries(
+    inspections.map((inspection) => [inspection.id, inspection]),
+  );
   const hasActiveMutation = Object.keys(benchPackMutations).length > 0;
   const officialRows = registryEntries.map((entry) => {
-      const installed = draft.benchpacks[entry.id];
-      const inspection = inspectionsById[entry.id];
-      const mutation = benchPackMutations[entry.id];
-      const updateAvailable =
-        Boolean(installed) &&
-        (installed?.version !== entry.version ||
-          (entry.source.type === "github" ? installed?.ref !== entry.source.tag : false));
+    const installed = draft.benchpacks[entry.id];
+    const inspection = inspectionsById[entry.id];
+    const mutation = benchPackMutations[entry.id];
+    const updateAvailable =
+      Boolean(installed) &&
+      (installed?.version !== entry.version ||
+        (entry.source.type === 'github'
+          ? installed?.ref !== entry.source.tag
+          : false));
 
-      return {
-        id: entry.id,
-        name: entry.name,
-        description: entry.description ?? "No description provided.",
-        version: entry.version,
-        installedVersion: installed?.version,
-        installed: Boolean(installed),
-        status: installed ? inspection?.status ?? "not_installed" : "not_installed",
-        mutation,
-        updateAvailable,
-        isRegistryEntry: true
-      } as const;
-    });
+    return {
+      id: entry.id,
+      name: entry.name,
+      description: entry.description ?? 'No description provided.',
+      version: entry.version,
+      installedVersion: installed?.version,
+      installed: Boolean(installed),
+      status: installed
+        ? (inspection?.status ?? 'not_installed')
+        : 'not_installed',
+      mutation,
+      updateAvailable,
+      isRegistryEntry: true,
+    } as const;
+  });
   const thirdPartyRows = Object.entries(draft.benchpacks)
-    .filter(([, benchPack]) => benchPack.source !== "registry")
+    .filter(([, benchPack]: any) => benchPack.source !== 'registry')
     .map(([benchPackId, benchPack]) => {
       const inspection = inspectionsById[benchPackId];
       const mutation = benchPackMutations[benchPackId];
@@ -6961,18 +8312,21 @@ function BenchPackRegistryView({
       return {
         id: benchPackId,
         name: inspection?.manifest?.name ?? benchPackId,
-        description: inspection?.manifest?.description ?? "Installed from a third-party source maintained outside BenchLocal.",
-        version: benchPack.version ?? inspection?.manifest?.version ?? "unknown",
-        status: inspection?.status ?? "not_installed",
+        description:
+          inspection?.manifest?.description ??
+          'Installed from a third-party source maintained outside BenchLocal.',
+        version:
+          benchPack.version ?? inspection?.manifest?.version ?? 'unknown',
+        status: inspection?.status ?? 'not_installed',
         sourceLabel:
-          benchPack.source === "archive"
-            ? benchPack.url ?? "Archive URL"
-            : benchPack.source === "github"
-              ? benchPack.repo ?? "GitHub"
-              : benchPack.source === "local"
-                ? benchPack.path ?? "Local path"
+          benchPack.source === 'archive'
+            ? (benchPack.url ?? 'Archive URL')
+            : benchPack.source === 'github'
+              ? (benchPack.repo ?? 'GitHub')
+              : benchPack.source === 'local'
+                ? (benchPack.path ?? 'Local path')
                 : benchPack.source,
-        mutation
+        mutation,
       } as const;
     });
 
@@ -6983,9 +8337,21 @@ function BenchPackRegistryView({
         subtitle="Install and update official Bench Packs from the BenchLocal registry."
         tone="sky"
         icon={<PlugZap size={16} />}
-        actions={<button type="button" onClick={onRefresh} className="ghost-button" disabled={hasActiveMutation}><RotateCcw size={14} />Refresh Registry</button>}
+        actions={
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="ghost-button"
+            disabled={hasActiveMutation}
+          >
+            <RotateCcw size={14} />
+            Refresh Registry
+          </button>
+        }
       >
-        {registryWarning ? <Banner tone="warning">{registryWarning}</Banner> : null}
+        {registryWarning ? (
+          <Banner tone="warning">{registryWarning}</Banner>
+        ) : null}
         <SettingsTableShell>
           <table className="settings-list-table">
             <thead>
@@ -7003,8 +8369,8 @@ function BenchPackRegistryView({
                   <td colSpan={5}>
                     <div className="settings-row-secondary">
                       {registryWarning
-                        ? "The official registry is currently unavailable."
-                        : "No Bench Packs are available in the official registry."}
+                        ? 'The official registry is currently unavailable.'
+                        : 'No Bench Packs are available in the official registry.'}
                     </div>
                   </td>
                 </tr>
@@ -7016,13 +8382,17 @@ function BenchPackRegistryView({
                   return (
                     <tr key={row.id}>
                       <td>
-                        <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
+                        <div className="settings-row-primary settings-nowrap-cell">
+                          {row.name}
+                        </div>
                       </td>
                       <td>{row.description}</td>
                       <td>
                         <div className="benchpack-version-cell">
                           <div className="settings-table-actions settings-table-actions-inline benchpack-version-line">
-                            {row.installed && row.updateAvailable && row.installedVersion ? (
+                            {row.installed &&
+                            row.updateAvailable &&
+                            row.installedVersion ? (
                               <>
                                 <span>v{row.installedVersion}</span>
                                 <ArrowRight size={14} />
@@ -7032,22 +8402,36 @@ function BenchPackRegistryView({
                               <span>v{row.version}</span>
                             )}
                           </div>
-                          {row.installed && row.isRegistryEntry && row.updateAvailable ? (
+                          {row.installed &&
+                          row.isRegistryEntry &&
+                          row.updateAvailable ? (
                             <button
                               type="button"
                               onClick={() => onUpdate(row.id)}
                               className="button-warn ghost-button-compact benchpack-upgrade-button"
                               disabled={disableRowAction || isMutating}
                             >
-                              {row.mutation?.action === "update" ? <span className="spinner" /> : <ArrowUp size={14} />}
-                              {row.mutation?.action === "update" ? benchPackMutationLabel(row.mutation) : "Upgrade"}
+                              {row.mutation?.action === 'update' ? (
+                                <span className="spinner" />
+                              ) : (
+                                <ArrowUp size={14} />
+                              )}
+                              {row.mutation?.action === 'update'
+                                ? benchPackMutationLabel(row.mutation)
+                                : 'Upgrade'}
                             </button>
                           ) : null}
                         </div>
                       </td>
                       <td>
-                        <span className={`status-chip ${row.installed ? statusClasses(row.status as BenchPackInspection["status"]) : "status-idle"}`}>
-                          {row.mutation ? benchPackMutationLabel(row.mutation) : row.installed ? row.status.replaceAll("_", " ") : "available"}
+                        <span
+                          className={`status-chip ${row.installed ? statusClasses(row.status as BenchPackInspection['status']) : 'status-idle'}`}
+                        >
+                          {row.mutation
+                            ? benchPackMutationLabel(row.mutation)
+                            : row.installed
+                              ? row.status.replaceAll('_', ' ')
+                              : 'available'}
                         </span>
                       </td>
                       <td>
@@ -7059,8 +8443,14 @@ function BenchPackRegistryView({
                               className="ghost-button ghost-button-compact benchpack-action-button"
                               disabled={disableRowAction || isMutating}
                             >
-                              {row.mutation?.action === "uninstall" ? <span className="spinner" /> : <Trash2 size={14} />}
-                              {row.mutation?.action === "uninstall" ? benchPackMutationLabel(row.mutation) : "Uninstall"}
+                              {row.mutation?.action === 'uninstall' ? (
+                                <span className="spinner" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
+                              {row.mutation?.action === 'uninstall'
+                                ? benchPackMutationLabel(row.mutation)
+                                : 'Uninstall'}
                             </button>
                           ) : (
                             <button
@@ -7069,8 +8459,14 @@ function BenchPackRegistryView({
                               className="primary-button benchpack-action-button"
                               disabled={disableRowAction || isMutating}
                             >
-                              {row.mutation?.action === "install" ? <span className="spinner" /> : <Plus size={14} />}
-                              {row.mutation?.action === "install" ? benchPackMutationLabel(row.mutation) : "Install"}
+                              {row.mutation?.action === 'install' ? (
+                                <span className="spinner" />
+                              ) : (
+                                <Plus size={14} />
+                              )}
+                              {row.mutation?.action === 'install'
+                                ? benchPackMutationLabel(row.mutation)
+                                : 'Install'}
                             </button>
                           )}
                         </div>
@@ -7091,7 +8487,10 @@ function BenchPackRegistryView({
         icon={<FolderOpen size={16} />}
       >
         <div className="helper-copy">
-          <p>Third-party Bench Packs are maintained by their authors, not by BenchLocal. Only install packages from sources you trust.</p>
+          <p>
+            Third-party Bench Packs are maintained by their authors, not by
+            BenchLocal. Only install packages from sources you trust.
+          </p>
         </div>
         <div className="benchpack-url-install-row">
           <Field
@@ -7109,14 +8508,23 @@ function BenchPackRegistryView({
               const installed = await onInstallFromUrl(manualUrl);
 
               if (installed !== false) {
-                setManualUrl("");
+                setManualUrl('');
               }
             }}
           >
-            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] || benchPackMutations["third-party"] ? <span className="spinner" /> : <Plus size={14} />}
-            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] || benchPackMutations["third-party"]
-              ? benchPackMutationLabel(benchPackMutations["third-party"] ?? benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID])
-              : "Install from URL"}
+            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] ||
+            benchPackMutations['third-party'] ? (
+              <span className="spinner" />
+            ) : (
+              <Plus size={14} />
+            )}
+            {benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID] ||
+            benchPackMutations['third-party']
+              ? benchPackMutationLabel(
+                  benchPackMutations['third-party'] ??
+                    benchPackMutations[THIRD_PARTY_INSTALL_MUTATION_ID],
+                )
+              : 'Install from URL'}
           </button>
         </div>
 
@@ -7136,7 +8544,9 @@ function BenchPackRegistryView({
               {thirdPartyRows.length === 0 ? (
                 <tr>
                   <td colSpan={6}>
-                    <div className="settings-row-secondary">No third-party Bench Packs are installed.</div>
+                    <div className="settings-row-secondary">
+                      No third-party Bench Packs are installed.
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -7147,14 +8557,20 @@ function BenchPackRegistryView({
                   return (
                     <tr key={row.id}>
                       <td>
-                        <div className="settings-row-primary settings-nowrap-cell">{row.name}</div>
+                        <div className="settings-row-primary settings-nowrap-cell">
+                          {row.name}
+                        </div>
                       </td>
                       <td>{row.description}</td>
                       <td>v{row.version}</td>
                       <td className="settings-mono-cell">{row.sourceLabel}</td>
                       <td>
-                        <span className={`status-chip ${statusClasses(row.status as BenchPackInspection["status"])}`}>
-                          {row.mutation ? benchPackMutationLabel(row.mutation) : row.status.replaceAll("_", " ")}
+                        <span
+                          className={`status-chip ${statusClasses(row.status as BenchPackInspection['status'])}`}
+                        >
+                          {row.mutation
+                            ? benchPackMutationLabel(row.mutation)
+                            : row.status.replaceAll('_', ' ')}
                         </span>
                       </td>
                       <td>
@@ -7165,8 +8581,14 @@ function BenchPackRegistryView({
                             className="ghost-button ghost-button-compact benchpack-action-button"
                             disabled={disableRowAction || isMutating}
                           >
-                            {row.mutation?.action === "uninstall" ? <span className="spinner" /> : <Trash2 size={14} />}
-                            {row.mutation?.action === "uninstall" ? benchPackMutationLabel(row.mutation) : "Uninstall"}
+                            {row.mutation?.action === 'uninstall' ? (
+                              <span className="spinner" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
+                            {row.mutation?.action === 'uninstall'
+                              ? benchPackMutationLabel(row.mutation)
+                              : 'Uninstall'}
                           </button>
                         </div>
                       </td>
@@ -7182,15 +8604,15 @@ function BenchPackRegistryView({
   );
 }
 
-function verifierModeLabel(mode: BenchLocalVerifierConfig["mode"]): string {
+function verifierModeLabel(mode: BenchLocalVerifierConfig['mode']): string {
   switch (mode) {
-    case "cloud":
-      return "BenchLocal Cloud";
-    case "custom_url":
-      return "Custom URL";
-    case "docker":
+    case 'cloud':
+      return 'BenchLocal Cloud';
+    case 'custom_url':
+      return 'Custom URL';
+    case 'docker':
     default:
-      return "Local Docker";
+      return 'Local Docker';
   }
 }
 
@@ -7200,35 +8622,53 @@ function VerificationView({
   onUpdate,
   onStart,
   onStop,
-  onDeleteImage
+  onDeleteImage,
 }: {
   draft: BenchLocalConfig;
   statuses: Record<string, BenchPackVerifierStatus>;
-  onUpdate: (benchPackId: string, verifierId: string, updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig) => void;
-  onStart: (benchPackId: string, benchPackName: string, verifierId: string) => Promise<void>;
+  onUpdate: (
+    benchPackId: string,
+    verifierId: string,
+    updater: (verifier: BenchLocalVerifierConfig) => BenchLocalVerifierConfig,
+  ) => void;
+  onStart: (
+    benchPackId: string,
+    benchPackName: string,
+    verifierId: string,
+  ) => Promise<void>;
   onStop: (benchPackId: string) => Promise<void>;
-  onDeleteImage: (benchPackId: string, benchPackName: string, verifierId: string) => void;
+  onDeleteImage: (
+    benchPackId: string,
+    benchPackName: string,
+    verifierId: string,
+  ) => void;
 }) {
-  const verificationEntries = Object.entries(draft.benchpacks).filter(([benchPackId]) => {
-    const status = statuses[benchPackId];
-    return Boolean(status && status.verifiers.length > 0);
-  });
+  const verificationEntries = Object.entries(draft.benchpacks).filter(
+    ([benchPackId]) => {
+      const status = statuses[benchPackId];
+      return Boolean(status && status.verifiers.length > 0);
+    },
+  );
 
   const rows = verificationEntries.flatMap(([benchPackId, benchPack]) => {
     const status = statuses[benchPackId];
     const inspectionName = status?.benchPackName ?? benchPackId;
 
-    return Object.entries(benchPack.verifiers ?? {}).map(([verifierId, verifier]) => {
-      const runtime = status?.verifiers.find((entry) => entry.id === verifierId);
-      return {
-        benchPackId,
-        benchPackName: inspectionName,
-        verifierId,
-        verifier,
-        runtime,
-        docker: status?.docker
-      };
-    });
+    return Object.entries(benchPack.verifiers ?? {}).map(
+      ([verifierId, verifier]) => {
+        const runtime = status?.verifiers.find(
+          (entry) => entry.id === verifierId,
+        );
+        return {
+          benchPackId,
+          benchPackName: inspectionName,
+          verifierId,
+          verifier,
+          runtime,
+          docker: status?.docker,
+        };
+      },
+    );
   });
 
   return (
@@ -7254,96 +8694,141 @@ function VerificationView({
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={6}>
-                  <div className="settings-row-secondary">No installed Bench Packs currently require a verifier.</div>
+                  <div className="settings-row-secondary">
+                    No installed Bench Packs currently require a verifier.
+                  </div>
                 </td>
               </tr>
             ) : (
-              rows.map(({ benchPackId, benchPackName, verifierId, verifier, runtime, docker }) => (
-                <tr key={`${benchPackId}:${verifierId}`}>
-                  <td>
-                    <div className="settings-row-primary settings-nowrap-cell">{benchPackName}</div>
-                  </td>
-                  <td>
-                    <InlineSelectField
-                      label=""
-                      value={verifier.mode === "docker" ? verifier.mode : "docker"}
-                      options={[
-                        { value: "docker", label: verifierModeLabel("docker") },
-                        { value: "cloud", label: `${verifierModeLabel("cloud")} (Soon)`, disabled: true },
-                        { value: "custom_url", label: `${verifierModeLabel("custom_url")} (Soon)`, disabled: true }
-                      ]}
-                      onChange={(value) =>
-                        onUpdate(benchPackId, verifierId, (current) => ({
-                          ...current,
-                          mode: value as BenchLocalVerifierConfig["mode"]
-                        }))
-                      }
-                    />
-                  </td>
-                  <td>
-                    <span className={`status-chip ${getVerifierStatusTone(runtime?.status)}`}>
-                      {formatVerifierRuntimeStatus(runtime?.status)}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="settings-row-secondary">
-                      {runtime?.url ?? "Managed by BenchLocal"}
-                    </div>
-                    <div className="settings-row-secondary">
-                      Docker: {docker?.state === "ready"
-                        ? docker.details ?? "ready"
-                        : docker?.state === "not_running"
-                          ? docker.details ?? "not running"
-                          : docker?.details ?? "not installed"}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="settings-table-checkbox-cell">
-                      <input
-                        type="checkbox"
-                        checked={verifier.auto_start}
-                        onChange={(event) =>
+              rows.map(
+                ({
+                  benchPackId,
+                  benchPackName,
+                  verifierId,
+                  verifier,
+                  runtime,
+                  docker,
+                }) => (
+                  <tr key={`${benchPackId}:${verifierId}`}>
+                    <td>
+                      <div className="settings-row-primary settings-nowrap-cell">
+                        {benchPackName}
+                      </div>
+                    </td>
+                    <td>
+                      <InlineSelectField
+                        label=""
+                        value={
+                          verifier.mode === 'docker' ? verifier.mode : 'docker'
+                        }
+                        options={[
+                          {
+                            value: 'docker',
+                            label: verifierModeLabel('docker'),
+                          },
+                          {
+                            value: 'cloud',
+                            label: `${verifierModeLabel('cloud')} (Soon)`,
+                            disabled: true,
+                          },
+                          {
+                            value: 'custom_url',
+                            label: `${verifierModeLabel('custom_url')} (Soon)`,
+                            disabled: true,
+                          },
+                        ]}
+                        onChange={(value) =>
                           onUpdate(benchPackId, verifierId, (current) => ({
                             ...current,
-                            auto_start: event.target.checked
+                            mode: value as BenchLocalVerifierConfig['mode'],
                           }))
                         }
                       />
-                    </div>
-                  </td>
-                  <td>
-                    <div className="settings-table-actions">
-                      {runtime?.status === "running" ? (
-                        <button type="button" onClick={() => onStop(benchPackId)} className="ghost-button ghost-button-compact">
-                          <Square size={14} />
-                          Stop
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => onStart(benchPackId, benchPackName, verifierId)}
-                          className="ghost-button ghost-button-compact"
-                          disabled={docker?.state !== "ready"}
-                        >
-                          <Play size={14} />
-                          Start
-                        </button>
-                      )}
-                      {runtime?.dockerImagePresent ? (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteImage(benchPackId, benchPackName, verifierId)}
-                          className="button-danger ghost-button-compact"
-                          disabled={verifier.mode !== "docker" || docker?.state !== "ready" || runtime?.status === "running"}
-                        >
-                          <Trash2 size={14} />
-                          Delete Image
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))
+                    </td>
+                    <td>
+                      <span
+                        className={`status-chip ${getVerifierStatusTone(runtime?.status)}`}
+                      >
+                        {formatVerifierRuntimeStatus(runtime?.status)}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="settings-row-secondary">
+                        {runtime?.url ?? 'Managed by BenchLocal'}
+                      </div>
+                      <div className="settings-row-secondary">
+                        Docker:{' '}
+                        {docker?.state === 'ready'
+                          ? (docker.details ?? 'ready')
+                          : docker?.state === 'not_running'
+                            ? (docker.details ?? 'not running')
+                            : (docker?.details ?? 'not installed')}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="settings-table-checkbox-cell">
+                        <input
+                          type="checkbox"
+                          checked={verifier.auto_start}
+                          onChange={(event) =>
+                            onUpdate(benchPackId, verifierId, (current) => ({
+                              ...current,
+                              auto_start: event.target.checked,
+                            }))
+                          }
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="settings-table-actions">
+                        {runtime?.status === 'running' ? (
+                          <button
+                            type="button"
+                            onClick={() => onStop(benchPackId)}
+                            className="ghost-button ghost-button-compact"
+                          >
+                            <Square size={14} />
+                            Stop
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onStart(benchPackId, benchPackName, verifierId)
+                            }
+                            className="ghost-button ghost-button-compact"
+                            disabled={docker?.state !== 'ready'}
+                          >
+                            <Play size={14} />
+                            Start
+                          </button>
+                        )}
+                        {runtime?.dockerImagePresent ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onDeleteImage(
+                                benchPackId,
+                                benchPackName,
+                                verifierId,
+                              )
+                            }
+                            className="button-danger ghost-button-compact"
+                            disabled={
+                              verifier.mode !== 'docker' ||
+                              docker?.state !== 'ready' ||
+                              runtime?.status === 'running'
+                            }
+                          >
+                            <Trash2 size={14} />
+                            Delete Image
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ),
+              )
             )}
           </tbody>
         </table>
@@ -7358,11 +8843,11 @@ function Panel({
   tone,
   icon,
   actions,
-  children
+  children,
 }: {
   title: string;
   subtitle: string;
-  tone: "sky" | "orange" | "slate";
+  tone: 'sky' | 'orange' | 'slate';
   icon?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -7386,13 +8871,13 @@ function Panel({
 
 function DetailCard({ title, content }: { title: string; content: string }) {
   const toneClass =
-    title === "What this tests"
-      ? "is-blue"
-      : title === "Prompt Contract"
-        ? "is-amber"
-        : "is-slate";
+    title === 'What this tests'
+      ? 'is-blue'
+      : title === 'Prompt Contract'
+        ? 'is-amber'
+        : 'is-slate';
 
-  const lines = content.split("\n");
+  const lines = content.split('\n');
 
   return (
     <article className={`detail-card ${toneClass}`}>
@@ -7403,15 +8888,24 @@ function DetailCard({ title, content }: { title: string; content: string }) {
         {lines.map((line, lineIndex) => (
           <span key={`${title}-${lineIndex}`}>
             {line.split(/(`[^`]+`)/g).map((part, partIndex) => {
-              if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+              if (
+                part.startsWith('`') &&
+                part.endsWith('`') &&
+                part.length >= 2
+              ) {
                 return (
-                  <code key={`${title}-${lineIndex}-${partIndex}`} className="detail-inline-code">
+                  <code
+                    key={`${title}-${lineIndex}-${partIndex}`}
+                    className="detail-inline-code"
+                  >
                     {part.slice(1, -1)}
                   </code>
                 );
               }
 
-              return <span key={`${title}-${lineIndex}-${partIndex}`}>{part}</span>;
+              return (
+                <span key={`${title}-${lineIndex}-${partIndex}`}>{part}</span>
+              );
             })}
             {lineIndex < lines.length - 1 ? <br /> : null}
           </span>
@@ -7426,12 +8920,12 @@ function HistoryModal({
   entries,
   onClose,
   onOpenRun,
-  onRemoveAll
+  onRemoveAll,
 }: {
   benchPackName: string;
   entries: BenchPackRunHistoryEntry[];
   onClose: () => void;
-  onOpenRun: (runId: string, mode: "history" | "replay") => void;
+  onOpenRun: (runId: string, mode: 'history' | 'replay') => void;
   onRemoveAll: () => void;
 }) {
   return (
@@ -7440,9 +8934,16 @@ function HistoryModal({
         <div className="dialog-header">
           <div>
             <h3 className="dialog-title">Test Histories</h3>
-            <p className="section-copy" style={{ marginTop: "12px" }}>{benchPackName}</p>
+            <p className="section-copy" style={{ marginTop: '12px' }}>
+              {benchPackName}
+            </p>
           </div>
-          <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
+          <button
+            type="button"
+            onClick={onClose}
+            className="dialog-close-button"
+            aria-label="Close dialog"
+          >
             <X size={16} />
           </button>
         </div>
@@ -7463,29 +8964,47 @@ function HistoryModal({
               <tbody>
                 {entries.map((entry) => {
                   const executionModeLabel =
-                    EXECUTION_MODE_OPTIONS.find((option) => option.value === entry.executionMode)?.label ?? "Unknown";
+                    EXECUTION_MODE_OPTIONS.find(
+                      (option) => option.value === entry.executionMode,
+                    )?.label ?? 'Unknown';
 
                   return (
                     <tr key={entry.runId}>
                       <td>
-                        <div className="settings-row-primary">{new Date(entry.startedAt).toLocaleString()}</div>
+                        <div className="settings-row-primary">
+                          {new Date(entry.startedAt).toLocaleString()}
+                        </div>
                       </td>
                       <td>
-                        <span className="status-chip status-idle">{executionModeLabel}</span>
+                        <span className="status-chip status-idle">
+                          {executionModeLabel}
+                        </span>
                       </td>
                       <td>
-                        <span className="history-table-metric">{entry.modelCount}</span>
+                        <span className="history-table-metric">
+                          {entry.modelCount}
+                        </span>
                       </td>
                       <td>
-                        <span className="history-table-metric">{entry.scenarioCount}</span>
+                        <span className="history-table-metric">
+                          {entry.scenarioCount}
+                        </span>
                       </td>
                       <td>
                         <span
                           className={`status-chip ${
-                            entry.error ? "status-danger" : entry.cancelled ? "status-not-installed" : "status-done"
+                            entry.error
+                              ? 'status-danger'
+                              : entry.cancelled
+                                ? 'status-not-installed'
+                                : 'status-done'
                           }`}
                         >
-                          {entry.error ? "error" : entry.cancelled ? "stopped" : "completed"}
+                          {entry.error
+                            ? 'error'
+                            : entry.cancelled
+                              ? 'stopped'
+                              : 'completed'}
                         </span>
                       </td>
                       <td>
@@ -7495,7 +9014,9 @@ function HistoryModal({
                           onClick={(event) =>
                             onOpenRun(
                               entry.runId,
-                              event.shiftKey && !entry.error && !entry.cancelled ? "replay" : "history"
+                              event.shiftKey && !entry.error && !entry.cancelled
+                                ? 'replay'
+                                : 'history',
                             )
                           }
                         >
@@ -7512,7 +9033,12 @@ function HistoryModal({
         </div>
 
         <div className="dialog-footer">
-          <button type="button" className="button-warn" onClick={onRemoveAll} disabled={entries.length === 0}>
+          <button
+            type="button"
+            className="button-warn"
+            onClick={onRemoveAll}
+            disabled={entries.length === 0}
+          >
             <Trash2 size={14} />
             Remove All Histories
           </button>
@@ -7527,7 +9053,7 @@ function VerifierPreparationModal({
   verifierId,
   message,
   isCancelling,
-  onCancel
+  onCancel,
 }: {
   benchPackName: string;
   verifierId: string;
@@ -7545,19 +9071,28 @@ function VerifierPreparationModal({
           <div className="verifier-preparation-copy">
             <p className="eyebrow">Preparing Verifier</p>
             <h3 className="dialog-title">{benchPackName}</h3>
-            <p className="section-copy" style={{ marginTop: "12px" }}>
-              BenchLocal is preparing <code className="detail-inline-code">{verifierId}</code> before the run can start.
+            <p className="section-copy" style={{ marginTop: '12px' }}>
+              BenchLocal is preparing{' '}
+              <code className="detail-inline-code">{verifierId}</code> before
+              the run can start.
             </p>
           </div>
         </div>
 
-        <p className="settings-row-secondary verifier-preparation-message">{message}</p>
+        <p className="settings-row-secondary verifier-preparation-message">
+          {message}
+        </p>
 
         {onCancel ? (
           <div className="dialog-footer verifier-preparation-footer">
-            <button type="button" className="button-warn" onClick={onCancel} disabled={isCancelling}>
+            <button
+              type="button"
+              className="button-warn"
+              onClick={onCancel}
+              disabled={isCancelling}
+            >
               {isCancelling ? <span className="spinner" /> : null}
-              {isCancelling ? "Cancelling..." : "Cancel Run"}
+              {isCancelling ? 'Cancelling...' : 'Cancel Run'}
             </button>
           </div>
         ) : null}
@@ -7566,15 +9101,21 @@ function VerifierPreparationModal({
   );
 }
 
-function Banner({ tone, children }: { tone: "success" | "danger" | "neutral" | "warning"; children: ReactNode }) {
+function Banner({
+  tone,
+  children,
+}: {
+  tone: 'success' | 'danger' | 'neutral' | 'warning';
+  children: ReactNode;
+}) {
   const toneClass =
-    tone === "success"
-      ? "banner-success"
-      : tone === "danger"
-        ? "banner-danger"
-        : tone === "warning"
-          ? "banner-warning"
-          : "banner-neutral";
+    tone === 'success'
+      ? 'banner-success'
+      : tone === 'danger'
+        ? 'banner-danger'
+        : tone === 'warning'
+          ? 'banner-warning'
+          : 'banner-neutral';
   return <div className={`banner ${toneClass}`}>{children}</div>;
 }
 
@@ -7583,7 +9124,7 @@ function AboutDialog({
   updateState,
   onCheckForUpdates,
   onInstallUpdate,
-  onClose
+  onClose,
 }: {
   metadata: BenchLocalAppMetadata | null;
   updateState: BenchLocalUpdateState | null;
@@ -7592,29 +9133,32 @@ function AboutDialog({
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const productName = metadata?.productName ?? "BenchLocal";
+  const productName = metadata?.productName ?? 'BenchLocal';
   const version = metadata?.version?.trim();
   const updateMessage = describeAppUpdateState(updateState);
   const checkedAtLabel = formatAppUpdateCheckedAt(updateState?.checkedAt);
-  const updateFeedLabel = updateState?.feedLabel?.trim() || "GitHub Releases";
+  const updateFeedLabel = updateState?.feedLabel?.trim() || 'GitHub Releases';
   const updateFeedUrl = updateState?.feedUrl?.trim();
   const progressPercent =
-    typeof updateState?.progressPercent === "number" ? Math.max(0, Math.min(100, updateState.progressPercent)) : null;
+    typeof updateState?.progressPercent === 'number'
+      ? Math.max(0, Math.min(100, updateState.progressPercent))
+      : null;
   const canCheckForUpdates =
-    updateState?.status !== "checking" &&
-    updateState?.status !== "downloading" &&
-    updateState?.status !== "available" &&
-    updateState?.status !== "unsupported";
+    updateState?.status !== 'checking' &&
+    updateState?.status !== 'downloading' &&
+    updateState?.status !== 'available' &&
+    updateState?.status !== 'unsupported';
   const updateActionLabel =
-    updateState?.status === "downloaded"
-      ? "Restart to Update"
-      : updateState?.status === "checking"
-        ? "Checking..."
-        : updateState?.status === "downloading" || updateState?.status === "available"
+    updateState?.status === 'downloaded'
+      ? 'Restart to Update'
+      : updateState?.status === 'checking'
+        ? 'Checking...'
+        : updateState?.status === 'downloading' ||
+            updateState?.status === 'available'
           ? progressPercent !== null
             ? `Downloading ${Math.round(progressPercent)}%`
-            : "Downloading..."
-          : "Check for Updates";
+            : 'Downloading...'
+          : 'Check for Updates';
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -7628,55 +9172,90 @@ function AboutDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "Enter") {
+      if (event.key === 'Escape' || event.key === 'Enter') {
         event.preventDefault();
         onClose();
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [onClose]);
 
   return (
     <div className="dialog-backdrop">
       <div ref={dialogRef} className="about-dialog-shell" tabIndex={-1}>
-        <button type="button" onClick={onClose} className="dialog-close-button about-dialog-close" aria-label="Close dialog">
+        <button
+          type="button"
+          onClick={onClose}
+          className="dialog-close-button about-dialog-close"
+          aria-label="Close dialog"
+        >
           <X size={16} />
         </button>
         <div className="about-dialog-body">
           <img src={benchlocalIcon} alt="" className="about-dialog-icon" />
           <h3 className="about-dialog-app-name">{productName}</h3>
-          {version ? <p className="about-dialog-version">Version {version}</p> : null}
-          {metadata?.copyright ? <p className="about-dialog-copyright">{metadata.copyright}</p> : null}
+          {version ? (
+            <p className="about-dialog-version">Version {version}</p>
+          ) : null}
+          {metadata?.copyright ? (
+            <p className="about-dialog-copyright">{metadata.copyright}</p>
+          ) : null}
           <div className="about-dialog-update-card">
             <div className="about-dialog-update-header">
               <span className="eyebrow">Self Update</span>
-              {updateState?.availableVersion ? <span className="status-chip status-idle">v{updateState.availableVersion}</span> : null}
+              {updateState?.availableVersion ? (
+                <span className="status-chip status-idle">
+                  v{updateState.availableVersion}
+                </span>
+              ) : null}
             </div>
             <p className="about-dialog-update-message">{updateMessage}</p>
             <p className="about-dialog-update-meta">
-              Feed: {updateFeedUrl ? `${updateFeedLabel} (${updateFeedUrl})` : updateFeedLabel}
+              Feed:{' '}
+              {updateFeedUrl
+                ? `${updateFeedLabel} (${updateFeedUrl})`
+                : updateFeedLabel}
             </p>
             {progressPercent !== null ? (
               <div className="about-dialog-update-progress">
                 <div className="about-dialog-update-progress-track">
-                  <span className="about-dialog-update-progress-fill" style={{ width: `${progressPercent}%` }} />
+                  <span
+                    className="about-dialog-update-progress-fill"
+                    style={{ width: `${progressPercent}%` }}
+                  />
                 </div>
-                <span className="about-dialog-update-progress-label">{Math.round(progressPercent)}%</span>
+                <span className="about-dialog-update-progress-label">
+                  {Math.round(progressPercent)}%
+                </span>
               </div>
             ) : null}
-            {checkedAtLabel ? <p className="about-dialog-update-meta">Last checked: {checkedAtLabel}</p> : null}
-            {updateState?.releaseNotes ? <pre className="about-dialog-update-notes">{updateState.releaseNotes}</pre> : null}
+            {checkedAtLabel ? (
+              <p className="about-dialog-update-meta">
+                Last checked: {checkedAtLabel}
+              </p>
+            ) : null}
+            {updateState?.releaseNotes ? (
+              <pre className="about-dialog-update-notes">
+                {updateState.releaseNotes}
+              </pre>
+            ) : null}
             <div className="about-dialog-update-actions">
               <button
                 type="button"
                 className="primary-button"
-                onClick={updateState?.status === "downloaded" ? onInstallUpdate : onCheckForUpdates}
-                disabled={!canCheckForUpdates && updateState?.status !== "downloaded"}
+                onClick={
+                  updateState?.status === 'downloaded'
+                    ? onInstallUpdate
+                    : onCheckForUpdates
+                }
+                disabled={
+                  !canCheckForUpdates && updateState?.status !== 'downloaded'
+                }
               >
                 {updateActionLabel}
               </button>
@@ -7694,18 +9273,18 @@ function Modal({
   onClose,
   onSubmit,
   submitLabel,
-  submitTone = "primary",
-  size = "default",
+  submitTone = 'primary',
+  size = 'default',
   leadingActions,
-  children
+  children,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   onSubmit: () => void;
   submitLabel: string;
-  submitTone?: "primary" | "danger";
-  size?: "default" | "wide";
+  submitTone?: 'primary' | 'danger';
+  size?: 'default' | 'wide';
   leadingActions?: ReactNode;
   children?: ReactNode;
 }) {
@@ -7723,7 +9302,10 @@ function Modal({
         return;
       }
 
-      if (activeElement instanceof HTMLElement && dialog.contains(activeElement)) {
+      if (
+        activeElement instanceof HTMLElement &&
+        dialog.contains(activeElement)
+      ) {
         return;
       }
 
@@ -7737,19 +9319,29 @@ function Modal({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
         return;
       }
 
-      if (event.key !== "Enter" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing) {
+      if (
+        event.key !== 'Enter' ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing
+      ) {
         return;
       }
 
       const target = event.target;
 
-      if (target instanceof HTMLElement && (target.tagName === "TEXTAREA" || target.isContentEditable)) {
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
         return;
       }
 
@@ -7757,35 +9349,54 @@ function Modal({
       onSubmit();
     };
 
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [onClose, onSubmit]);
 
   return (
     <div className="dialog-backdrop">
-      <div ref={dialogRef} className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`} tabIndex={-1}>
-        <div className={`dialog-header${hasBody ? "" : " dialog-header-compact"}`}>
+      <div
+        ref={dialogRef}
+        className={`dialog-shell${size === 'wide' ? ' dialog-shell-wide' : ''}`}
+        tabIndex={-1}
+      >
+        <div
+          className={`dialog-header${hasBody ? '' : ' dialog-header-compact'}`}
+        >
           <div>
             <h3 className="dialog-title">{title}</h3>
-            {hasSubtitle ? <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p> : null}
+            {hasSubtitle ? (
+              <p className="section-copy" style={{ marginTop: '12px' }}>
+                {subtitle}
+              </p>
+            ) : null}
           </div>
-          <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
+          <button
+            type="button"
+            onClick={onClose}
+            className="dialog-close-button"
+            aria-label="Close dialog"
+          >
             <X size={16} />
           </button>
         </div>
 
         {hasBody ? <div className="dialog-body">{children}</div> : null}
 
-        <div className={`modal-actions${hasBody ? "" : " modal-actions-compact"}`}>
+        <div
+          className={`modal-actions${hasBody ? '' : ' modal-actions-compact'}`}
+        >
           <div className="modal-actions-leading">{leadingActions}</div>
           <button
             ref={submitButtonRef}
             type="button"
             onClick={onSubmit}
-            className={submitTone === "danger" ? "button-danger" : "primary-button"}
+            className={
+              submitTone === 'danger' ? 'button-danger' : 'primary-button'
+            }
           >
             {submitLabel}
           </button>
@@ -7800,9 +9411,9 @@ function Field({
   value,
   onChange,
   placeholder,
-  type = "text",
+  type = 'text',
   readOnly = false,
-  className = ""
+  className = '',
 }: {
   label?: string;
   value: string;
@@ -7813,7 +9424,9 @@ function Field({
   className?: string;
 }) {
   return (
-    <label className={`field-block${label ? "" : " field-block-no-label"}${className ? ` ${className}` : ""}`}>
+    <label
+      className={`field-block${label ? '' : ' field-block-no-label'}${className ? ` ${className}` : ''}`}
+    >
       {label ? <span className="field-label">{label}</span> : null}
       <input
         type={type}
@@ -7830,7 +9443,7 @@ function Field({
 function ToggleRow({
   label,
   checked,
-  onChange
+  onChange,
 }: {
   label: string;
   checked: boolean;
@@ -7839,7 +9452,12 @@ function ToggleRow({
   return (
     <label className="toggle-row">
       <span className="toggle-label">{label}</span>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-4 w-4 accent-[var(--accent)]"
+      />
     </label>
   );
 }
@@ -7847,7 +9465,7 @@ function ToggleRow({
 function FieldToggle({
   label,
   checked,
-  onChange
+  onChange,
 }: {
   label: string;
   checked: boolean;
@@ -7857,8 +9475,13 @@ function FieldToggle({
     <label className="field-block">
       <span className="field-label">{label}</span>
       <span className="field-toggle">
-        <span className="toggle-label">{checked ? "Enabled" : "Disabled"}</span>
-        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+        <span className="toggle-label">{checked ? 'Enabled' : 'Disabled'}</span>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          className="h-4 w-4 accent-[var(--accent)]"
+        />
       </span>
     </label>
   );
@@ -7869,16 +9492,18 @@ function InlineSelectField({
   value,
   options,
   getOptionLabel,
-  onChange
+  onChange,
 }: {
   label: string;
   value: string;
-  options: Array<string | { value: string; label?: string; disabled?: boolean }>;
+  options: Array<
+    string | { value: string; label?: string; disabled?: boolean }
+  >;
   getOptionLabel?: (value: string) => string;
   onChange: (value: string) => void;
 }) {
   return (
-    <label className={`field-block${label ? "" : " field-block-no-label"}`}>
+    <label className={`field-block${label ? '' : ' field-block-no-label'}`}>
       {label ? <span className="field-label">{label}</span> : null}
       <select
         value={value}
@@ -7886,9 +9511,15 @@ function InlineSelectField({
         className="config-input"
       >
         {options.map((option) => {
-          const value = typeof option === "string" ? option : option.value;
-          const label = typeof option === "string" ? (getOptionLabel ? getOptionLabel(option) : option) : option.label ?? option.value;
-          const disabled = typeof option === "string" ? false : Boolean(option.disabled);
+          const value = typeof option === 'string' ? option : option.value;
+          const label =
+            typeof option === 'string'
+              ? getOptionLabel
+                ? getOptionLabel(option)
+                : option
+              : (option.label ?? option.value);
+          const disabled =
+            typeof option === 'string' ? false : Boolean(option.disabled);
 
           return (
             <option key={value} value={value} disabled={disabled}>
@@ -7901,19 +9532,19 @@ function InlineSelectField({
   );
 }
 
-function statusClasses(status: BenchPackInspection["status"]): string {
+function statusClasses(status: BenchPackInspection['status']): string {
   switch (status) {
-    case "ready":
-      return "status-ready";
-    case "not_installed":
-      return "status-not-installed";
-    case "incompatible":
-      return "status-load-error";
-    case "manifest_missing":
-    case "entry_missing":
-      return "status-entry-missing";
-    case "invalid_manifest":
-    case "load_error":
-      return "status-load-error";
+    case 'ready':
+      return 'status-ready';
+    case 'not_installed':
+      return 'status-not-installed';
+    case 'incompatible':
+      return 'status-load-error';
+    case 'manifest_missing':
+    case 'entry_missing':
+      return 'status-entry-missing';
+    case 'invalid_manifest':
+    case 'load_error':
+      return 'status-load-error';
   }
 }

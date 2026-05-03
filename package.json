@@ -23,6 +23,7 @@
     "release:setup:mac": "node scripts/setup-macos-release.mjs",
     "release:doctor:mac": "node scripts/check-macos-release.mjs",
     "release:mac": "node scripts/build-macos-release.mjs",
-    "typecheck": "npm run typecheck --workspace @benchlocal/core && npm run typecheck --workspace @benchlocal/sdk && npm run typecheck --workspace @benchlocal/benchpack-host && npm run typecheck --workspace app"
+    "typecheck": "npm run typecheck --workspace @benchlocal/core && npm run typecheck --workspace @benchlocal/sdk && npm run typecheck --workspace @benchlocal/benchpack-host && npm run typecheck --workspace app",
+    "sync:benchpack": "node scripts/sync-local-benchpack.mjs"
   }
 }
