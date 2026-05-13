@@ -123,6 +123,7 @@ export interface BenchPackRunSummary {
   benchPackId: string;
   benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
+  runsPerTest?: number;
   startedAt: string;
   completedAt: string;
   modelCount: number;
@@ -140,6 +141,7 @@ export interface BenchPackRunHistoryEntry {
   benchPackId: string;
   benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
+  runsPerTest?: number;
   startedAt: string;
   completedAt: string;
   modelCount: number;

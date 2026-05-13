@@ -2915,6 +2915,7 @@ async function executeSerialTestCasesMode(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   benchPackId: string,
   generation: GenerationRequest,
+  runsPerTest: number,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -2939,7 +2940,7 @@ async function executeSerialTestCasesMode(
 
     for (const model of runnableModels) {
       throwIfAborted(abortSignal);
-      const result = await runScenarioSafely(
+      const result = await runScenarioWithRepeats(
         prepared,
         {
           runId,
@@ -2947,7 +2948,8 @@ async function executeSerialTestCasesMode(
           scenario,
           model,
           abortSignal,
-          generation
+          generation,
+          runsPerTest
         },
         emit
       );
@@ -3043,6 +3045,119 @@ function applyScenarioTimings(result: ScenarioResult, startedAt: number, complet
   };
 }
 
+function normalizeRunsPerTest(value: unknown): number {
+  return [1, 3, 5, 7, 9].includes(value as number) ? (value as number) : 1;
+}
+
+function getScenarioResultTieBreakRank(result: ScenarioResult): number {
+  if (result.status === "pass") {
+    return 3;
+  }
+
+  if (result.status === "partial") {
+    return 2;
+  }
+
+  return 1;
+}
+
+function compareScenarioResultTieBreak(left: ScenarioResult, right: ScenarioResult): number {
+  const rankDelta = getScenarioResultTieBreakRank(left) - getScenarioResultTieBreakRank(right);
+
+  if (rankDelta !== 0) {
+    return rankDelta;
+  }
+
+  const leftScore = left.score ?? left.points ?? Number.NEGATIVE_INFINITY;
+  const rightScore = right.score ?? right.points ?? Number.NEGATIVE_INFINITY;
+  const scoreDelta = leftScore - rightScore;
+
+  if (scoreDelta !== 0) {
+    return scoreDelta;
+  }
+
+  const leftIsProviderError = left.errorType === "provider_error";
+  const rightIsProviderError = right.errorType === "provider_error";
+
+  if (leftIsProviderError !== rightIsProviderError) {
+    return leftIsProviderError ? -1 : 1;
+  }
+
+  return 0;
+}
+
+function getMajorityStatus(results: ScenarioResult[]): ScenarioResult["status"] {
+  const passCount = results.filter((result) => result.status === "pass").length;
+  const failCount = results.filter((result) => result.status === "fail").length;
+  const partialCount = results.filter((result) => result.status === "partial").length;
+  const threshold = Math.floor(results.length / 2) + 1;
+
+  if (passCount >= threshold) {
+    return "pass";
+  }
+
+  if (failCount >= threshold) {
+    return "fail";
+  }
+
+  if (partialCount >= threshold) {
+    return "partial";
+  }
+
+  return "partial";
+}
+
+function selectRepresentativeScenarioResult(results: ScenarioResult[], status: ScenarioResult["status"]): { result: ScenarioResult; index: number } {
+  const candidates = results
+    .map((result, index) => ({ result, index }))
+    .filter((candidate) => candidate.result.status === status);
+  const pool = candidates.length > 0 ? candidates : results.map((result, index) => ({ result, index }));
+
+  return pool.reduce(
+    (best, candidate) => compareScenarioResultTieBreak(candidate.result, best.result) > 0 ? candidate : best,
+    pool[0]
+  );
+}
+
+function selectMajorityRepeatedScenarioResult(results: ScenarioResult[]): ScenarioResult {
+  if (results.length <= 1) {
+    return results[0];
+  }
+
+  const majorityStatus = getMajorityStatus(results);
+  const representative = selectRepresentativeScenarioResult(results, majorityStatus);
+  const passCount = results.filter((result) => result.status === "pass").length;
+  const partialCount = results.filter((result) => result.status === "partial").length;
+  const failCount = results.filter((result) => result.status === "fail").length;
+  const startedAt = results.find((result) => result.timings?.startedAt)?.timings?.startedAt;
+  const completedAt = [...results].reverse().find((result) => result.timings?.completedAt)?.timings?.completedAt;
+  const durationMs = results.reduce((total, result) => total + (result.timings?.durationMs ?? 0), 0);
+
+  return {
+    ...representative.result,
+    status: majorityStatus,
+    summary: `Majority across ${results.length} runs: ${passCount} pass, ${partialCount} partial, ${failCount} fail. ${representative.result.summary}`.trim(),
+    note: [
+      `Selected representative attempt ${representative.index + 1}/${results.length}.`,
+      representative.result.note
+    ].filter(Boolean).join(" "),
+    rawLog: results
+      .map((result, index) => [
+        `--- run ${index + 1}/${results.length} ---`,
+        result.rawLog
+      ].join("\n"))
+      .join("\n\n"),
+    output: representative.result.output,
+    verifier: representative.result.verifier,
+    artifacts: representative.result.artifacts,
+    timings: {
+      startedAt,
+      completedAt,
+      durationMs
+    }
+  };
+}
+
 async function runScenarioSafely(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   input: {
@@ -3069,12 +3184,57 @@ async function runScenarioSafely(
   }
 }
 
+async function runScenarioWithRepeats(
+  prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
+  input: {
+    runId: string;
+    benchPackId: string;
+    scenario: ScenarioMeta;
+    model: RegisteredModel;
+    abortSignal?: AbortSignal;
+    generation: GenerationRequest;
+    runsPerTest: number;
+  },
+  emit: (event: ProgressEvent) => Promise<void>
+): Promise<ScenarioResult> {
+  const runsPerTest = normalizeRunsPerTest(input.runsPerTest);
+
+  if (runsPerTest <= 1) {
+    return runScenarioSafely(prepared, input, emit);
+  }
+
+  const results: ScenarioResult[] = [];
+
+  for (let runIndex = 0; runIndex < runsPerTest; runIndex += 1) {
+    throwIfAborted(input.abortSignal);
+    await emit({
+      type: "model_progress",
+      modelId: input.model.id,
+      scenarioId: input.scenario.id,
+      message: `Running attempt ${runIndex + 1}/${runsPerTest}.`
+    });
+    results.push(
+      await runScenarioSafely(
+        prepared,
+        {
+          ...input,
+          generation: input.generation
+        },
+        emit
+      )
+    );
+  }
+
+  return selectMajorityRepeatedScenarioResult(results);
+}
+
 async function executeSerialByModelMode(
   scenarios: ScenarioMeta[],
   selectedModels: RegisteredModel[],
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   benchPackId: string,
   generation: GenerationRequest,
+  runsPerTest: number,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -3111,7 +3271,7 @@ async function executeSerialByModelMode(
         });
       }
 
-      const result = await runScenarioSafely(
+      const result = await runScenarioWithRepeats(
         prepared,
         {
           runId,
@@ -3119,7 +3279,8 @@ async function executeSerialByModelMode(
           scenario,
           model,
           abortSignal,
-          generation
+          generation,
+          runsPerTest
         },
         emit
       );
@@ -3146,6 +3307,7 @@ async function executeParallelModelsMode(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   benchPackId: string,
   generation: GenerationRequest,
+  runsPerTest: number,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -3183,7 +3345,7 @@ async function executeParallelModelsMode(
           });
         }
 
-        const result = await runScenarioSafely(
+        const result = await runScenarioWithRepeats(
           prepared,
           {
             runId,
@@ -3191,7 +3353,8 @@ async function executeParallelModelsMode(
             scenario,
             model,
             abortSignal,
-            generation
+            generation,
+            runsPerTest
           },
           emit
         );
@@ -3219,6 +3382,7 @@ async function executeParallelTestCasesMode(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   benchPackId: string,
   generation: GenerationRequest,
+  runsPerTest: number,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -3243,7 +3407,7 @@ async function executeParallelTestCasesMode(
 
     const scenarioResults = await Promise.all(
       runnableModels.map(async (model) => {
-        const result = await runScenarioSafely(
+        const result = await runScenarioWithRepeats(
           prepared,
           {
             runId,
@@ -3251,7 +3415,8 @@ async function executeParallelTestCasesMode(
             scenario,
             model,
             abortSignal,
-            generation
+            generation,
+            runsPerTest
           },
           emit
         );
@@ -3278,6 +3443,7 @@ async function executeFullParallelMode(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   benchPackId: string,
   generation: GenerationRequest,
+  runsPerTest: number,
   emit: (event: ProgressEvent) => Promise<void>,
   resultsByModel: Record<string, ScenarioResult[]>,
   runId: string,
@@ -3303,7 +3469,7 @@ async function executeFullParallelMode(
 
       const scenarioResults = await Promise.all(
         runnableModels.map(async (model) => {
-          const result = await runScenarioSafely(
+          const result = await runScenarioWithRepeats(
             prepared,
             {
               runId,
@@ -3311,7 +3477,8 @@ async function executeFullParallelMode(
               scenario,
               model,
               abortSignal,
-              generation
+              generation,
+              runsPerTest
             },
             emit
           );
@@ -3339,6 +3506,7 @@ export async function runConfiguredBenchPack(
   options?: {
     modelIds?: string[];
     executionMode?: BenchLocalExecutionMode;
+    runsPerTest?: number;
     generation?: GenerationRequest;
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
@@ -3414,6 +3582,7 @@ export async function runConfiguredBenchPack(
     const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
     const startedAt = new Date().toISOString();
     const executionMode = options?.executionMode ?? "parallel_by_test_case";
+    const runsPerTest = normalizeRunsPerTest(options?.runsPerTest);
     const generation = resolveBenchPackGeneration(manifest, options?.generation);
     let runErrorMessage: string | undefined;
     let cancelled = false;
@@ -3431,6 +3600,7 @@ export async function runConfiguredBenchPack(
       benchPackId,
       benchPackName: manifest.name,
       executionMode,
+      runsPerTest,
       startedAt,
       completedAt: startedAt,
       modelCount: selectedModels.length,
@@ -3453,6 +3623,7 @@ export async function runConfiguredBenchPack(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               artifacts.runId,
@@ -3467,6 +3638,7 @@ export async function runConfiguredBenchPack(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               artifacts.runId,
@@ -3475,14 +3647,14 @@ export async function runConfiguredBenchPack(
             );
             break;
           case "parallel_by_test_case":
-            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
           case "full_parallel":
-            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
           case "parallel_by_model":
           default:
-            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
             break;
         }
       } catch (error) {
@@ -3517,6 +3689,7 @@ export async function runConfiguredBenchPack(
         benchPackId,
         benchPackName: manifest.name,
         executionMode,
+        runsPerTest,
         startedAt,
         completedAt: new Date().toISOString(),
         modelCount: selectedModels.length,
@@ -3548,6 +3721,7 @@ export async function retryScenarioForBenchPackRun(
     runId: string;
     scenarioId: string;
     modelId: string;
+    runsPerTest?: number;
     generation?: GenerationRequest;
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
@@ -3624,6 +3798,7 @@ export async function retryScenarioForBenchPackRun(
 
     const prepared = await benchPack.prepare(hostContext);
     const generation = resolveBenchPackGeneration(manifest, options.generation);
+    const runsPerTest = normalizeRunsPerTest(options.runsPerTest ?? existingSummary.runsPerTest);
 
     try {
       await emit({
@@ -3640,7 +3815,7 @@ export async function retryScenarioForBenchPackRun(
         message: `Retrying ${scenario.title} for ${model.label}.`
       });
 
-      const result = await runScenarioSafely(
+      const result = await runScenarioWithRepeats(
         prepared,
         {
           runId: existingSummary.runId,
@@ -3648,7 +3823,8 @@ export async function retryScenarioForBenchPackRun(
           scenario,
           model,
           abortSignal: options.abortSignal,
-          generation
+          generation,
+          runsPerTest
         },
         emit
       );
@@ -3682,6 +3858,7 @@ export async function retryScenarioForBenchPackRun(
 
         const nextSummary: BenchPackRunSummary = {
           ...latestSummary,
+          runsPerTest,
           completedAt: new Date().toISOString(),
           cancelled: isComplete ? false : latestSummary.cancelled,
           error: isComplete ? undefined : latestSummary.error,
@@ -3709,6 +3886,7 @@ export async function resumeBenchPackRun(
   options: {
     runId: string;
     executionMode?: BenchLocalExecutionMode;
+    runsPerTest?: number;
     generation?: GenerationRequest;
     abortSignal?: AbortSignal;
     onEvent?: (event: ProgressEvent) => Promise<void> | void;
@@ -3802,6 +3980,7 @@ export async function resumeBenchPackRun(
     const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
     const prepared = await benchPack.prepare(hostContext);
     const executionMode = options.executionMode ?? existingSummary.executionMode ?? "parallel_by_test_case";
+    const runsPerTest = normalizeRunsPerTest(options.runsPerTest ?? existingSummary.runsPerTest);
     const generation = resolveBenchPackGeneration(manifest, options.generation);
     let runErrorMessage: string | undefined;
     let cancelled = false;
@@ -3824,6 +4003,7 @@ export async function resumeBenchPackRun(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               existingSummary.runId,
@@ -3838,6 +4018,7 @@ export async function resumeBenchPackRun(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               existingSummary.runId,
@@ -3852,6 +4033,7 @@ export async function resumeBenchPackRun(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               existingSummary.runId,
@@ -3866,6 +4048,7 @@ export async function resumeBenchPackRun(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               existingSummary.runId,
@@ -3881,6 +4064,7 @@ export async function resumeBenchPackRun(
               prepared,
               benchPackId,
               generation,
+              runsPerTest,
               emit,
               resultsByModel,
               existingSummary.runId,
@@ -3908,6 +4092,7 @@ export async function resumeBenchPackRun(
         const nextSnapshot: BenchPackRunSummary = {
           ...latestSummary,
           executionMode,
+          runsPerTest,
           resultsByModel: mergedResultsByModel
         };
         const isComplete = hasCompleteRunResults(nextSnapshot);
@@ -3922,6 +4107,7 @@ export async function resumeBenchPackRun(
         const nextSummary: BenchPackRunSummary = {
           ...latestSummary,
           executionMode,
+          runsPerTest,
           completedAt: new Date().toISOString(),
           cancelled: isComplete ? false : cancelled || latestSummary.cancelled,
           error: isComplete ? undefined : runErrorMessage ?? latestSummary.error,
@@ -3971,6 +4157,7 @@ export async function listRunHistoryForBenchPack(
           benchPackId: summary.benchPackId,
           benchPackName: summary.benchPackName,
           executionMode: summary.executionMode,
+          runsPerTest: summary.runsPerTest,
           startedAt: summary.startedAt,
           completedAt: summary.completedAt,
           modelCount: summary.modelCount,

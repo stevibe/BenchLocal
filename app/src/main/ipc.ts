@@ -584,6 +584,7 @@ export function registerIpcHandlers(): void {
         benchPackId: string;
         modelIds?: string[];
         executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+        runsPerTest?: number;
         generation?: GenerationRequest;
       }
     ) => {
@@ -608,6 +609,7 @@ export function registerIpcHandlers(): void {
         return await runConfiguredBenchPack(config, input.benchPackId, {
           modelIds: input.modelIds,
           executionMode: input.executionMode,
+          runsPerTest: input.runsPerTest,
           generation: input.generation,
           abortSignal: controller.signal,
           onEvent: (progressEvent) => {
@@ -633,6 +635,7 @@ export function registerIpcHandlers(): void {
         runId: string;
         scenarioId: string;
         modelId: string;
+        runsPerTest?: number;
         generation?: GenerationRequest;
       }
     ) => {
@@ -645,6 +648,7 @@ export function registerIpcHandlers(): void {
           runId: input.runId,
           scenarioId: input.scenarioId,
           modelId: input.modelId,
+          runsPerTest: input.runsPerTest,
           generation: input.generation,
           onEvent: (progressEvent) => {
             event.sender.send(BENCH_PACK_RUN_EVENT_CHANNEL, {
@@ -667,6 +671,7 @@ export function registerIpcHandlers(): void {
         benchPackId: string;
         runId: string;
         executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+        runsPerTest?: number;
         generation?: GenerationRequest;
       }
     ) => {
@@ -694,6 +699,7 @@ export function registerIpcHandlers(): void {
           {
             runId: input.runId,
             executionMode: input.executionMode,
+            runsPerTest: input.runsPerTest,
             generation: input.generation,
             abortSignal: controller.signal,
             onEvent: (progressEvent) => {

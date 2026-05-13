@@ -131,6 +131,7 @@ export interface BenchLocalDesktopApi {
       benchPackId: string;
       modelIds?: string[];
       executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+      runsPerTest?: number;
       generation?: GenerationRequest;
     }): Promise<BenchPackRunSummary>;
     retryScenario(input: {
@@ -139,6 +140,7 @@ export interface BenchLocalDesktopApi {
       runId: string;
       scenarioId: string;
       modelId: string;
+      runsPerTest?: number;
       generation?: GenerationRequest;
     }): Promise<BenchPackRunSummary>;
     resumeRun(input: {
@@ -146,6 +148,7 @@ export interface BenchLocalDesktopApi {
       benchPackId: string;
       runId: string;
       executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel";
+      runsPerTest?: number;
       generation?: GenerationRequest;
     }): Promise<BenchPackRunSummary>;
     stop(input: { tabId: string }): Promise<{ stopped: boolean }>;

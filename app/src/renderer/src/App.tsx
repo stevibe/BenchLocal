@@ -334,8 +334,16 @@ const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: str
   { value: "full_parallel", label: "Parallel for All" }
 ];
 
+const RUNS_PER_TEST_OPTIONS = [1, 3, 5, 7, 9] as const;
+
 function supportsLiveScenarioColumnFocus(executionMode: BenchLocalExecutionMode): boolean {
   return executionMode !== "parallel_by_model" && executionMode !== "full_parallel";
+}
+
+function normalizeRunsPerTest(value: unknown): number {
+  return RUNS_PER_TEST_OPTIONS.includes(value as (typeof RUNS_PER_TEST_OPTIONS)[number])
+    ? (value as number)
+    : 1;
 }
 
 const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
@@ -2400,6 +2408,7 @@ export function App() {
         benchPackId,
         modelIds: selectedModels.map((model) => model.id),
         executionMode: tab.executionMode,
+        runsPerTest: normalizeRunsPerTest(tab.runsPerTest),
         generation: tab.samplingOverrides
       });
       setRunSummaries((current) => ({
@@ -2530,6 +2539,7 @@ export function App() {
         benchPackId,
         runId: runSummary.runId,
         executionMode: runSummary.executionMode ?? tab.executionMode,
+        runsPerTest: normalizeRunsPerTest(runSummary.runsPerTest ?? tab.runsPerTest),
         generation: tab.samplingOverrides
       });
       setRunSummaries((current) => ({
@@ -2855,6 +2865,7 @@ export function App() {
           modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
+        runsPerTest: 1,
         createdAt: now,
         updatedAt: now
       };
@@ -2923,6 +2934,7 @@ export function App() {
           modelSelections: [],
           samplingOverrides: {},
           executionMode: "parallel_by_test_case",
+          runsPerTest: 1,
           createdAt: now,
           updatedAt: now
         };
@@ -2999,6 +3011,8 @@ export function App() {
               id: nextTabId,
               benchPackId: importedTabRecord.benchPackId ?? importedTabRecord.pluginId ?? null,
               samplingOverrides: importedTab.samplingOverrides ?? {},
+              executionMode: importedTab.executionMode ?? "parallel_by_test_case",
+              runsPerTest: normalizeRunsPerTest(importedTab.runsPerTest),
               createdAt: importedTab.createdAt ?? now,
               updatedAt: now
             };
@@ -3062,6 +3076,7 @@ export function App() {
         modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
+        runsPerTest: 1,
         createdAt: now,
         updatedAt: now
       };
@@ -3209,6 +3224,7 @@ export function App() {
           modelSelections: [],
           samplingOverrides: {},
           executionMode: "parallel_by_test_case",
+          runsPerTest: 1,
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
         };
@@ -3447,6 +3463,7 @@ export function App() {
           runId: summary.runId,
           scenarioId: cell.scenarioId,
           modelId: cell.modelId,
+          runsPerTest: normalizeRunsPerTest(tab.runsPerTest),
           generation: tab.samplingOverrides
         });
       } catch (retryError) {
@@ -4473,8 +4490,9 @@ export function App() {
                                   },
                                   form: createSamplingForm(activeTab.samplingOverrides)
                                 })
-                              }
+	                            }
 	                            executionMode={activeTab.executionMode}
+	                            runsPerTest={normalizeRunsPerTest(activeTab.runsPerTest)}
                               isViewingHistory={Boolean(activeLoadedHistory)}
                               onOpenHistory={() =>
                                 setHistoryModal({
@@ -4501,6 +4519,17 @@ export function App() {
 	                                tab.updatedAt = new Date().toISOString();
 	                                return current;
 	                              })
+                            }
+                            onChangeRunsPerTest={(runsPerTest) =>
+                              updateWorkspaceState((current) => {
+                                const tab = activeTab ? current.tabs[activeTab.id] : null;
+                                if (!tab) {
+                                  return current;
+                                }
+                                tab.runsPerTest = runsPerTest;
+                                tab.updatedAt = new Date().toISOString();
+                                return current;
+                              })
                             }
 	                            isRunning={Boolean(activeRuns[activeTab.id])}
 	                            isStopping={Boolean(stoppingRuns[activeTab.id])}
@@ -5397,8 +5426,10 @@ function BenchmarkSection({
   onEditSampling,
   onEditModelAlias,
   executionMode,
+  runsPerTest,
   isViewingHistory,
   onChangeExecutionMode,
+  onChangeRunsPerTest,
   onOpenHistory,
   isRunning,
   isStopping,
@@ -5425,8 +5456,10 @@ function BenchmarkSection({
   onEditSampling: () => void;
   onEditModelAlias: (model: ResolvedTabModel) => void;
   executionMode: BenchLocalExecutionMode;
+  runsPerTest: number;
   isViewingHistory: boolean;
   onChangeExecutionMode: (executionMode: BenchLocalExecutionMode) => void;
+  onChangeRunsPerTest: (runsPerTest: number) => void;
   onOpenHistory: () => void;
   isRunning: boolean;
   isStopping: boolean;
@@ -5439,7 +5472,9 @@ function BenchmarkSection({
   onOpenDetail: (detail: DetailModalState) => void;
 }) {
   const [runModeOpen, setRunModeOpen] = useState(false);
+  const [runsPerTestOpen, setRunsPerTestOpen] = useState(false);
   const runModeRef = useRef<HTMLDivElement | null>(null);
+  const runsPerTestRef = useRef<HTMLDivElement | null>(null);
   const tableScrollViewportRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarDragRef = useRef<{
@@ -5469,6 +5504,7 @@ function BenchmarkSection({
   );
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
+  const currentRunsPerTest = normalizeRunsPerTest(runsPerTest);
   const canReplayRun = isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
   const runButtonLabel = isRunning ? "Stop" : canReplayRun ? "Replay" : isResumableRun ? "Resume Test" : "Run";
   const hasLiveActivity = isRunning || hasRetryActivity;
@@ -5506,22 +5542,28 @@ function BenchmarkSection({
     Boolean(runSummary?.runId) && !isViewingHistory && !hasLiveActivity && !isStopping && inspection.status === "ready";
 
   useEffect(() => {
-    if (!runModeOpen) {
+    if (!runModeOpen && !runsPerTestOpen) {
       return;
     }
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       const insideRunMode = runModeRef.current?.contains(target);
+      const insideRunsPerTest = runsPerTestRef.current?.contains(target);
 
       if (!insideRunMode) {
         setRunModeOpen(false);
+      }
+
+      if (!insideRunsPerTest) {
+        setRunsPerTestOpen(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setRunModeOpen(false);
+        setRunsPerTestOpen(false);
       }
     };
 
@@ -5532,7 +5574,7 @@ function BenchmarkSection({
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [runModeOpen]);
+  }, [runModeOpen, runsPerTestOpen]);
 
   useEffect(() => {
     const viewport = tableScrollViewportRef.current;
@@ -5833,7 +5875,10 @@ function BenchmarkSection({
                 <button
                   type="button"
                   className="ghost-button run-mode-button"
-                  onClick={() => setRunModeOpen((current) => !current)}
+                  onClick={() => {
+                    setRunModeOpen((current) => !current);
+                    setRunsPerTestOpen(false);
+                  }}
                   disabled={hasLiveActivity}
                   aria-haspopup="menu"
                   aria-expanded={runModeOpen}
@@ -5859,6 +5904,44 @@ function BenchmarkSection({
                         }}
                       >
                         <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div ref={runsPerTestRef} className="run-mode-dropdown">
+                <button
+                  type="button"
+                  className="ghost-button run-mode-button"
+                  onClick={() => {
+                    setRunsPerTestOpen((current) => !current);
+                    setRunModeOpen(false);
+                  }}
+                  disabled={hasLiveActivity}
+                  aria-haspopup="menu"
+                  aria-expanded={runsPerTestOpen}
+                  title="Runs per test"
+                >
+                  <RotateCcw size={14} />
+                  <span className="run-mode-button-label">Runs:</span>
+                  <span className="run-mode-button-value">{currentRunsPerTest}x</span>
+                  <ChevronDown size={15} />
+                </button>
+                {runsPerTestOpen ? (
+                  <div className="run-mode-menu" role="menu">
+                    {RUNS_PER_TEST_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={currentRunsPerTest === option}
+                        className={`run-mode-menu-item${currentRunsPerTest === option ? " is-active" : ""}`}
+                        onClick={() => {
+                          onChangeRunsPerTest(option);
+                          setRunsPerTestOpen(false);
+                        }}
+                      >
+                        <span>{option} run{option === 1 ? "" : "s"} per test</span>
                       </button>
                     ))}
                   </div>

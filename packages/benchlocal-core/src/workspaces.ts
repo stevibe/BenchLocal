@@ -26,6 +26,7 @@ export type BenchLocalWorkspaceTab = {
   modelSelections: BenchLocalWorkspaceTabModelSelection[];
   samplingOverrides?: GenerationRequest;
   executionMode: BenchLocalExecutionMode;
+  runsPerTest: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -92,6 +93,7 @@ const WorkspaceTabSchema = z.object({
 
       return value;
     }),
+  runsPerTest: z.number().int().min(1).max(10).default(1),
   createdAt: z.string().trim().min(1),
   updatedAt: z.string().trim().min(1)
 });
@@ -112,6 +114,10 @@ const WorkspaceStateSchema = z.object({
   workspaces: z.record(z.string(), WorkspaceSchema).default({}),
   tabs: z.record(z.string(), WorkspaceTabSchema).default({})
 });
+
+function normalizeRunsPerTest(value: unknown): number {
+  return [1, 3, 5, 7, 9].includes(value as number) ? (value as number) : 1;
+}
 
 export function getWorkspaceStatePath(): string {
   return path.join(getBenchLocalHome(), "state.json");
@@ -147,6 +153,7 @@ export function createDefaultWorkspaceState(defaultBenchPack = ""): BenchLocalWo
         modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
+        runsPerTest: 1,
         createdAt: now,
         updatedAt: now
       }
@@ -202,7 +209,8 @@ function normalizeWorkspaceState(raw: unknown, defaultBenchPack = ""): BenchLoca
         Object.entries(tab.samplingOverrides ?? {}).filter(([, value]) => value !== undefined && Number.isFinite(value))
       ),
       loadedRunId: tab.loadedRunId ?? null,
-      executionMode: tab.executionMode ?? "parallel_by_test_case"
+      executionMode: tab.executionMode ?? "parallel_by_test_case",
+      runsPerTest: normalizeRunsPerTest(tab.runsPerTest)
     };
   }
 
