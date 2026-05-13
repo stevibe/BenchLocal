@@ -112,6 +112,24 @@ function formatAppUpdateCheckedAt(checkedAt?: string): string | null {
   return date.toLocaleString();
 }
 
+function formatDurationMs(durationMs?: number): string | null {
+  if (durationMs === undefined || !Number.isFinite(durationMs)) {
+    return null;
+  }
+
+  if (durationMs < 1000) {
+    return `${Math.max(0, Math.round(durationMs))} ms`;
+  }
+
+  if (durationMs < 60_000) {
+    return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  }
+
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1000);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
 
 type LoadState = {
@@ -180,6 +198,7 @@ type DetailModalState = {
   summary: string;
   rawLog: string;
   status: "pass" | "partial" | "fail";
+  timings?: ScenarioResult["timings"];
 };
 
 type TabModelsModalState = {
@@ -193,6 +212,7 @@ type SamplingFormState = {
   top_k: string;
   min_p: string;
   repetition_penalty: string;
+  presence_penalty: string;
   request_timeout_seconds: string;
 };
 
@@ -347,6 +367,7 @@ const SAMPLING_FIELDS: Array<{
   { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
   { key: "min_p", label: "Min P", placeholder: "Leave blank" },
   { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
+  { key: "presence_penalty", label: "Presence Penalty", placeholder: "Leave blank" },
   { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
 ];
 
@@ -475,6 +496,7 @@ function createSamplingForm(input?: GenerationRequest): SamplingFormState {
     top_k: input?.top_k?.toString() ?? "",
     min_p: input?.min_p?.toString() ?? "",
     repetition_penalty: input?.repetition_penalty?.toString() ?? "",
+    presence_penalty: input?.presence_penalty?.toString() ?? "",
     request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
   };
 }
@@ -4951,6 +4973,21 @@ export function App() {
               {detailModal.status}
             </span>
           </div>
+          {detailModal.timings?.durationMs !== undefined ? (
+            <div className="dialog-summary">
+              <div className="dialog-summary-copy">
+                <span className="dialog-summary-label">Wall Time</span>
+                <span className="dialog-summary-value">
+                  {formatDurationMs(detailModal.timings.durationMs)}
+                </span>
+              </div>
+              {detailModal.timings.completedAt ? (
+                <span className="status-chip status-idle">
+                  {new Date(detailModal.timings.completedAt).toLocaleTimeString()}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <pre className="dialog-log">{detailModal.rawLog}</pre>
         </Modal>
       ) : null}
@@ -5447,6 +5484,7 @@ function BenchmarkSection({
 
     const tone =
       result.status === "pass" ? "result-pass" : result.status === "partial" ? "result-partial" : "result-fail";
+    const durationLabel = formatDurationMs(result.timings?.durationMs);
 
     return (
       <button
@@ -5460,12 +5498,15 @@ function BenchmarkSection({
             scenarioId,
             summary: result.summary,
             rawLog: result.rawLog,
-            status: result.status
+            status: result.status,
+            timings: result.timings
           })
         }
-        className={`result-icon-button ${tone}`}
+        className={`result-icon-button ${tone}${durationLabel ? " has-duration" : ""}`}
+        title={durationLabel ? `${result.status} · ${durationLabel}` : result.status}
       >
-        {result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
+        <span className="result-icon-mark">{result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}</span>
+        {durationLabel ? <span className="result-duration">{durationLabel}</span> : null}
       </button>
     );
   }
@@ -6159,7 +6200,7 @@ function SamplingModal({
   return (
     <Modal
       title="Bench Pack Samplings"
-      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the effective defaults from BenchLocal and the Bench Pack.`}
+      subtitle={`Configure request sampling overrides for ${benchPackName}. Blank fields use Bench Pack defaults where defined; otherwise BenchLocal omits them so the inference backend uses its configured defaults.`}
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Samplings"
@@ -6198,7 +6239,7 @@ function SamplingModal({
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will use its platform defaults and omit any values that are still unset.</p>
+          <p>This Bench Pack does not define recommended defaults yet. Blank sampling fields are not sent by BenchLocal, except for BenchLocal's request timeout default.</p>
         </div>
       )}
       <div className="entry-grid two-col">

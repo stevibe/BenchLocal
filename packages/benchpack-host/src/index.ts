@@ -1616,6 +1616,7 @@ type LoadedBenchPackRuntime = {
         top_k?: number;
         min_p?: number;
         repetition_penalty?: number;
+        presence_penalty?: number;
         request_timeout_seconds?: number;
       };
     }, emit: (event: ProgressEvent) => Promise<void> | void) => Promise<ScenarioResult>;
@@ -2956,6 +2957,17 @@ function buildScenarioExecutionFailureResult(
   };
 }
 
+function applyScenarioTimings(result: ScenarioResult, startedAt: number, completedAt: number): ScenarioResult {
+  return {
+    ...result,
+    timings: {
+      startedAt: result.timings?.startedAt ?? new Date(startedAt).toISOString(),
+      completedAt: result.timings?.completedAt ?? new Date(completedAt).toISOString(),
+      durationMs: result.timings?.durationMs ?? completedAt - startedAt
+    }
+  };
+}
+
 async function runScenarioSafely(
   prepared: Awaited<ReturnType<LoadedBenchPackRuntime["prepare"]>>,
   input: {
@@ -2971,7 +2983,8 @@ async function runScenarioSafely(
   const startedAt = Date.now();
 
   try {
-    return await prepared.runScenario(input, emit);
+    const result = await prepared.runScenario(input, emit);
+    return applyScenarioTimings(result, startedAt, Date.now());
   } catch (error) {
     if (isAbortError(error) || input.abortSignal?.aborted) {
       throw error;
@@ -3552,7 +3565,8 @@ export async function retryScenarioForBenchPackRun(
         message: `Retrying ${scenario.title} for ${model.label}.`
       });
 
-      const result = await prepared.runScenario(
+      const result = await runScenarioSafely(
+        prepared,
         {
           runId: existingSummary.runId,
           benchPackId,
