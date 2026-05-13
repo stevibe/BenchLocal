@@ -70,6 +70,8 @@
   --result-pass-ink: #2e7d32;
   --result-partial-bg: #fff4ce;
   --result-partial-ink: #8a6500;
+  --result-provider-error-bg: #e0b445;
+  --result-provider-error-ink: #3f3000;
   --result-fail-bg: #f2dede;
   --result-fail-ink: #a1260d;
   --log-drawer-bg: #1e1e1e;
@@ -1533,6 +1535,14 @@ pre {
   cursor: grabbing;
 }
 
+.table-retry-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 12px 12px;
+}
+
 .result-table {
   width: auto;
   min-width: 100%;
@@ -1682,7 +1692,7 @@ pre {
 }
 
 .result-icon-cell {
-  width: 46px;
+  width: 56px;
   text-align: center;
 }
 
@@ -1702,6 +1712,33 @@ pre {
 .result-icon-button {
   cursor: pointer;
   background: transparent;
+  padding: 0;
+  position: relative;
+}
+
+.result-icon-button.has-duration {
+  margin-bottom: 14px;
+}
+
+.result-icon-mark {
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.result-duration {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 46px;
+  overflow: visible;
+  font-size: 0.58rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .result-pass {
@@ -1718,6 +1755,12 @@ pre {
 .result-fail {
   color: var(--result-fail-ink);
   background: var(--result-fail-bg);
+}
+
+.result-provider-error {
+  color: var(--result-provider-error-ink);
+  background: var(--result-provider-error-bg);
+  border-color: color-mix(in srgb, var(--result-provider-error-ink) 24%, transparent);
 }
 
 .result-loading {

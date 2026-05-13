@@ -123,6 +123,7 @@ export interface BenchPackRunSummary {
   benchPackId: string;
   benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
+  runsPerTest?: number;
   startedAt: string;
   completedAt: string;
   modelCount: number;
@@ -140,6 +141,7 @@ export interface BenchPackRunHistoryEntry {
   benchPackId: string;
   benchPackName: string;
   executionMode?: BenchLocalExecutionMode;
+  runsPerTest?: number;
   startedAt: string;
   completedAt: string;
   modelCount: number;
@@ -249,7 +251,7 @@ export interface GenerationRequest {
   top_k?: number;
   min_p?: number;
   repetition_penalty?: number;
-  runs_per_scenario?: number;
+  presence_penalty?: number;
   request_timeout_seconds?: number;
 }
 
@@ -304,6 +306,8 @@ export interface ArtifactRef {
 export interface ScenarioResult {
   scenarioId: string;
   status: "pass" | "partial" | "fail";
+  errorType?: "provider_error" | "execution_error";
+  retryable?: boolean;
   score?: number;
   points?: number;
   summary: string;

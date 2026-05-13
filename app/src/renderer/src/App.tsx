@@ -112,6 +112,24 @@ function formatAppUpdateCheckedAt(checkedAt?: string): string | null {
   return date.toLocaleString();
 }
 
+function formatDurationMs(durationMs?: number): string | null {
+  if (durationMs === undefined || !Number.isFinite(durationMs)) {
+    return null;
+  }
+
+  if (durationMs < 1000) {
+    return `${Math.max(0, Math.round(durationMs))} ms`;
+  }
+
+  if (durationMs < 60_000) {
+    return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  }
+
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1000);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
 
 type LoadState = {
@@ -180,6 +198,9 @@ type DetailModalState = {
   summary: string;
   rawLog: string;
   status: "pass" | "partial" | "fail";
+  errorType?: ScenarioResult["errorType"];
+  retryable?: boolean;
+  timings?: ScenarioResult["timings"];
 };
 
 type TabModelsModalState = {
@@ -193,7 +214,7 @@ type SamplingFormState = {
   top_k: string;
   min_p: string;
   repetition_penalty: string;
-  runs_per_scenario: string;
+  presence_penalty: string;
   request_timeout_seconds: string;
 };
 
@@ -313,8 +334,16 @@ const EXECUTION_MODE_OPTIONS: Array<{ value: BenchLocalExecutionMode; label: str
   { value: "full_parallel", label: "Parallel for All" }
 ];
 
+const RUNS_PER_TEST_OPTIONS = [1, 3, 5, 7, 9] as const;
+
 function supportsLiveScenarioColumnFocus(executionMode: BenchLocalExecutionMode): boolean {
   return executionMode !== "parallel_by_model" && executionMode !== "full_parallel";
+}
+
+function normalizeRunsPerTest(value: unknown): number {
+  return RUNS_PER_TEST_OPTIONS.includes(value as (typeof RUNS_PER_TEST_OPTIONS)[number])
+    ? (value as number)
+    : 1;
 }
 
 const SIDEBAR_OPEN_STORAGE_KEY = "benchlocal.sidebar-open";
@@ -348,7 +377,7 @@ const SAMPLING_FIELDS: Array<{
   { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
   { key: "min_p", label: "Min P", placeholder: "Leave blank" },
   { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
-  { key: "runs_per_scenario", label: "Runs Per Scenario", placeholder: "1", integer: true },
+  { key: "presence_penalty", label: "Presence Penalty", placeholder: "Leave blank" },
   { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
 ];
 
@@ -477,7 +506,7 @@ function createSamplingForm(input?: GenerationRequest): SamplingFormState {
     top_k: input?.top_k?.toString() ?? "",
     min_p: input?.min_p?.toString() ?? "",
     repetition_penalty: input?.repetition_penalty?.toString() ?? "",
-    runs_per_scenario: input?.runs_per_scenario?.toString() ?? "",
+    presence_penalty: input?.presence_penalty?.toString() ?? "",
     request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
   };
 }
@@ -871,6 +900,11 @@ type ReplayCell = {
   result: ScenarioResult;
 };
 
+type RetryScenarioCell = {
+  modelId: string;
+  scenarioId: string;
+};
+
 function buildReplayGroups(
   summary: BenchPackRunSummary,
   scenarios: ScenarioMeta[],
@@ -931,6 +965,49 @@ function buildReplayGroups(
       ].filter((group) => group.length > 0);
     default:
       return singletonCellsByScenarioThenModel;
+  }
+}
+
+function groupRetryCellsForExecutionMode(
+  cells: RetryScenarioCell[],
+  executionMode: BenchLocalExecutionMode,
+  scenarios: ScenarioMeta[],
+  models: ResolvedTabModel[]
+): RetryScenarioCell[][] {
+  const cellSet = new Set(cells.map((cell) => getCellKey(cell.modelId, cell.scenarioId)));
+  const scenarioOrder = scenarios.map((scenario) => scenario.id);
+  const modelOrder = models.map((model) => model.id);
+  const cellFor = (modelId: string, scenarioId: string): RetryScenarioCell | null =>
+    cellSet.has(getCellKey(modelId, scenarioId)) ? { modelId, scenarioId } : null;
+  const singletonByScenarioThenModel = scenarioOrder.flatMap((scenarioId) =>
+    modelOrder.flatMap((modelId) => {
+      const cell = cellFor(modelId, scenarioId);
+      return cell ? [[cell]] : [];
+    })
+  );
+
+  switch (executionMode) {
+    case "serial":
+      return singletonByScenarioThenModel;
+    case "serial_by_model":
+      return modelOrder.flatMap((modelId) =>
+        scenarioOrder.flatMap((scenarioId) => {
+          const cell = cellFor(modelId, scenarioId);
+          return cell ? [[cell]] : [];
+        })
+      );
+    case "parallel_by_test_case":
+      return scenarioOrder
+        .map((scenarioId) => modelOrder.flatMap((modelId) => cellFor(modelId, scenarioId) ?? []))
+        .filter((group) => group.length > 0);
+    case "parallel_by_model":
+      return modelOrder
+        .map((modelId) => scenarioOrder.flatMap((scenarioId) => cellFor(modelId, scenarioId) ?? []))
+        .filter((group) => group.length > 0);
+    case "full_parallel":
+      return [singletonByScenarioThenModel.flat()].filter((group) => group.length > 0);
+    default:
+      return singletonByScenarioThenModel;
   }
 }
 
@@ -1018,6 +1095,10 @@ function detailModalKey(detail: Pick<DetailModalState, "tabId" | "modelId" | "sc
 
 function getCellKey(modelId: string, scenarioId: string): string {
   return `${modelId}::${scenarioId}`;
+}
+
+function isProviderErrorResult(result: ScenarioResult | undefined): boolean {
+  return result?.errorType === "provider_error";
 }
 
 const REGISTRY_UNAVAILABLE_MESSAGE =
@@ -2327,6 +2408,7 @@ export function App() {
         benchPackId,
         modelIds: selectedModels.map((model) => model.id),
         executionMode: tab.executionMode,
+        runsPerTest: normalizeRunsPerTest(tab.runsPerTest),
         generation: tab.samplingOverrides
       });
       setRunSummaries((current) => ({
@@ -2457,6 +2539,7 @@ export function App() {
         benchPackId,
         runId: runSummary.runId,
         executionMode: runSummary.executionMode ?? tab.executionMode,
+        runsPerTest: normalizeRunsPerTest(runSummary.runsPerTest ?? tab.runsPerTest),
         generation: tab.samplingOverrides
       });
       setRunSummaries((current) => ({
@@ -2782,6 +2865,7 @@ export function App() {
           modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
+        runsPerTest: 1,
         createdAt: now,
         updatedAt: now
       };
@@ -2850,6 +2934,7 @@ export function App() {
           modelSelections: [],
           samplingOverrides: {},
           executionMode: "parallel_by_test_case",
+          runsPerTest: 1,
           createdAt: now,
           updatedAt: now
         };
@@ -2926,6 +3011,8 @@ export function App() {
               id: nextTabId,
               benchPackId: importedTabRecord.benchPackId ?? importedTabRecord.pluginId ?? null,
               samplingOverrides: importedTab.samplingOverrides ?? {},
+              executionMode: importedTab.executionMode ?? "parallel_by_test_case",
+              runsPerTest: normalizeRunsPerTest(importedTab.runsPerTest),
               createdAt: importedTab.createdAt ?? now,
               updatedAt: now
             };
@@ -2989,6 +3076,7 @@ export function App() {
         modelSelections: [],
         samplingOverrides: {},
         executionMode: "parallel_by_test_case",
+        runsPerTest: 1,
         createdAt: now,
         updatedAt: now
       };
@@ -3136,6 +3224,7 @@ export function App() {
           modelSelections: [],
           samplingOverrides: {},
           executionMode: "parallel_by_test_case",
+          runsPerTest: 1,
           createdAt: workspace.updatedAt,
           updatedAt: workspace.updatedAt
         };
@@ -3309,6 +3398,118 @@ export function App() {
         };
       });
       setError(retryError instanceof Error ? retryError.message : "Failed to retry the selected test.");
+    }
+  };
+
+  const retryScenarioCells = async (
+    tab: BenchLocalWorkspaceTab,
+    inspection: BenchPackInspection,
+    models: ResolvedTabModel[],
+    cells: RetryScenarioCell[],
+    label: string
+  ) => {
+    if (cells.length === 0) {
+      return;
+    }
+
+    if (!workspaceState) {
+      return;
+    }
+
+    if (!tab.benchPackId) {
+      setError("This tab does not have a Bench Pack selected.");
+      return;
+    }
+
+    const summary = runSummaries[tab.id];
+
+    if (!summary?.runId) {
+      setError("Run this Bench Pack before retrying individual results.");
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      const saved = await save();
+
+      if (!saved) {
+        return;
+      }
+    }
+
+    const activeCellKeys = cells.map((cell) => getCellKey(cell.modelId, cell.scenarioId));
+    setLiveRuns((current) => {
+      const existing = current[tab.id];
+      const mergedActiveKeys = Array.from(new Set([...(existing?.activeCellKeys ?? []), ...activeCellKeys]));
+
+      return {
+        ...current,
+        [tab.id]: {
+          runId: existing?.runId ?? summary.runId,
+          events: existing?.events ?? [],
+          resultsByModel: existing?.resultsByModel ?? {},
+          activeCellKeys: mergedActiveKeys
+        }
+      };
+    });
+
+    const retryGroups = groupRetryCellsForExecutionMode(cells, tab.executionMode, inspection.scenarios ?? [], models);
+    const failures: string[] = [];
+
+    const retryCell = async (cell: RetryScenarioCell) => {
+      try {
+        await window.benchlocal.benchPacks.retryScenario({
+          tabId: tab.id,
+          benchPackId: tab.benchPackId!,
+          runId: summary.runId,
+          scenarioId: cell.scenarioId,
+          modelId: cell.modelId,
+          runsPerTest: normalizeRunsPerTest(tab.runsPerTest),
+          generation: tab.samplingOverrides
+        });
+      } catch (retryError) {
+        failures.push(`${cell.modelId} / ${cell.scenarioId}`);
+      }
+    };
+
+    try {
+      for (const group of retryGroups) {
+        await Promise.all(group.map((cell) => retryCell(cell)));
+      }
+
+      const refreshedSummary = await window.benchlocal.benchPacks.loadHistory({
+        benchPackId: tab.benchPackId,
+        runId: summary.runId
+      });
+
+      if (!activeRuns[tab.id]) {
+        setRunSummaries((current) => ({
+          ...current,
+          [tab.id]: refreshedSummary
+        }));
+      }
+
+      await loadHistoryForBenchPack(tab.benchPackId);
+      setAppNotice(`Retried ${cells.length - failures.length}/${cells.length} ${label}.`);
+
+      if (failures.length > 0) {
+        setError(`Some retries did not complete: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "..." : ""}`);
+      }
+    } finally {
+      setLiveRuns((current) => {
+        const existing = current[tab.id];
+
+        if (!existing) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [tab.id]: {
+            ...existing,
+            activeCellKeys: existing.activeCellKeys.filter((key) => !activeCellKeys.includes(key))
+          }
+        };
+      });
     }
   };
 
@@ -4289,8 +4490,9 @@ export function App() {
                                   },
                                   form: createSamplingForm(activeTab.samplingOverrides)
                                 })
-                              }
+	                            }
 	                            executionMode={activeTab.executionMode}
+	                            runsPerTest={normalizeRunsPerTest(activeTab.runsPerTest)}
                               isViewingHistory={Boolean(activeLoadedHistory)}
                               onOpenHistory={() =>
                                 setHistoryModal({
@@ -4318,6 +4520,17 @@ export function App() {
 	                                return current;
 	                              })
                             }
+                            onChangeRunsPerTest={(runsPerTest) =>
+                              updateWorkspaceState((current) => {
+                                const tab = activeTab ? current.tabs[activeTab.id] : null;
+                                if (!tab) {
+                                  return current;
+                                }
+                                tab.runsPerTest = runsPerTest;
+                                tab.updatedAt = new Date().toISOString();
+                                return current;
+                              })
+                            }
 	                            isRunning={Boolean(activeRuns[activeTab.id])}
 	                            isStopping={Boolean(stoppingRuns[activeTab.id])}
                               onOpenVerification={() => {
@@ -4336,6 +4549,9 @@ export function App() {
                                 )
                               }
 	                            onStop={() => void stopTabRun(activeTab.id)}
+                              onRetryCells={(cells, label) =>
+                                void retryScenarioCells(activeTab, activeInspection, activeDisplayModels, cells, label)
+                              }
 	                            onOpenDetail={setDetailModal}
 	                          />
 	                        ) : (
@@ -4940,20 +5156,39 @@ export function App() {
           <div className="dialog-summary">
             <div className="dialog-summary-copy">
               <span className="dialog-summary-label">Status</span>
-              <span className="dialog-summary-value">Validation Result</span>
+              <span className="dialog-summary-value">
+                {detailModal.errorType === "provider_error" ? "Provider or Network Error" : "Validation Result"}
+              </span>
             </div>
             <span
               className={`status-chip ${
-                detailModal.status === "pass"
+                detailModal.errorType === "provider_error"
+                  ? "status-idle"
+                  : detailModal.status === "pass"
                   ? "status-done"
                   : detailModal.status === "partial"
                     ? "status-not-installed"
                     : "status-danger"
               }`}
             >
-              {detailModal.status}
+              {detailModal.errorType === "provider_error" ? "provider error" : detailModal.status}
             </span>
           </div>
+          {detailModal.timings?.durationMs !== undefined ? (
+            <div className="dialog-summary">
+              <div className="dialog-summary-copy">
+                <span className="dialog-summary-label">Wall Time</span>
+                <span className="dialog-summary-value">
+                  {formatDurationMs(detailModal.timings.durationMs)}
+                </span>
+              </div>
+              {detailModal.timings.completedAt ? (
+                <span className="status-chip status-idle">
+                  {new Date(detailModal.timings.completedAt).toLocaleTimeString()}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <pre className="dialog-log">{detailModal.rawLog}</pre>
         </Modal>
       ) : null}
@@ -5191,8 +5426,10 @@ function BenchmarkSection({
   onEditSampling,
   onEditModelAlias,
   executionMode,
+  runsPerTest,
   isViewingHistory,
   onChangeExecutionMode,
+  onChangeRunsPerTest,
   onOpenHistory,
   isRunning,
   isStopping,
@@ -5201,6 +5438,7 @@ function BenchmarkSection({
   onClearHistory,
   onRun,
   onStop,
+  onRetryCells,
   onOpenDetail
 }: {
   tabId: string;
@@ -5218,8 +5456,10 @@ function BenchmarkSection({
   onEditSampling: () => void;
   onEditModelAlias: (model: ResolvedTabModel) => void;
   executionMode: BenchLocalExecutionMode;
+  runsPerTest: number;
   isViewingHistory: boolean;
   onChangeExecutionMode: (executionMode: BenchLocalExecutionMode) => void;
+  onChangeRunsPerTest: (runsPerTest: number) => void;
   onOpenHistory: () => void;
   isRunning: boolean;
   isStopping: boolean;
@@ -5228,10 +5468,13 @@ function BenchmarkSection({
   onClearHistory: () => void;
   onRun: () => void;
   onStop: () => void;
+  onRetryCells: (cells: RetryScenarioCell[], label: string) => void;
   onOpenDetail: (detail: DetailModalState) => void;
 }) {
   const [runModeOpen, setRunModeOpen] = useState(false);
+  const [runsPerTestOpen, setRunsPerTestOpen] = useState(false);
   const runModeRef = useRef<HTMLDivElement | null>(null);
+  const runsPerTestRef = useRef<HTMLDivElement | null>(null);
   const tableScrollViewportRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarTrackRef = useRef<HTMLDivElement | null>(null);
   const tableScrollbarDragRef = useRef<{
@@ -5261,6 +5504,7 @@ function BenchmarkSection({
   );
   const currentExecutionModeLabel =
     EXECUTION_MODE_OPTIONS.find((option) => option.value === executionMode)?.label ?? "Run Mode";
+  const currentRunsPerTest = normalizeRunsPerTest(runsPerTest);
   const canReplayRun = isReplayMode && Boolean(runSummary) && isRunSummaryComplete(runSummary);
   const runButtonLabel = isRunning ? "Stop" : canReplayRun ? "Replay" : isResumableRun ? "Resume Test" : "Run";
   const hasLiveActivity = isRunning || hasRetryActivity;
@@ -5282,24 +5526,44 @@ function BenchmarkSection({
       ? ((tableScrollMetrics.scrollLeft / Math.max(1, tableScrollMetrics.scrollWidth - tableScrollMetrics.clientWidth)) *
           Math.max(0, tableScrollbarTrackRef.current.clientWidth - scrollbarThumbWidth))
       : 0;
+  const completedResultCells = selectedModels.flatMap((model) =>
+    scenarios.flatMap((scenario) => {
+      const result = runSummary?.resultsByModel[model.id]?.find((candidate) => candidate.scenarioId === scenario.id);
+      return result ? [{ modelId: model.id, scenarioId: scenario.id, result }] : [];
+    })
+  );
+  const providerErrorRetryCells = completedResultCells
+    .filter(({ result }) => isProviderErrorResult(result))
+    .map(({ modelId, scenarioId }) => ({ modelId, scenarioId }));
+  const failedRetryCells = completedResultCells
+    .filter(({ result }) => result.status === "fail" && !isProviderErrorResult(result))
+    .map(({ modelId, scenarioId }) => ({ modelId, scenarioId }));
+  const canRetryResultCells =
+    Boolean(runSummary?.runId) && !isViewingHistory && !hasLiveActivity && !isStopping && inspection.status === "ready";
 
   useEffect(() => {
-    if (!runModeOpen) {
+    if (!runModeOpen && !runsPerTestOpen) {
       return;
     }
 
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
       const insideRunMode = runModeRef.current?.contains(target);
+      const insideRunsPerTest = runsPerTestRef.current?.contains(target);
 
       if (!insideRunMode) {
         setRunModeOpen(false);
+      }
+
+      if (!insideRunsPerTest) {
+        setRunsPerTestOpen(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setRunModeOpen(false);
+        setRunsPerTestOpen(false);
       }
     };
 
@@ -5310,7 +5574,7 @@ function BenchmarkSection({
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [runModeOpen]);
+  }, [runModeOpen, runsPerTestOpen]);
 
   useEffect(() => {
     const viewport = tableScrollViewportRef.current;
@@ -5448,8 +5712,12 @@ function BenchmarkSection({
       );
     }
 
-    const tone =
-      result.status === "pass" ? "result-pass" : result.status === "partial" ? "result-partial" : "result-fail";
+    const isProviderError = isProviderErrorResult(result);
+    const tone = isProviderError
+      ? "result-provider-error"
+      : result.status === "pass" ? "result-pass" : result.status === "partial" ? "result-partial" : "result-fail";
+    const durationLabel = formatDurationMs(result.timings?.durationMs);
+    const resultLabel = isProviderError ? "provider error" : result.status;
 
     return (
       <button
@@ -5463,12 +5731,19 @@ function BenchmarkSection({
             scenarioId,
             summary: result.summary,
             rawLog: result.rawLog,
-            status: result.status
+            status: result.status,
+            errorType: result.errorType,
+            retryable: result.retryable,
+            timings: result.timings
           })
         }
-        className={`result-icon-button ${tone}`}
+        className={`result-icon-button ${tone}${durationLabel ? " has-duration" : ""}`}
+        title={durationLabel ? `${resultLabel} · ${durationLabel}` : resultLabel}
       >
-        {result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
+        <span className="result-icon-mark">
+          {isProviderError ? <CircleAlert size={14} strokeWidth={2.4} /> : result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
+        </span>
+        {durationLabel ? <span className="result-duration">{durationLabel}</span> : null}
       </button>
     );
   }
@@ -5600,7 +5875,10 @@ function BenchmarkSection({
                 <button
                   type="button"
                   className="ghost-button run-mode-button"
-                  onClick={() => setRunModeOpen((current) => !current)}
+                  onClick={() => {
+                    setRunModeOpen((current) => !current);
+                    setRunsPerTestOpen(false);
+                  }}
                   disabled={hasLiveActivity}
                   aria-haspopup="menu"
                   aria-expanded={runModeOpen}
@@ -5626,6 +5904,44 @@ function BenchmarkSection({
                         }}
                       >
                         <span>{option.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div ref={runsPerTestRef} className="run-mode-dropdown">
+                <button
+                  type="button"
+                  className="ghost-button run-mode-button"
+                  onClick={() => {
+                    setRunsPerTestOpen((current) => !current);
+                    setRunModeOpen(false);
+                  }}
+                  disabled={hasLiveActivity}
+                  aria-haspopup="menu"
+                  aria-expanded={runsPerTestOpen}
+                  title="Runs per test"
+                >
+                  <RotateCcw size={14} />
+                  <span className="run-mode-button-label">Runs:</span>
+                  <span className="run-mode-button-value">{currentRunsPerTest}x</span>
+                  <ChevronDown size={15} />
+                </button>
+                {runsPerTestOpen ? (
+                  <div className="run-mode-menu" role="menu">
+                    {RUNS_PER_TEST_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={currentRunsPerTest === option}
+                        className={`run-mode-menu-item${currentRunsPerTest === option ? " is-active" : ""}`}
+                        onClick={() => {
+                          onChangeRunsPerTest(option);
+                          setRunsPerTestOpen(false);
+                        }}
+                      >
+                        <span>{option} run{option === 1 ? "" : "s"} per test</span>
                       </button>
                     ))}
                   </div>
@@ -5781,6 +6097,28 @@ function BenchmarkSection({
                         document.body.style.userSelect = "none";
                       }}
                     />
+                  </div>
+                ) : null}
+                {runSummary ? (
+                  <div className="table-retry-actions">
+                    <button
+                      type="button"
+                      className="ghost-button ghost-button-compact"
+                      disabled={!canRetryResultCells || providerErrorRetryCells.length === 0}
+                      onClick={() => onRetryCells(providerErrorRetryCells, "provider errors")}
+                    >
+                      <CircleAlert size={14} />
+                      Retry Provider Errors
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button ghost-button-compact"
+                      disabled={!canRetryResultCells || failedRetryCells.length === 0}
+                      onClick={() => onRetryCells(failedRetryCells, "failed results")}
+                    >
+                      <RotateCcw size={14} />
+                      Retry Failed Results
+                    </button>
                   </div>
                 ) : null}
               </>
@@ -6162,7 +6500,7 @@ function SamplingModal({
   return (
     <Modal
       title="Bench Pack Samplings"
-      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the effective defaults from BenchLocal and the Bench Pack.`}
+      subtitle={`Configure request sampling overrides for ${benchPackName}. Blank fields use Bench Pack defaults where defined; otherwise BenchLocal omits them so the inference backend uses its configured defaults.`}
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Samplings"
@@ -6201,7 +6539,7 @@ function SamplingModal({
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will use its platform defaults and omit any values that are still unset.</p>
+          <p>This Bench Pack does not define recommended defaults yet. Blank sampling fields are not sent by BenchLocal, except for BenchLocal's request timeout default.</p>
         </div>
       )}
       <div className="entry-grid two-col">

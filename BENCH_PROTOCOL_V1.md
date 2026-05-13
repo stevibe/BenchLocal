@@ -205,7 +205,7 @@ type GenerationRequest = {
   top_k?: number;
   min_p?: number;
   repetition_penalty?: number;
-  runs_per_scenario?: number;
+  presence_penalty?: number;
   request_timeout_seconds?: number;
 };
 ```
@@ -213,9 +213,10 @@ type GenerationRequest = {
 Behavior:
 
 - if a field is present, the pack may forward it to the provider client
-- if a field is omitted, BenchLocal may still supply a platform default before the pack receives the request
-- BenchLocal currently applies `request_timeout_seconds: 300` unless the pack or user overrides it
-- `runs_per_scenario` is a BenchLocal host control; it is used to repeat each model/scenario cell and average the result, not forwarded as a provider sampling parameter
+- if a field is omitted by the pack and the user, BenchLocal omits it unless that field has an explicit BenchLocal default
+- omitted sampling fields are not sent by BenchLocal, so the inference backend uses whatever defaults it was started or configured with
+- BenchLocal currently applies only `request_timeout_seconds: 300` unless the pack or user overrides it
+- the per-test run count is a BenchLocal host control, not a generation setting, and is not forwarded to providers
 
 This allows:
 

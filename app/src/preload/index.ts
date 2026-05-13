@@ -86,11 +86,11 @@ const api: BenchLocalDesktopApi = {
       return () => ipcRenderer.removeListener(BENCH_PACK_MUTATION_PROGRESS_CHANNEL, wrapped);
     },
     activeRuns: () => ipcRenderer.invoke("benchlocal:benchpacks:active-runs"),
-    run: (input: { tabId: string; benchPackId: string; modelIds?: string[]; executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; generation?: GenerationRequest }) =>
+    run: (input: { tabId: string; benchPackId: string; modelIds?: string[]; executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; runsPerTest?: number; generation?: GenerationRequest }) =>
       ipcRenderer.invoke("benchlocal:benchpacks:run", input),
-    retryScenario: (input: { tabId: string; benchPackId: string; runId: string; scenarioId: string; modelId: string; generation?: GenerationRequest }) =>
+    retryScenario: (input: { tabId: string; benchPackId: string; runId: string; scenarioId: string; modelId: string; runsPerTest?: number; generation?: GenerationRequest }) =>
       ipcRenderer.invoke("benchlocal:benchpacks:retry-scenario", input),
-    resumeRun: (input: { tabId: string; benchPackId: string; runId: string; executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; generation?: GenerationRequest }) =>
+    resumeRun: (input: { tabId: string; benchPackId: string; runId: string; executionMode?: "serial" | "serial_by_model" | "parallel_by_model" | "parallel_by_test_case" | "full_parallel"; runsPerTest?: number; generation?: GenerationRequest }) =>
       ipcRenderer.invoke("benchlocal:benchpacks:resume-run", input),
     stop: (input: { tabId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:stop", input),
     history: (input: { benchPackId: string }) => ipcRenderer.invoke("benchlocal:benchpacks:history", input),

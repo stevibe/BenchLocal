@@ -72,6 +72,8 @@
     "--result-pass-ink": "#2e7d32",
     "--result-partial-bg": "#fff4ce",
     "--result-partial-ink": "#8a6500",
+    "--result-provider-error-bg": "#e0b445",
+    "--result-provider-error-ink": "#3f3000",
     "--result-fail-bg": "#f2dede",
     "--result-fail-ink": "#a1260d",
     "--log-drawer-bg": "#1e1e1e",
