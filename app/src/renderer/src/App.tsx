@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Cog,
+  Copy,
   FolderOpen,
   GripVertical,
   LayoutList,
@@ -250,6 +251,13 @@ type WorkspaceModalState =
 type WorkspaceContextMenuState = {
   workspaceId: string;
   workspaceName: string;
+  x: number;
+  y: number;
+} | null;
+
+type TabContextMenuState = {
+  tabId: string;
+  tabTitle: string;
   x: number;
   y: number;
 } | null;
@@ -1268,6 +1276,7 @@ export function App() {
   const [modelAliasModal, setModelAliasModal] = useState<ModelAliasModalState | null>(null);
   const [workspaceModal, setWorkspaceModal] = useState<WorkspaceModalState>(null);
   const [workspaceContextMenu, setWorkspaceContextMenu] = useState<WorkspaceContextMenuState>(null);
+  const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState>(null);
   const [historyModal, setHistoryModal] = useState<HistoryModalState | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [verifierPreparationModal, setVerifierPreparationModal] = useState<VerifierPreparationModalState | null>(null);
@@ -1829,12 +1838,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!workspaceContextMenu) {
+    if (!workspaceContextMenu && !tabContextMenu) {
       return;
     }
 
     const closeMenu = () => {
       setWorkspaceContextMenu(null);
+      setTabContextMenu(null);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1854,7 +1864,7 @@ export function App() {
       window.removeEventListener("resize", closeMenu);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [workspaceContextMenu]);
+  }, [workspaceContextMenu, tabContextMenu]);
 
   useEffect(() => {
     if (!themeMenuOpen) {
@@ -3088,6 +3098,44 @@ export function App() {
     setTabMenuOpen(false);
   };
 
+  const duplicateTab = (tabId: string) => {
+    if (!activeWorkspace) {
+      return;
+    }
+
+    updateWorkspaceState((current) => {
+      const workspace = current.workspaces[activeWorkspace.id];
+      const tab = current.tabs[tabId];
+
+      if (!workspace || !tab) {
+        return current;
+      }
+
+      const now = new Date().toISOString();
+      const duplicateTabId = `tab-${crypto.randomUUID()}`;
+      current.tabs[duplicateTabId] = {
+        id: duplicateTabId,
+        title: `${tab.title} Copy`,
+        benchPackId: tab.benchPackId,
+        loadedRunId: null,
+        focusedScenarioId: tab.focusedScenarioId,
+        modelSelections: structuredClone(tab.modelSelections),
+        samplingOverrides: structuredClone(tab.samplingOverrides ?? {}),
+        executionMode: tab.executionMode,
+        runsPerTest: normalizeRunsPerTest(tab.runsPerTest),
+        createdAt: now,
+        updatedAt: now
+      };
+
+      const tabIndex = workspace.tabIds.indexOf(tabId);
+      workspace.tabIds.splice(tabIndex >= 0 ? tabIndex + 1 : workspace.tabIds.length, 0, duplicateTabId);
+      workspace.activeTabId = duplicateTabId;
+      workspace.updatedAt = now;
+      return current;
+    });
+    setTabContextMenu(null);
+  };
+
   const assignBenchPackToTab = (tabId: string, benchPackId: string) => {
     updateWorkspaceState((current) => {
       const tab = current.tabs[tabId];
@@ -4310,6 +4358,21 @@ export function App() {
                                         event.stopPropagation();
                                         startEditingTab(tab.id, tab.title);
                                       }}
+                                      onContextMenu={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        if (isEditingTab) {
+                                          return;
+                                        }
+                                        activateTab(tab.id);
+                                        setWorkspaceContextMenu(null);
+                                        setTabContextMenu({
+                                          tabId: tab.id,
+                                          tabTitle: tab.title,
+                                          x: event.clientX,
+                                          y: event.clientY
+                                        });
+                                      }}
 		                                onClick={() => {
                                         if (isEditingTab) {
                                           return;
@@ -5130,6 +5193,53 @@ export function App() {
           >
             <Trash2 size={14} />
             <span>Delete Workspace</span>
+          </button>
+        </div>
+      ) : null}
+
+      {tabContextMenu ? (
+        <div
+          className="workspace-context-menu"
+          style={{
+            left: Math.min(tabContextMenu.x, window.innerWidth - 196),
+            top: Math.min(tabContextMenu.y, window.innerHeight - 156)
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="workspace-context-menu-item"
+            onClick={() => duplicateTab(tabContextMenu.tabId)}
+          >
+            <Copy size={14} />
+            <span>Duplicate Tab</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-context-menu-item"
+            onClick={() => {
+              setTabContextMenu(null);
+              startEditingTab(tabContextMenu.tabId, tabContextMenu.tabTitle);
+            }}
+          >
+            <Pencil size={14} />
+            <span>Rename Tab</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-context-menu-item is-danger"
+            onClick={() => {
+              setTabContextMenu(null);
+              setConfirmDialog({
+                title: "Close Tab",
+                subtitle: `Close "${tabContextMenu.tabTitle}"? The Bench Pack tab will be removed from this workspace.`,
+                confirmLabel: "Close Tab",
+                onConfirm: () => closeTab(tabContextMenu.tabId)
+              });
+            }}
+          >
+            <X size={14} />
+            <span>Close Tab</span>
           </button>
         </div>
       ) : null}
