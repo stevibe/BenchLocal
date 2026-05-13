@@ -1682,7 +1682,7 @@ pre {
 }
 
 .result-icon-cell {
-  width: 46px;
+  width: 56px;
   text-align: center;
 }
 
@@ -1702,6 +1702,30 @@ pre {
 .result-icon-button {
   cursor: pointer;
   background: transparent;
+  padding: 0;
+  position: relative;
+}
+
+.result-icon-button.has-duration {
+  margin-bottom: 14px;
+}
+
+.result-icon-mark {
+  line-height: 1;
+}
+
+.result-duration {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 46px;
+  overflow: visible;
+  font-size: 0.58rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .result-pass {

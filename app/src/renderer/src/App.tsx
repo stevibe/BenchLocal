@@ -112,6 +112,24 @@ function formatAppUpdateCheckedAt(checkedAt?: string): string | null {
   return date.toLocaleString();
 }
 
+function formatDurationMs(durationMs?: number): string | null {
+  if (durationMs === undefined || !Number.isFinite(durationMs)) {
+    return null;
+  }
+
+  if (durationMs < 1000) {
+    return `${Math.max(0, Math.round(durationMs))} ms`;
+  }
+
+  if (durationMs < 60_000) {
+    return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  }
+
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1000);
+  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
 type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "advanced";
 
 type LoadState = {
@@ -180,6 +198,7 @@ type DetailModalState = {
   summary: string;
   rawLog: string;
   status: "pass" | "partial" | "fail";
+  timings?: ScenarioResult["timings"];
 };
 
 type TabModelsModalState = {
@@ -4954,6 +4973,21 @@ export function App() {
               {detailModal.status}
             </span>
           </div>
+          {detailModal.timings?.durationMs !== undefined ? (
+            <div className="dialog-summary">
+              <div className="dialog-summary-copy">
+                <span className="dialog-summary-label">Wall Time</span>
+                <span className="dialog-summary-value">
+                  {formatDurationMs(detailModal.timings.durationMs)}
+                </span>
+              </div>
+              {detailModal.timings.completedAt ? (
+                <span className="status-chip status-idle">
+                  {new Date(detailModal.timings.completedAt).toLocaleTimeString()}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <pre className="dialog-log">{detailModal.rawLog}</pre>
         </Modal>
       ) : null}
@@ -5450,6 +5484,7 @@ function BenchmarkSection({
 
     const tone =
       result.status === "pass" ? "result-pass" : result.status === "partial" ? "result-partial" : "result-fail";
+    const durationLabel = formatDurationMs(result.timings?.durationMs);
 
     return (
       <button
@@ -5463,12 +5498,15 @@ function BenchmarkSection({
             scenarioId,
             summary: result.summary,
             rawLog: result.rawLog,
-            status: result.status
+            status: result.status,
+            timings: result.timings
           })
         }
-        className={`result-icon-button ${tone}`}
+        className={`result-icon-button ${tone}${durationLabel ? " has-duration" : ""}`}
+        title={durationLabel ? `${result.status} · ${durationLabel}` : result.status}
       >
-        {result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
+        <span className="result-icon-mark">{result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}</span>
+        {durationLabel ? <span className="result-duration">{durationLabel}</span> : null}
       </button>
     );
   }
