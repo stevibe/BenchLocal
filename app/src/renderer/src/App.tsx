@@ -4430,11 +4430,12 @@ export function App() {
 	                      <div className="tabbed-workspace-content">
 	                        {activeInspection && activeTab ? (
 	                          <BenchmarkSection
-                                tabId={activeTab.id}
+                            tabId={activeTab.id}
 	                            inspection={activeInspection}
-                              verifierStatus={activeVerifierStatus}
-                              runBlocker={activeRunBlocker}
+                            verifierStatus={activeVerifierStatus}
+                            runBlocker={activeRunBlocker}
 	                            selectedModels={activeDisplayModels}
+                            providers={draft.providers}
 	                            runSummary={activeRunSummary}
                               historyEntries={runHistories[activeInspection.id] ?? []}
 	                            liveRun={activeLiveRun}
@@ -5416,6 +5417,7 @@ function BenchmarkSection({
   verifierStatus,
   runBlocker,
   selectedModels,
+  providers,
   runSummary,
   historyEntries,
   liveRun,
@@ -5446,6 +5448,7 @@ function BenchmarkSection({
   verifierStatus: BenchPackVerifierStatus | null;
   runBlocker: BenchPackRunBlocker | null;
   selectedModels: ResolvedTabModel[];
+  providers: Record<string, BenchLocalProviderConfig>;
   runSummary: BenchPackRunSummary | null;
   historyEntries: BenchPackRunHistoryEntry[];
   liveRun: LiveRunState | null;
@@ -6127,24 +6130,34 @@ function BenchmarkSection({
 
           {runSummary && !hasLiveActivity && (!isReplayMode || hasCompletedReplay) ? (
             <section className="scoreboard">
-              {Object.entries(runSummary.scores).map(([modelId, score]) => (
-                <div key={modelId} className="score-card score-card-compact">
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: "1rem" }}>{selectedModels.find((model) => model.id === modelId)?.displayLabel ?? modelId}</h3>
-                    <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.76rem" }}>{modelId}</p>
-                  </div>
-                  <div className="score-card-foot">
-                    <span className="score-value">{score.totalScore}</span>
-                    <div className="category-chip-row">
-                      {score.categories.map((category) => (
-                        <span key={category.id} className="status-chip category-chip">
-                          {category.id}: {category.score}
-                        </span>
-                      ))}
+              {Object.entries(runSummary.scores).map(([modelId, score]) => {
+                const model = selectedModels.find((candidate) => candidate.id === modelId);
+                const providerName = model ? providers[model.provider]?.name?.trim() || model.provider : "";
+                const modelName = model?.model?.trim();
+                const modelSubtitle =
+                  providerName && modelName
+                    ? `${providerName} · ${modelName}`
+                    : providerName || modelName || modelId;
+
+                return (
+                  <div key={modelId} className="score-card score-card-compact">
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: "1rem" }}>{model?.displayLabel ?? modelId}</h3>
+                      <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.76rem" }}>{modelSubtitle}</p>
+                    </div>
+                    <div className="score-card-foot">
+                      <span className="score-value">{score.totalScore}</span>
+                      <div className="category-chip-row">
+                        {score.categories.map((category) => (
+                          <span key={category.id} className="status-chip category-chip">
+                            {category.id}: {category.score}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </section>
           ) : null}
         </div>
