@@ -212,6 +212,7 @@ type SamplingFormState = {
   top_k: string;
   min_p: string;
   repetition_penalty: string;
+  presence_penalty: string;
   request_timeout_seconds: string;
 };
 
@@ -366,6 +367,7 @@ const SAMPLING_FIELDS: Array<{
   { key: "top_k", label: "Top K", placeholder: "Leave blank", integer: true },
   { key: "min_p", label: "Min P", placeholder: "Leave blank" },
   { key: "repetition_penalty", label: "Repetition Penalty", placeholder: "Leave blank" },
+  { key: "presence_penalty", label: "Presence Penalty", placeholder: "Leave blank" },
   { key: "request_timeout_seconds", label: "Request Timeout Seconds", placeholder: "Leave blank", integer: true }
 ];
 
@@ -494,6 +496,7 @@ function createSamplingForm(input?: GenerationRequest): SamplingFormState {
     top_k: input?.top_k?.toString() ?? "",
     min_p: input?.min_p?.toString() ?? "",
     repetition_penalty: input?.repetition_penalty?.toString() ?? "",
+    presence_penalty: input?.presence_penalty?.toString() ?? "",
     request_timeout_seconds: input?.request_timeout_seconds?.toString() ?? ""
   };
 }
@@ -6194,7 +6197,7 @@ function SamplingModal({
   return (
     <Modal
       title="Bench Pack Samplings"
-      subtitle={`Configure request sampling overrides for ${benchPackName}. Leave fields blank to use the effective defaults from BenchLocal and the Bench Pack.`}
+      subtitle={`Configure request sampling overrides for ${benchPackName}. Blank fields use Bench Pack defaults where defined; otherwise BenchLocal omits them so the inference backend uses its configured defaults.`}
       onClose={onClose}
       onSubmit={onSubmit}
       submitLabel="Save Samplings"
@@ -6233,7 +6236,7 @@ function SamplingModal({
         </div>
       ) : (
         <div className="helper-copy">
-          <p>This Bench Pack does not define recommended defaults yet. Blank fields mean BenchLocal will use its platform defaults and omit any values that are still unset.</p>
+          <p>This Bench Pack does not define recommended defaults yet. Blank sampling fields are not sent by BenchLocal, except for BenchLocal's request timeout default.</p>
         </div>
       )}
       <div className="entry-grid two-col">

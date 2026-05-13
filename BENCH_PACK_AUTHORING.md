@@ -184,8 +184,9 @@ Bench Pack authors can declare recommended defaults in `benchlocal.pack.json`:
 Behavior:
 
 - if a Bench Pack provides a default, BenchLocal uses it unless the user overrides it in that tab
-- if a field is omitted, BenchLocal falls back to platform defaults where defined
-- BenchLocal currently applies `request_timeout_seconds: 300` unless your pack or the user overrides it
+- if a field is omitted by the pack and the user, BenchLocal omits it unless that field has an explicit BenchLocal default
+- omitted sampling fields are not sent by BenchLocal, so the inference backend uses whatever defaults it was started or configured with
+- BenchLocal currently applies only `request_timeout_seconds: 300` unless your pack or the user overrides it
 
 ## Compatibility requirements
 

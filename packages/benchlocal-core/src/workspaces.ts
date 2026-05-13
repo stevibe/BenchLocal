@@ -74,6 +74,7 @@ const WorkspaceTabSchema = z.object({
       top_k: z.number().optional(),
       min_p: z.number().optional(),
       repetition_penalty: z.number().optional(),
+      presence_penalty: z.number().optional(),
       request_timeout_seconds: z.number().int().min(1).optional()
     })
     .default({}),
