@@ -2460,6 +2460,50 @@ export function App() {
     }
   };
 
+  const resetTabRunState = (tab: BenchLocalWorkspaceTab) => {
+    setError(null);
+    setAppNotice(null);
+    setRunSummaries((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    setLiveRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    setLoadedHistoryRuns((current) => {
+      if (!current[tab.id]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[tab.id];
+      return next;
+    });
+    updateWorkspaceState((current) => {
+      const nextTab = current.tabs[tab.id];
+
+      if (!nextTab) {
+        return current;
+      }
+
+      nextTab.loadedRunId = null;
+      nextTab.updatedAt = new Date().toISOString();
+      return current;
+    });
+    setAppNotice(`Reset "${tab.title}" to a fresh run state.`);
+  };
+
   const resumeTabRun = async (tab: BenchLocalWorkspaceTab, runSummary: BenchPackRunSummary) => {
     setError(null);
     setAppNotice(null);
@@ -4539,6 +4583,7 @@ export function App() {
                               }}
                               onRefreshVerification={() => void loadVerifierStatuses()}
                               onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
+                              onStartOver={() => resetTabRunState(activeTab)}
 	                            onRun={() =>
                                 void (
                                   activeLoadedHistory?.mode === "replay" && activeRunSummary
@@ -5436,6 +5481,7 @@ function BenchmarkSection({
   onOpenVerification,
   onRefreshVerification,
   onClearHistory,
+  onStartOver,
   onRun,
   onStop,
   onRetryCells,
@@ -5466,6 +5512,7 @@ function BenchmarkSection({
   onOpenVerification: () => void;
   onRefreshVerification: () => void;
   onClearHistory: () => void;
+  onStartOver: () => void;
   onRun: () => void;
   onStop: () => void;
   onRetryCells: (cells: RetryScenarioCell[], label: string) => void;
@@ -5494,6 +5541,7 @@ function BenchmarkSection({
   const hasRetryActivity = (liveRun?.activeCellKeys.length ?? 0) > 0;
   const isReplayMode = loadedHistory?.mode === "replay";
   const isResumableRun = Boolean(runSummary) && !isRunSummaryComplete(runSummary) && !isRunning;
+  const canStartOver = isResumableRun && !isViewingHistory && !hasRetryActivity && !isStopping;
   const replayRevealedCellCount = Object.values(liveRun?.resultsByModel ?? {}).reduce(
     (total, results) => total + results.length,
     0
@@ -5785,6 +5833,12 @@ function BenchmarkSection({
             <RotateCcw size={14} />
             Test Histories
           </button>
+          {canStartOver ? (
+            <button type="button" className="ghost-button" onClick={onStartOver}>
+              <RotateCcw size={14} />
+              Start Over
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={isRunning ? onStop : onRun}
