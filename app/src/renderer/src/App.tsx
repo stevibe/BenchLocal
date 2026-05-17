@@ -162,6 +162,7 @@ type ProviderModalState =
     };
 
 type ModelFormState = {
+  id: string;
   provider: string;
   model: string;
   label: string;
@@ -535,6 +536,7 @@ function createEmptyProvider(): ProviderFormState {
 
 function createEmptyModel(providerId = "openrouter"): ModelFormState {
   return {
+    id: "",
     provider: providerId,
     model: "",
     label: "",
@@ -612,6 +614,7 @@ function toProviderForm(id: string, provider: BenchLocalProviderConfig): Provide
 
 function toModelForm(model: BenchLocalModelConfig): ModelFormState {
   return {
+    id: model.id,
     provider: model.provider,
     model: model.model,
     label: model.label,
@@ -627,13 +630,56 @@ function buildModelConfig(
   const providerLabel = getProviderDisplayName(providers, form.provider.trim());
 
   return {
-    id: `${form.provider}:${form.model}`.trim(),
+    id: form.id.trim() || `${form.provider}:${form.model}`.trim(),
     provider: form.provider.trim(),
     model: form.model.trim(),
     label: form.label.trim() || `${form.model.trim()} via ${providerLabel}`,
     group: form.group.trim() || "primary",
     enabled: form.enabled
   };
+}
+
+function createCopyLabel(label: string, existingLabels: string[]): string {
+  const base = `${label.trim() || "Untitled"} Copy`;
+  const existing = new Set(existingLabels.map((candidate) => candidate.trim()));
+
+  if (!existing.has(base)) {
+    return base;
+  }
+
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base} ${index}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return `${base} ${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function createUniqueProviderId(
+  kind: BenchLocalProviderKind,
+  providers: Record<string, BenchLocalProviderConfig>
+): string {
+  let id = "";
+
+  do {
+    id = `${kind}-${crypto.randomUUID()}`;
+  } while (providers[id]);
+
+  return id;
+}
+
+function createUniqueModelId(model: BenchLocalModelConfig, models: BenchLocalModelConfig[]): string {
+  const existing = new Set(models.map((candidate) => candidate.id));
+  const modelPart = model.model.trim() || model.id.split(":").slice(1).join(":").trim() || "model";
+  let id = "";
+
+  do {
+    id = `${model.provider}:${modelPart}:copy-${crypto.randomUUID()}`;
+  } while (existing.has(id));
+
+  return id;
 }
 
 function createWorkspaceName(existingCount: number): string {
@@ -3966,6 +4012,38 @@ export function App() {
     return true;
   };
 
+  const duplicateProvider = async (providerId: string): Promise<void> => {
+    if (!draft) {
+      return;
+    }
+
+    const provider = draft.providers[providerId];
+    if (!provider) {
+      return;
+    }
+
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextProviderId = createUniqueProviderId(provider.kind, nextConfig.providers);
+    const nextProviderName = createCopyLabel(
+      getProviderDisplayName(draft.providers, providerId),
+      Object.values(nextConfig.providers).map((candidate) => candidate.name)
+    );
+
+    nextConfig.providers[nextProviderId] = {
+      ...provider,
+      name: nextProviderName
+    };
+
+    await persistConfig(nextConfig, {
+      notice: `Duplicated provider "${nextProviderName}".`,
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
+    });
+  };
+
   const confirmDeleteProvider = (providerId: string) => {
     const provider = draft?.providers[providerId];
     const linkedModelCount = (draft?.models ?? []).filter((model) => model.provider === providerId).length;
@@ -4139,6 +4217,39 @@ export function App() {
     return true;
   };
 
+  const duplicateModel = async (index: number): Promise<void> => {
+    if (!draft) {
+      return;
+    }
+
+    const model = draft.models[index];
+    if (!model) {
+      return;
+    }
+
+    const previousDraft = cloneConfig(draft);
+    const previousLoadConfig = loadState ? cloneConfig(loadState.config) : null;
+    const nextConfig = previousLoadConfig ? cloneConfig(previousLoadConfig) : cloneConfig(draft);
+    const nextModelLabel = createCopyLabel(
+      model.label || model.model || model.id,
+      nextConfig.models.map((candidate) => candidate.label)
+    );
+    const nextModel: BenchLocalModelConfig = {
+      ...model,
+      id: createUniqueModelId(model, nextConfig.models),
+      label: nextModelLabel
+    };
+
+    nextConfig.models.push(nextModel);
+
+    await persistConfig(nextConfig, {
+      notice: `Duplicated model "${nextModelLabel}".`,
+      preserveFilesystemDraft: true,
+      previousDraft,
+      previousLoadConfig
+    });
+  };
+
   const confirmDeleteModel = (index: number) => {
     const model = draft?.models[index];
     if (!model) {
@@ -4308,8 +4419,10 @@ export function App() {
                   form: toProviderForm(providerId, draft.providers[providerId])
                 })
               }
+              onDuplicateProvider={(providerId) => void duplicateProvider(providerId)}
               onCreateModel={() => setModelModal({ mode: "create", form: createEmptyModel(providerIds[0] ?? "openrouter") })}
               onEditModel={(index) => setModelModal({ mode: "edit", index, form: toModelForm(draft.models[index]) })}
+              onDuplicateModel={(index) => void duplicateModel(index)}
               onStartVerifier={async (benchPackId, benchPackName, verifierId) => {
                 setError(null);
                 setStoppingVerifierStarts((current) => {
@@ -7236,8 +7349,10 @@ function SettingsScene({
   onResetAdvanced,
   onCreateProvider,
   onEditProvider,
+  onDuplicateProvider,
   onCreateModel,
   onEditModel,
+  onDuplicateModel,
   onStartVerifier,
   onStopVerifier,
   onDeleteVerifierImage,
@@ -7270,8 +7385,10 @@ function SettingsScene({
   onResetAdvanced: () => void;
   onCreateProvider: () => void;
   onEditProvider: (providerId: string) => void;
+  onDuplicateProvider: (providerId: string) => void;
   onCreateModel: () => void;
   onEditModel: (index: number) => void;
+  onDuplicateModel: (index: number) => void;
   onStartVerifier: (benchPackId: string, benchPackName: string, verifierId: string) => Promise<void>;
   onStopVerifier: (benchPackId: string) => Promise<void>;
   onDeleteVerifierImage: (benchPackId: string, benchPackName: string, verifierId: string) => void;
@@ -7355,6 +7472,7 @@ function SettingsScene({
                 models={draft.models}
                 onCreate={onCreateProvider}
                 onEdit={onEditProvider}
+                onDuplicate={onDuplicateProvider}
               />
             ) : null}
 
@@ -7365,6 +7483,7 @@ function SettingsScene({
                 providerIds={providerIds}
                 onCreate={onCreateModel}
                 onEdit={onEditModel}
+                onDuplicate={onDuplicateModel}
               />
             ) : null}
 
@@ -7456,12 +7575,14 @@ function ProvidersView({
   providers,
   models,
   onCreate,
-  onEdit
+  onEdit,
+  onDuplicate
 }: {
   providers: Record<string, BenchLocalProviderConfig>;
   models: BenchLocalModelConfig[];
   onCreate: () => void;
   onEdit: (providerId: string) => void;
+  onDuplicate: (providerId: string) => void;
 }) {
   const providerIds = Object.keys(providers);
 
@@ -7510,6 +7631,7 @@ function ProvidersView({
                   <td>
                     <div className="settings-table-actions">
                       <button type="button" onClick={() => onEdit(providerId)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
+                      <button type="button" onClick={() => onDuplicate(providerId)} className="ghost-button ghost-button-compact"><Copy size={14} />Duplicate</button>
                     </div>
                   </td>
                 </tr>
@@ -7527,13 +7649,15 @@ function ModelsView({
   providers,
   providerIds,
   onCreate,
-  onEdit
+  onEdit,
+  onDuplicate
 }: {
   models: BenchLocalModelConfig[];
   providers: Record<string, BenchLocalProviderConfig>;
   providerIds: string[];
   onCreate: () => void;
   onEdit: (index: number) => void;
+  onDuplicate: (index: number) => void;
 }) {
   const [providerFilter, setProviderFilter] = useState("all");
   const [groupFilter, setGroupFilter] = useState("all");
@@ -7561,7 +7685,7 @@ function ModelsView({
     .filter(({ model }) => {
       const normalizedGroup = model.group.trim() || "__ungrouped__";
       const normalizedQuery = searchQuery.trim().toLowerCase();
-	      const providerName = getProviderDisplayName(providers, model.provider);
+      const providerName = getProviderDisplayName(providers, model.provider);
       const haystack = [model.label, model.id, model.model, model.group, providerName, model.provider]
         .filter(Boolean)
         .join(" ")
@@ -7646,21 +7770,22 @@ function ModelsView({
             ) : (
               filteredModels.map(({ model, index }) => (
                 <tr key={`${model.id}-${index}`}>
-	                  <td>
-	                    <div className="settings-row-primary">{model.label}</div>
-	                    <div className="settings-row-secondary settings-mono-cell">{getModelDisplayIdentifier(model)}</div>
-	                  </td>
+                  <td>
+                    <div className="settings-row-primary">{model.label}</div>
+                    <div className="settings-row-secondary settings-mono-cell">{getModelDisplayIdentifier(model)}</div>
+                  </td>
                   <td>
                     <span className={`status-chip ${model.enabled ? "status-ready" : "status-inactive"}`}>
                       {model.enabled ? "active" : "inactive"}
                     </span>
                   </td>
-	                  <td>{getProviderDisplayName(providers, model.provider)}</td>
+                  <td>{getProviderDisplayName(providers, model.provider)}</td>
                   <td className="settings-mono-cell">{model.model}</td>
                   <td>{model.group}</td>
                   <td>
                     <div className="settings-table-actions">
                       <button type="button" onClick={() => onEdit(index)} className="ghost-button ghost-button-compact"><Pencil size={14} />Edit</button>
+                      <button type="button" onClick={() => onDuplicate(index)} className="ghost-button ghost-button-compact"><Copy size={14} />Duplicate</button>
                     </div>
                   </td>
                 </tr>
