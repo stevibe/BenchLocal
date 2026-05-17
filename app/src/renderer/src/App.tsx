@@ -5850,7 +5850,7 @@ function BenchmarkSection({
     .filter(({ result }) => result.status === "fail" && !isProviderErrorResult(result))
     .map(({ modelId, scenarioId }) => ({ modelId, scenarioId }));
   const canRetryResultCells =
-    Boolean(runSummary?.runId) && !isViewingHistory && !hasLiveActivity && !isStopping && inspection.status === "ready";
+    Boolean(runSummary?.runId) && !isReplayMode && !hasLiveActivity && !isStopping && inspection.status === "ready";
   const selectedModelAvailability = selectedModels.map((model) =>
     getModelAvailabilityView(model, modelAvailabilityById, checkingModelAvailability)
   );
