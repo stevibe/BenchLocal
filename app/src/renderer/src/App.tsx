@@ -5457,7 +5457,7 @@ export function App() {
             <div className="dialog-summary-copy">
               <span className="dialog-summary-label">Status</span>
               <span className="dialog-summary-value">
-                {detailModal.errorType === "provider_error" ? "Provider or Network Error" : "Validation Result"}
+                {detailModal.errorType === "provider_error" ? "Provider HTTP Error" : "Validation Result"}
               </span>
             </div>
             <span
