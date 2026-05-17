@@ -5691,6 +5691,14 @@ function BenchPackPickerDialog({
     filteredInspections.find((inspection) => inspection.id === selectedId) ??
     filteredInspections[0] ??
     null;
+  const openBenchPack = (inspection: BenchPackInspection) => {
+    if (inspection.status !== "ready") {
+      return;
+    }
+
+    onSelectBenchPack(inspection.id);
+    setOpen(false);
+  };
 
   useEffect(() => {
     if (!open) {
@@ -5743,6 +5751,7 @@ function BenchPackPickerDialog({
                   type="button"
                   className={`benchpack-option${selectedInspection?.id === inspection.id ? " is-selected" : ""}`}
                   onClick={() => setSelectedId(inspection.id)}
+                  onDoubleClick={() => openBenchPack(inspection)}
                 >
                   <div className="benchpack-option-main">
                     <div className="settings-row-primary">{inspection.manifest?.name ?? inspection.id}</div>
@@ -5807,10 +5816,7 @@ function BenchPackPickerDialog({
                   <button
                     type="button"
                     className="primary-button"
-                    onClick={() => {
-                      onSelectBenchPack(selectedInspection.id);
-                      setOpen(false);
-                    }}
+                    onClick={() => openBenchPack(selectedInspection)}
                     disabled={selectedInspection.status !== "ready"}
                   >
                     <Plus size={14} />
