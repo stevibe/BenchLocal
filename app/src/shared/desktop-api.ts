@@ -5,6 +5,7 @@ import type {
   BenchLocalThemeDescriptor,
   GenerationRequest,
   ProgressEvent,
+  ModelAvailability,
   BenchLocalWorkspaceState,
   BenchPackInspection,
   BenchPackRunHistoryEntry,
@@ -106,6 +107,7 @@ export interface BenchLocalDesktopApi {
   };
   models: {
     discover(input: { provider: BenchLocalConfig["providers"][string] }): Promise<BenchLocalDiscoveredModel[]>;
+    availability(input: { config: BenchLocalConfig; modelIds?: string[] }): Promise<ModelAvailability[]>;
   };
   themes: {
     list(): Promise<BenchLocalThemeDescriptor[]>;

@@ -1537,18 +1537,36 @@ pre {
 
 .table-retry-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 12px 12px;
 }
 
+.table-retry-actions-left,
+.table-retry-actions-right {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.table-retry-actions-right {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .result-table {
-  width: auto;
+  width: 100%;
   min-width: 100%;
   table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
+}
+
+.result-table .model-column {
+  width: 1%;
 }
 
 .result-table th,
@@ -1567,9 +1585,9 @@ pre {
 }
 
 .scenario-row-label {
-  width: 152px;
-  min-width: 152px;
-  text-align: center;
+  width: 1%;
+  max-width: min(240px, 24vw);
+  text-align: left;
   position: sticky;
   left: 0;
   z-index: 5;
@@ -1577,6 +1595,7 @@ pre {
   box-shadow: 1px 0 0 var(--sticky-column-rule);
   background-clip: padding-box;
   overflow: hidden;
+  white-space: nowrap;
   transition: box-shadow 140ms ease;
 }
 
@@ -1588,6 +1607,7 @@ pre {
 
 .result-table thead .scenario-row-label {
   z-index: 8;
+  text-align: left;
 }
 
 .scenario-row-label.has-scroll-shadow {
@@ -1662,7 +1682,8 @@ pre {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  max-width: 124px;
+  max-width: 240px;
+  width: max-content;
   min-height: 32px;
   padding: 6px 10px;
   border-radius: 10px;
@@ -1671,8 +1692,10 @@ pre {
   font-size: 0.82rem;
   font-weight: 700;
   line-height: 1.15;
-  text-align: center;
-  margin: 0 auto;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  margin: 0;
 }
 
 .model-badge-history {
@@ -1681,14 +1704,54 @@ pre {
 }
 
 .model-badge-button {
-  border: none;
-  background: transparent;
-  padding: 0;
   cursor: pointer;
+  border: none;
+  font-family: inherit;
 }
 
-.model-badge-button:hover .model-badge {
+.model-badge-button:hover {
   filter: brightness(1.06);
+}
+
+.model-cell {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.model-badge-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.model-availability-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--idle);
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.model-availability-dot.is-online {
+  color: var(--pass);
+  background: var(--pass);
+}
+
+.model-availability-dot.is-offline {
+  color: var(--fail);
+  background: var(--fail);
+}
+
+.model-availability-dot.is-checking {
+  color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+
+.model-availability-dot.is-unknown {
+  color: var(--idle);
+  background: var(--idle);
 }
 
 .result-icon-cell {

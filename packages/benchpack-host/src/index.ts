@@ -21,12 +21,14 @@ import type {
   GenerationRequest,
   HostContext,
   InferenceEndpoint,
+  ModelAvailability,
   BenchPackRunHistoryEntry,
   BenchPackRunSummary,
   ProgressEvent,
   RegisteredModel,
   ScenarioMeta,
   ScenarioResult,
+  SecretResolution,
   VerifierEndpoint,
   VerifierMode,
   VerifierSpec
@@ -51,6 +53,7 @@ const execFileAsync = promisify(execFile);
 let dockerExecutablePathPromise: Promise<string | null> | null = null;
 const verifierContainerLocks = new Map<string, Promise<void>>();
 const runSummaryLocks = new Map<string, Promise<void>>();
+const MODEL_AVAILABILITY_PROBE_TIMEOUT_MS = 4000;
 
 // Bench Packs commonly use global fetch; Undici otherwise applies a hidden 300s cap.
 setGlobalDispatcher(new Agent({
@@ -1952,6 +1955,284 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
 
+function providerModelsUrl(baseUrl: string): string {
+  return new URL("models", normalizeBaseUrl(baseUrl)).toString();
+}
+
+function createProviderProbeHeaders(secret?: SecretResolution): Headers {
+  const headers = new Headers({
+    Accept: "application/json"
+  });
+
+  if (secret?.value) {
+    headers.set("authorization", `Bearer ${secret.value}`);
+  }
+
+  return headers;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  abortSignal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeout: NodeJS.Timeout | undefined;
+  const abortFromParent = () => {
+    controller.abort(abortSignal?.reason ?? createAbortError(abortSignal));
+  };
+
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      abortFromParent();
+    } else {
+      abortSignal.addEventListener("abort", abortFromParent, { once: true });
+    }
+  }
+
+  timeout = setTimeout(() => {
+    controller.abort(new Error(`Provider did not respond within ${Math.ceil(timeoutMs / 1000)} seconds.`));
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    abortSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function getDiscoveredModelIds(payload: unknown): Set<string> {
+  const record = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null;
+  const entries = Array.isArray(payload)
+    ? payload
+    : Array.isArray(record?.data)
+      ? record.data
+      : Array.isArray(record?.models)
+        ? record.models
+        : [];
+  const ids = entries.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const model = entry as Record<string, unknown>;
+    const id = typeof model.id === "string" ? model.id.trim() : "";
+    const name = typeof model.name === "string" ? model.name.trim() : "";
+
+    return [id, name].filter(Boolean);
+  });
+
+  return new Set(ids);
+}
+
+function createModelAvailability(
+  model: RegisteredModel,
+  status: ModelAvailability["status"],
+  reason: ModelAvailability["reason"],
+  checkedAt: string,
+  details?: string
+): ModelAvailability {
+  return {
+    modelId: model.id,
+    providerId: model.provider,
+    status,
+    reason,
+    details,
+    checkedAt
+  };
+}
+
+function createRuntimeProviders(config: BenchLocalConfig): HostContext["providers"] {
+  return Object.entries(config.providers).map(([id, provider]) => ({
+    id,
+    kind: provider.kind,
+    name: provider.name,
+    enabled: provider.enabled,
+    baseUrl: provider.base_url,
+    authMode: (provider.api_key || provider.api_key_env ? "bearer" : "none") as "bearer" | "none"
+  }));
+}
+
+function createRuntimeModels(config: BenchLocalConfig): HostContext["models"] {
+  return config.models.filter((model) => model.enabled).map((model) => ({
+    id: model.id,
+    provider: model.provider,
+    model: model.model,
+    label: model.label,
+    enabled: model.enabled,
+    group: model.group
+  }));
+}
+
+async function createRuntimeSecrets(config: BenchLocalConfig): Promise<HostContext["secrets"]> {
+  return await Promise.all(
+    Object.entries(config.providers).map(async ([providerId, provider]) => {
+      const envName = provider.api_key_env;
+      const envValue = envName ? process.env[envName] : undefined;
+      const value = provider.api_key ?? envValue;
+
+      return {
+        providerId,
+        keyName: envName ?? "api_key",
+        value,
+        source: provider.api_key ? "config" : envValue ? "env" : "none"
+      } as const;
+    })
+  );
+}
+
+async function checkModelAvailability(
+  providers: HostContext["providers"],
+  models: HostContext["models"],
+  secrets: HostContext["secrets"],
+  options?: {
+    modelIds?: string[];
+    timeoutMs?: number;
+    abortSignal?: AbortSignal;
+  }
+): Promise<ModelAvailability[]> {
+  const selectedModelIds = options?.modelIds && options.modelIds.length > 0 ? new Set(options.modelIds) : null;
+  const selectedModels = selectedModelIds ? models.filter((model) => selectedModelIds.has(model.id)) : models;
+  const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
+  const secretMap = new Map(secrets.map((secret) => [secret.providerId, secret]));
+  const groupedModels = new Map<string, RegisteredModel[]>();
+  const timeoutMs = options?.timeoutMs ?? MODEL_AVAILABILITY_PROBE_TIMEOUT_MS;
+  const checkedAt = new Date().toISOString();
+  const results: ModelAvailability[] = [];
+
+  for (const model of selectedModels) {
+    const existing = groupedModels.get(model.provider) ?? [];
+    existing.push(model);
+    groupedModels.set(model.provider, existing);
+  }
+
+  await Promise.all(Array.from(groupedModels.entries()).map(async ([providerId, providerModels]) => {
+    throwIfAborted(options?.abortSignal);
+
+    const provider = providerMap.get(providerId);
+
+    if (!provider) {
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "provider_missing", checkedAt, `Provider "${providerId}" was not found.`)
+        )
+      );
+      return;
+    }
+
+    if (!provider.enabled) {
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "provider_disabled", checkedAt, `Provider "${provider.name}" is disabled.`)
+        )
+      );
+      return;
+    }
+
+    const secret = secretMap.get(provider.id);
+
+    if (provider.authMode === "bearer" && !secret?.value) {
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "auth_missing", checkedAt, `Provider "${provider.name}" requires an API key.`)
+        )
+      );
+      return;
+    }
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        providerModelsUrl(provider.baseUrl),
+        {
+          method: "GET",
+          headers: createProviderProbeHeaders(secret)
+        },
+        timeoutMs,
+        options?.abortSignal
+      );
+    } catch (error) {
+      if (options?.abortSignal?.aborted) {
+        throw error;
+      }
+
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "provider_unreachable", checkedAt, `Provider "${provider.name}" is unreachable: ${toErrorMessage(error)}`)
+        )
+      );
+      return;
+    }
+
+    if (!response.ok) {
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "provider_error", checkedAt, `Provider "${provider.name}" returned ${response.status} ${response.statusText}`.trim())
+        )
+      );
+      return;
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      results.push(
+        ...providerModels.map((model) =>
+          createModelAvailability(model, "offline", "provider_error", checkedAt, `Provider "${provider.name}" returned invalid model metadata: ${toErrorMessage(error)}`)
+        )
+      );
+      return;
+    }
+
+    const availableModelIds = getDiscoveredModelIds(payload);
+
+    for (const model of providerModels) {
+      if (availableModelIds.has(model.model) || availableModelIds.has(model.id)) {
+        results.push(createModelAvailability(model, "online", "available", checkedAt));
+        continue;
+      }
+
+      results.push(
+        createModelAvailability(
+          model,
+          "offline",
+          "model_missing",
+          checkedAt,
+          `Provider "${provider.name}" is reachable, but model "${model.model}" is not listed.`
+        )
+      );
+    }
+  }));
+
+  return results.sort((left, right) => left.modelId.localeCompare(right.modelId));
+}
+
+export async function checkConfiguredModelAvailability(
+  config: BenchLocalConfig,
+  options?: {
+    modelIds?: string[];
+    timeoutMs?: number;
+    abortSignal?: AbortSignal;
+  }
+): Promise<ModelAvailability[]> {
+  return await checkModelAvailability(
+    createRuntimeProviders(config),
+    createRuntimeModels(config),
+    await createRuntimeSecrets(config),
+    options
+  );
+}
+
 function normalizeInferencePath(pathname: string): string {
   if (pathname === "/v1") {
     return "/";
@@ -2384,38 +2665,9 @@ async function createHostContext(
 ): Promise<HostContextResources> {
   const benchPackConfig = config.benchpacks[benchPackId];
   const logger = createHostLogger(benchPackId, artifacts.hostLogPath);
-  const providers = Object.entries(config.providers).map(([id, provider]) => ({
-    id,
-    kind: provider.kind,
-    name: provider.name,
-    enabled: provider.enabled,
-    baseUrl: provider.base_url,
-    authMode: (provider.api_key || provider.api_key_env ? "bearer" : "none") as "bearer" | "none"
-  }));
-
-  const models = config.models.filter((model) => model.enabled).map((model) => ({
-    id: model.id,
-    provider: model.provider,
-    model: model.model,
-    label: model.label,
-    enabled: model.enabled,
-    group: model.group
-  }));
-
-  const secrets = await Promise.all(
-    Object.entries(config.providers).map(async ([providerId, provider]) => {
-      const envName = provider.api_key_env;
-      const envValue = envName ? process.env[envName] : undefined;
-      const value = provider.api_key ?? envValue;
-
-      return {
-        providerId,
-        keyName: envName ?? "api_key",
-        value,
-        source: provider.api_key ? "config" : envValue ? "env" : "none"
-      } as const;
-    })
-  );
+  const providers = createRuntimeProviders(config);
+  const models = createRuntimeModels(config);
+  const secrets = await createRuntimeSecrets(config);
 
   const verifiers = await resolveVerifierEndpoints(benchPackId, benchPackConfig, manifest);
   const inferenceRelay = await startInferenceRelay(providers, models, secrets, logger);
@@ -3638,6 +3890,31 @@ export async function runConfiguredBenchPack(
       throw new Error("No enabled models are configured in BenchLocal.");
     }
 
+    const modelAvailability = await checkModelAvailability(
+      hostContext.providers,
+      selectedModels,
+      hostContext.secrets,
+      {
+        modelIds: selectedModels.map((model) => model.id),
+        abortSignal: options?.abortSignal
+      }
+    );
+    const availableModelIds = new Set(
+      modelAvailability.filter((availability) => availability.status === "online").map((availability) => availability.modelId)
+    );
+    const shouldExecuteAvailableCell = (_scenario: ScenarioMeta, model: RegisteredModel) => availableModelIds.has(model.id);
+    const unavailableModels = modelAvailability.filter((availability) => availability.status !== "online");
+
+    if (unavailableModels.length > 0) {
+      hostContext.logger.info("Skipping currently unavailable models for this pass.", {
+        models: unavailableModels.map((availability) => ({
+          modelId: availability.modelId,
+          reason: availability.reason,
+          details: availability.details
+        }))
+      });
+    }
+
     const scenarios = await benchPack.listScenarios();
     const prepared = await benchPack.prepare(hostContext);
     const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
@@ -3688,7 +3965,7 @@ export async function runConfiguredBenchPack(
               emit,
               resultsByModel,
               artifacts.runId,
-              undefined,
+              shouldExecuteAvailableCell,
               options?.abortSignal
             );
             break;
@@ -3703,19 +3980,19 @@ export async function runConfiguredBenchPack(
               emit,
               resultsByModel,
               artifacts.runId,
-              undefined,
+              shouldExecuteAvailableCell,
               options?.abortSignal
             );
             break;
           case "parallel_by_test_case":
-            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeParallelTestCasesMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, shouldExecuteAvailableCell, options?.abortSignal);
             break;
           case "full_parallel":
-            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeFullParallelMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, shouldExecuteAvailableCell, options?.abortSignal);
             break;
           case "parallel_by_model":
           default:
-            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, undefined, options?.abortSignal);
+            await executeParallelModelsMode(scenarios, selectedModels, prepared, benchPackId, generation, runsPerTest, emit, resultsByModel, artifacts.runId, shouldExecuteAvailableCell, options?.abortSignal);
             break;
         }
       } catch (error) {
@@ -4030,6 +4307,30 @@ export async function resumeBenchPackRun(
       throw new Error("This saved run has no resumable models.");
     }
 
+    const modelAvailability = await checkModelAvailability(
+      hostContext.providers,
+      selectedModels,
+      hostContext.secrets,
+      {
+        modelIds: selectedModels.map((model) => model.id),
+        abortSignal: options.abortSignal
+      }
+    );
+    const availableModelIds = new Set(
+      modelAvailability.filter((availability) => availability.status === "online").map((availability) => availability.modelId)
+    );
+    const unavailableModels = modelAvailability.filter((availability) => availability.status !== "online");
+
+    if (unavailableModels.length > 0) {
+      hostContext.logger.info("Skipping currently unavailable models while resuming this run.", {
+        models: unavailableModels.map((availability) => ({
+          modelId: availability.modelId,
+          reason: availability.reason,
+          details: availability.details
+        }))
+      });
+    }
+
     const scenarios = await benchPack.listScenarios();
     const existingCellKeys = new Set(
       Object.entries(existingSummary.resultsByModel).flatMap(([modelId, results]) =>
@@ -4037,7 +4338,7 @@ export async function resumeBenchPackRun(
       )
     );
     const shouldExecuteCell = (scenario: ScenarioMeta, model: RegisteredModel) =>
-      !existingCellKeys.has(`${model.id}::${scenario.id}`);
+      availableModelIds.has(model.id) && !existingCellKeys.has(`${model.id}::${scenario.id}`);
     const resultsByModel: Record<string, ScenarioResult[]> = Object.fromEntries(selectedModels.map((model) => [model.id, []]));
     const prepared = await benchPack.prepare(hostContext);
     const executionMode = options.executionMode ?? existingSummary.executionMode ?? "parallel_by_test_case";

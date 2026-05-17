@@ -12,6 +12,7 @@ const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
 const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
 const APP_UPDATE_STATE_CHANNEL = "benchlocal:updates:state";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
+const MODELS_AVAILABILITY_CHANNEL = "benchlocal:models:availability";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const BENCH_PACK_MUTATION_PROGRESS_CHANNEL = "benchlocal:benchpacks:mutation-progress";
 const VERIFIERS_PROGRESS_CHANNEL = "benchlocal:verifiers:progress";
@@ -57,7 +58,9 @@ const api: BenchLocalDesktopApi = {
   },
   models: {
     discover: (input: { provider: BenchLocalConfig["providers"][string] }) =>
-      ipcRenderer.invoke(MODELS_DISCOVER_CHANNEL, input)
+      ipcRenderer.invoke(MODELS_DISCOVER_CHANNEL, input),
+    availability: (input: { config: BenchLocalConfig; modelIds?: string[] }) =>
+      ipcRenderer.invoke(MODELS_AVAILABILITY_CHANNEL, input)
   },
   themes: {
     list: () => ipcRenderer.invoke(THEMES_LIST_CHANNEL),

@@ -45,6 +45,7 @@ import type {
   BenchLocalWorkspaceTab,
   BenchLocalWorkspaceTabModelSelection,
   GenerationRequest,
+  ModelAvailability,
   ProgressEvent,
   ScenarioResult,
   BenchPackInspection,
@@ -275,6 +276,15 @@ type ConfirmDialogState =
 type ResolvedTabModel = BenchLocalModelConfig & {
   displayLabel: string;
   alias?: string;
+};
+
+type ModelAvailabilityView = ModelAvailability | {
+  modelId: string;
+  providerId: string;
+  status: "checking" | "unknown";
+  reason?: ModelAvailability["reason"];
+  details?: string;
+  checkedAt?: string;
 };
 
 type LiveRunState = {
@@ -1235,6 +1245,60 @@ function formatVerifierRuntimeStatus(status: BenchPackVerifierStatus["verifiers"
   }
 }
 
+function getModelAvailabilityView(
+  model: ResolvedTabModel,
+  availabilityByModelId: Record<string, ModelAvailability>,
+  checkingModelIds: Record<string, true>
+): ModelAvailabilityView {
+  if (checkingModelIds[model.id]) {
+    return {
+      modelId: model.id,
+      providerId: model.provider,
+      status: "checking"
+    };
+  }
+
+  return availabilityByModelId[model.id] ?? {
+    modelId: model.id,
+    providerId: model.provider,
+    status: "unknown",
+    details: "Availability has not been checked yet."
+  };
+}
+
+function modelAvailabilityChipClass(availability: ModelAvailabilityView): string {
+  switch (availability.status) {
+    case "online":
+      return "is-online";
+    case "offline":
+      return "is-offline";
+    case "checking":
+      return "is-checking";
+    case "unknown":
+    default:
+      return "is-unknown";
+  }
+}
+
+function modelAvailabilityLabel(availability: ModelAvailabilityView): string {
+  switch (availability.status) {
+    case "online":
+      return "online";
+    case "offline":
+      return "offline";
+    case "checking":
+      return "checking";
+    case "unknown":
+    default:
+      return "unknown";
+  }
+}
+
+function modelAvailabilityTitle(availability: ModelAvailabilityView): string {
+  const label = modelAvailabilityLabel(availability);
+  return availability.details ? `${label}: ${availability.details}` : label;
+}
+
 export function App() {
   if (DETACHED_LOGS_VIEW) {
     return <DetachedLogsWindow />;
@@ -1291,6 +1355,8 @@ export function App() {
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRunState>>({});
   const [liveScenarioFocus, setLiveScenarioFocus] = useState<Record<string, LiveScenarioFocusState>>({});
   const [loadedHistoryRuns, setLoadedHistoryRuns] = useState<Record<string, LoadedHistoryEntry>>({});
+  const [modelAvailabilityById, setModelAvailabilityById] = useState<Record<string, ModelAvailability>>({});
+  const [checkingModelAvailability, setCheckingModelAvailability] = useState<Record<string, true>>({});
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsAutoScroll, setLogsAutoScroll] = useState(true);
   const [logsDetached, setLogsDetached] = useState(false);
@@ -1363,6 +1429,10 @@ export function App() {
 
     return activeTabModels;
   }, [draft, activeLoadedHistory, activeRunSummary, activeTabModels]);
+  const activeDisplayModelIds = useMemo(
+    () => activeDisplayModels.map((model) => model.id).join("\0"),
+    [activeDisplayModels]
+  );
   const downloadedUpdateVersion = appUpdateState?.downloadedVersion ?? appUpdateState?.availableVersion ?? null;
   const showDownloadedUpdateBanner =
     appUpdateState?.status === "downloaded" && downloadedUpdateVersion !== dismissedDownloadedUpdateVersion;
@@ -1372,6 +1442,8 @@ export function App() {
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
   const modelDiscoveryCacheRef = useRef<Record<string, BenchLocalDiscoveredModel[]>>({});
+  const modelAvailabilityRequestRef = useRef(0);
+  const modelAvailabilityPendingRef = useRef<Record<string, number>>({});
   const replayRunTokensRef = useRef(new Map<string, symbol>());
   const appliedThemeKeysRef = useRef<string[]>([]);
   const [tabStripOverflow, setTabStripOverflow] = useState(false);
@@ -1485,6 +1557,56 @@ export function App() {
       }));
     } catch (historyError) {
       setError(historyError instanceof Error ? historyError.message : "Failed to load Bench Pack history.");
+    }
+  };
+
+  const refreshModelAvailability = async (models: ResolvedTabModel[] = activeDisplayModels) => {
+    if (!draft || models.length === 0) {
+      return;
+    }
+
+    const modelIds = models.map((model) => model.id);
+    const requestId = modelAvailabilityRequestRef.current + 1;
+    modelAvailabilityRequestRef.current = requestId;
+    for (const modelId of modelIds) {
+      modelAvailabilityPendingRef.current[modelId] = requestId;
+    }
+    setCheckingModelAvailability((current) => ({
+      ...current,
+      ...Object.fromEntries(modelIds.map((modelId) => [modelId, true]))
+    }));
+
+    try {
+      const availability = await window.benchlocal.models.availability({
+        config: draft,
+        modelIds
+      });
+
+      setModelAvailabilityById((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          availability
+            .filter((entry) => modelAvailabilityPendingRef.current[entry.modelId] === requestId)
+            .map((entry) => [entry.modelId, entry])
+        )
+      }));
+    } catch (availabilityError) {
+      if (modelIds.some((modelId) => modelAvailabilityPendingRef.current[modelId] === requestId)) {
+        setError(availabilityError instanceof Error ? availabilityError.message : "Failed to check model availability.");
+      }
+    } finally {
+      setCheckingModelAvailability((current) => {
+        const next = { ...current };
+
+        for (const modelId of modelIds) {
+          if (modelAvailabilityPendingRef.current[modelId] === requestId) {
+            delete next[modelId];
+            delete modelAvailabilityPendingRef.current[modelId];
+          }
+        }
+
+        return next;
+      });
     }
   };
 
@@ -1793,6 +1915,18 @@ export function App() {
 
     void loadHistoryForBenchPack(activeInspection.id);
   }, [activeInspection?.id, activeInspection?.status]);
+
+  useEffect(() => {
+    if (!draft || !activeInspection?.id || activeDisplayModels.length === 0) {
+      return;
+    }
+
+    if (activeTab && activeRuns[activeTab.id]) {
+      return;
+    }
+
+    void refreshModelAvailability(activeDisplayModels);
+  }, [draft, activeInspection?.id, activeDisplayModelIds, activeTab?.id]);
 
   useEffect(() => {
     const dispose = window.benchlocal.logs.onDetachedWindowClosed(() => {
@@ -2438,6 +2572,13 @@ export function App() {
       });
       if (result.cancelled) {
         setAppNotice(`Stopped ${result.benchPackName}.`);
+      } else if (!isRunSummaryComplete(result)) {
+        const completedCells = countStoredRunResults(result);
+        setAppNotice(
+          completedCells > 0
+            ? `Ran available models for ${result.benchPackName}. Resume after starting the remaining model servers.`
+            : `No selected models are online for ${result.benchPackName}. Start a model server, then resume this test.`
+        );
       } else {
         setAppNotice(`Completed ${result.benchPackName} across ${result.scenarioCount} scenarios and ${result.modelCount} model${result.modelCount === 1 ? "" : "s"}.`);
       }
@@ -4542,6 +4683,8 @@ export function App() {
                             verifierStatus={activeVerifierStatus}
                             runBlocker={activeRunBlocker}
 	                            selectedModels={activeDisplayModels}
+                            modelAvailabilityById={modelAvailabilityById}
+                            checkingModelAvailability={checkingModelAvailability}
                             providers={draft.providers}
 	                            runSummary={activeRunSummary}
                               historyEntries={runHistories[activeInspection.id] ?? []}
@@ -4646,6 +4789,7 @@ export function App() {
                                 setSettingsOpen(true);
                               }}
                               onRefreshVerification={() => void loadVerifierStatuses()}
+                              onRefreshModelAvailability={() => void refreshModelAvailability(activeDisplayModels)}
                               onClearHistory={() => clearLoadedHistoryRun(activeTab.id)}
                               onStartOver={() => resetTabRunState(activeTab)}
 	                            onRun={() =>
@@ -5572,6 +5716,8 @@ function BenchmarkSection({
   verifierStatus,
   runBlocker,
   selectedModels,
+  modelAvailabilityById,
+  checkingModelAvailability,
   providers,
   runSummary,
   historyEntries,
@@ -5592,6 +5738,7 @@ function BenchmarkSection({
   isStopping,
   onOpenVerification,
   onRefreshVerification,
+  onRefreshModelAvailability,
   onClearHistory,
   onStartOver,
   onRun,
@@ -5604,6 +5751,8 @@ function BenchmarkSection({
   verifierStatus: BenchPackVerifierStatus | null;
   runBlocker: BenchPackRunBlocker | null;
   selectedModels: ResolvedTabModel[];
+  modelAvailabilityById: Record<string, ModelAvailability>;
+  checkingModelAvailability: Record<string, true>;
   providers: Record<string, BenchLocalProviderConfig>;
   runSummary: BenchPackRunSummary | null;
   historyEntries: BenchPackRunHistoryEntry[];
@@ -5624,6 +5773,7 @@ function BenchmarkSection({
   isStopping: boolean;
   onOpenVerification: () => void;
   onRefreshVerification: () => void;
+  onRefreshModelAvailability: () => void;
   onClearHistory: () => void;
   onStartOver: () => void;
   onRun: () => void;
@@ -5701,6 +5851,13 @@ function BenchmarkSection({
     .map(({ modelId, scenarioId }) => ({ modelId, scenarioId }));
   const canRetryResultCells =
     Boolean(runSummary?.runId) && !isViewingHistory && !hasLiveActivity && !isStopping && inspection.status === "ready";
+  const selectedModelAvailability = selectedModels.map((model) =>
+    getModelAvailabilityView(model, modelAvailabilityById, checkingModelAvailability)
+  );
+  const checkingAvailability = selectedModelAvailability.some((availability) => availability.status === "checking");
+  const runSummaryComplete = isRunSummaryComplete(runSummary);
+  const runStateClass = isRunning ? "status-live" : runSummary ? runSummaryComplete ? "status-done" : "status-preview" : "status-idle";
+  const runStateLabel = hasLiveActivity ? "Live" : runSummary && !runSummaryComplete ? "Incomplete" : runSummary ? "Done" : "Idle";
 
   useEffect(() => {
     if (!runModeOpen && !runsPerTestOpen) {
@@ -5935,8 +6092,8 @@ function BenchmarkSection({
             <div className="workspace-stat-chips">
               <span className="status-chip status-preview">{inspection.scenarioCount ?? 0} scenarios</span>
               <span className="status-chip status-idle">{selectedModels.length} models</span>
-              <span className={`status-chip ${isRunning ? "status-live" : runSummary ? "status-done" : "status-idle"}`}>
-                {hasLiveActivity ? "Live" : runSummary ? "Done" : "Idle"}
+              <span className={`status-chip ${runStateClass}`}>
+                {runStateLabel}
               </span>
             </div>
           </div>
@@ -6150,6 +6307,12 @@ function BenchmarkSection({
               <>
                 <div ref={tableScrollViewportRef} className="table-scroll">
                   <table className="result-table">
+                  <colgroup>
+                    <col className="model-column" />
+                    {scenarios.map((scenario) => (
+                      <col key={scenario.id} />
+                    ))}
+                  </colgroup>
                   <thead>
                     <tr>
                       <th className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
@@ -6175,41 +6338,59 @@ function BenchmarkSection({
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedModels.map((model) => (
-                      <tr key={model.id}>
-                        <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
-                          {isViewingHistory ? (
-                            <div
-                              className={`model-badge${isReplayMode ? "" : " model-badge-history"}`}
-                              title={
-                                isReplayMode
-                                  ? "Replay mode uses the models from the saved run."
-                                  : "This history view uses the models from the saved run."
-                              }
-                            >
-                              {model.displayLabel}
+                    {selectedModels.map((model) => {
+                      const availability = getModelAvailabilityView(model, modelAvailabilityById, checkingModelAvailability);
+
+                      return (
+                        <tr key={model.id}>
+                          <td className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
+                            <div className="model-cell">
+                              {isViewingHistory ? (
+                                <div className="model-badge-wrap">
+                                  <span
+                                    className={`model-availability-dot ${modelAvailabilityChipClass(availability)}`}
+                                    title={modelAvailabilityTitle(availability)}
+                                  />
+                                  <div
+                                    className={`model-badge${isReplayMode ? "" : " model-badge-history"}`}
+                                    title={
+                                      isReplayMode
+                                        ? "Replay mode uses the models from the saved run."
+                                        : "This history view uses the models from the saved run."
+                                    }
+                                  >
+                                    {model.displayLabel}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="model-badge-wrap">
+                                  <span
+                                    className={`model-availability-dot ${modelAvailabilityChipClass(availability)}`}
+                                    title={modelAvailabilityTitle(availability)}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="model-badge model-badge-button"
+                                    onClick={() => onEditModelAlias(model)}
+                                    title="Edit model alias"
+                                  >
+                                    {model.displayLabel}
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="model-badge-button"
-                              onClick={() => onEditModelAlias(model)}
-                              title="Edit model alias"
-                            >
-                              <div className="model-badge">{model.displayLabel}</div>
-                            </button>
-                          )}
-                        </td>
-                        {scenarios.map((scenario) => (
-                          <td
-                            key={`${model.id}-${scenario.id}`}
-                            className={`result-icon-cell ${scenario.id === highlightedScenarioId ? "active-column" : ""}`}
-                          >
-                            {renderResultCell(model.id, scenario.id)}
                           </td>
-                        ))}
-                      </tr>
-                    ))}
+                          {scenarios.map((scenario) => (
+                            <td
+                              key={`${model.id}-${scenario.id}`}
+                              className={`result-icon-cell ${scenario.id === highlightedScenarioId ? "active-column" : ""}`}
+                            >
+                              {renderResultCell(model.id, scenario.id)}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   </table>
                 </div>
@@ -6266,28 +6447,43 @@ function BenchmarkSection({
                     />
                   </div>
                 ) : null}
-                {runSummary ? (
-                  <div className="table-retry-actions">
+                <div className="table-retry-actions">
+                  <div className="table-retry-actions-left">
                     <button
                       type="button"
                       className="ghost-button ghost-button-compact"
-                      disabled={!canRetryResultCells || providerErrorRetryCells.length === 0}
-                      onClick={() => onRetryCells(providerErrorRetryCells, "provider errors")}
-                    >
-                      <CircleAlert size={14} />
-                      Retry Provider Errors
-                    </button>
-                    <button
-                      type="button"
-                      className="ghost-button ghost-button-compact"
-                      disabled={!canRetryResultCells || failedRetryCells.length === 0}
-                      onClick={() => onRetryCells(failedRetryCells, "failed results")}
+                      disabled={hasLiveActivity || selectedModels.length === 0}
+                      onClick={onRefreshModelAvailability}
                     >
                       <RotateCcw size={14} />
-                      Retry Failed Results
+                      {checkingAvailability ? "Checking..." : "Refresh Status"}
                     </button>
                   </div>
-                ) : null}
+                  <div className="table-retry-actions-right">
+                    {runSummary ? (
+                      <>
+                        <button
+                          type="button"
+                          className="ghost-button ghost-button-compact"
+                          disabled={!canRetryResultCells || providerErrorRetryCells.length === 0}
+                          onClick={() => onRetryCells(providerErrorRetryCells, "provider errors")}
+                        >
+                          <CircleAlert size={14} />
+                          Retry Provider Errors
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost-button ghost-button-compact"
+                          disabled={!canRetryResultCells || failedRetryCells.length === 0}
+                          onClick={() => onRetryCells(failedRetryCells, "failed results")}
+                        >
+                          <RotateCcw size={14} />
+                          Retry Failed Results
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
               </>
             )}
           </section>

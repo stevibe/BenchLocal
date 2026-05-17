@@ -11,6 +11,7 @@ import {
   saveWorkspaceStateFile
 } from "@core";
 import {
+  checkConfiguredModelAvailability,
   deleteConfiguredBenchPackVerifierImage,
   getConfiguredBenchPackVerifierStatus,
   installBenchPackFromRegistry,
@@ -42,6 +43,7 @@ const APP_UPDATE_GET_STATE_CHANNEL = "benchlocal:updates:get-state";
 const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
 const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
 const MODELS_DISCOVER_CHANNEL = "benchlocal:models:discover";
+const MODELS_AVAILABILITY_CHANNEL = "benchlocal:models:availability";
 const THEMES_LIST_CHANNEL = "benchlocal:themes:list";
 const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const WORKSPACES_LOAD_CHANNEL = "benchlocal:workspaces:load";
@@ -315,6 +317,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(MODELS_DISCOVER_CHANNEL, async (_event, input: { provider: BenchLocalProviderConfig }) => {
     return discoverProviderModels(input.provider);
+  });
+
+  ipcMain.handle(MODELS_AVAILABILITY_CHANNEL, async (_event, input: { config: BenchLocalConfig; modelIds?: string[] }) => {
+    return checkConfiguredModelAvailability(input.config, { modelIds: input.modelIds });
   });
 
   ipcMain.handle(THEMES_LIST_CHANNEL, async () => {

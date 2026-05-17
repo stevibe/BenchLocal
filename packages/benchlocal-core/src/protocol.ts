@@ -182,6 +182,26 @@ export interface RegisteredModel {
   group: string;
 }
 
+export type ModelAvailabilityStatus = "online" | "offline";
+
+export type ModelAvailabilityReason =
+  | "available"
+  | "provider_missing"
+  | "provider_disabled"
+  | "auth_missing"
+  | "provider_unreachable"
+  | "provider_error"
+  | "model_missing";
+
+export interface ModelAvailability {
+  modelId: string;
+  providerId: string;
+  status: ModelAvailabilityStatus;
+  reason: ModelAvailabilityReason;
+  details?: string;
+  checkedAt: string;
+}
+
 export interface SecretResolution {
   providerId: string;
   keyName: string;
