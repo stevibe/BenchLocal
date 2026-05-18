@@ -1211,6 +1211,10 @@ function isProviderErrorResult(result: ScenarioResult | undefined): boolean {
   return result?.errorType === "provider_error";
 }
 
+function isRunCancellationMessage(message: string | undefined): boolean {
+  return /run cancelled/i.test(message ?? "");
+}
+
 const REGISTRY_UNAVAILABLE_MESSAGE =
   "Official Bench Pack registry is unavailable right now. Installed Bench Packs remain usable.";
 
@@ -1463,6 +1467,7 @@ export function App() {
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsOpenRef = useRef(false);
   const workspaceStateRef = useRef<BenchLocalWorkspaceState | null>(null);
+  const benchPackInspectionsRef = useRef<BenchPackInspection[]>([]);
 
   const providerIds = useMemo(() => Object.keys(draft?.providers ?? {}), [draft]);
   const themeOptions = useMemo(() => ["system", ...availableThemes.map((theme) => theme.id)], [availableThemes]);
@@ -1895,7 +1900,7 @@ export function App() {
   }, [activeThemeDefinition]);
 
   useEffect(() => {
-    return window.benchlocal.benchPacks.onRunEvent(({ tabId, event }) => {
+    return window.benchlocal.benchPacks.onRunEvent(({ tabId, benchPackId, event }) => {
       if (event.type === "verifier_preparing") {
         setVerifierPreparationModal({
           tabId,
@@ -1906,6 +1911,14 @@ export function App() {
       }
 
       if (event.type === "run_finished" || event.type === "run_error") {
+        if (event.type === "run_error" && isRunCancellationMessage(event.message)) {
+          const resolvedBenchPackId = benchPackId ?? workspaceStateRef.current?.tabs[tabId]?.benchPackId ?? "";
+          const benchPackName = resolvedBenchPackId
+            ? createTabTitle(resolvedBenchPackId, benchPackInspectionsRef.current)
+            : "Bench Pack run";
+          setAppNotice(`Stopped ${benchPackName}.`);
+        }
+
         setActiveRuns((current) => {
           if (!current[tabId]) {
             return current;
@@ -1981,6 +1994,10 @@ export function App() {
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
+
+  useEffect(() => {
+    benchPackInspectionsRef.current = benchPackInspections;
+  }, [benchPackInspections]);
 
   useEffect(() => {
     const loadUpdatedConfig = async () => {
@@ -3210,7 +3227,10 @@ export function App() {
         return;
       }
 
-      setAppNotice("Stopping Bench Pack run...");
+      const benchPackName = activeRun?.benchPackId
+        ? createTabTitle(activeRun.benchPackId, benchPackInspections)
+        : "Bench Pack run";
+      setAppNotice(`Stopped ${benchPackName}.`);
     } catch (stopError) {
       setStoppingRuns((current) => {
         const next = { ...current };
