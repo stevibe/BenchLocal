@@ -30,6 +30,7 @@ import {
 import {
   checkConfiguredModelAvailability,
   deleteConfiguredBenchPackVerifierImage,
+  deleteRunHistoryForBenchPack,
   getConfiguredBenchPackVerifierStatus,
   installBenchPackFromRegistry,
   installBenchPackFromUrl,
@@ -944,6 +945,11 @@ export class BenchLocalController {
   async clearRunHistory(benchPackId: string) {
     const { config } = await loadOrCreateConfig();
     return clearRunHistoryForBenchPack(config, benchPackId);
+  }
+
+  async deleteRunHistory(benchPackId: string, runIds: string[]) {
+    const { config } = await loadOrCreateConfig();
+    return deleteRunHistoryForBenchPack(config, benchPackId, runIds);
   }
 
   async listVerifiers() {

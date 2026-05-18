@@ -3608,6 +3608,32 @@ select.config-input {
   max-height: min(64vh, 720px);
 }
 
+.history-select-column {
+  width: 42px;
+  text-align: center;
+}
+
+.history-select-column input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.history-time-toggle {
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.history-delete-selected-button {
+  background: transparent;
+  color: var(--muted);
+}
+
+.history-delete-selected-button:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
 .history-table-metric {
   font-size: 0.94rem;
   font-weight: 600;

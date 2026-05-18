@@ -42,6 +42,7 @@ const BENCH_PACK_STOP_CHANNEL = "benchlocal:benchpacks:stop";
 const BENCH_PACK_HISTORY_CHANNEL = "benchlocal:benchpacks:history";
 const BENCH_PACK_HISTORY_LOAD_CHANNEL = "benchlocal:benchpacks:history-load";
 const BENCH_PACK_HISTORY_CLEAR_CHANNEL = "benchlocal:benchpacks:history-clear";
+const BENCH_PACK_HISTORY_DELETE_CHANNEL = "benchlocal:benchpacks:history-delete";
 const BENCH_PACK_RUN_EVENT_CHANNEL = "benchlocal:benchpacks:run-event";
 const VERIFIERS_LIST_CHANNEL = "benchlocal:verifiers:list";
 const VERIFIERS_START_CHANNEL = "benchlocal:verifiers:start";
@@ -265,6 +266,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(BENCH_PACK_HISTORY_CLEAR_CHANNEL, async (_event, input: { benchPackId: string }) => {
     return benchLocalController.clearRunHistory(input.benchPackId);
+  });
+
+  ipcMain.handle(BENCH_PACK_HISTORY_DELETE_CHANNEL, async (_event, input: { benchPackId: string; runIds: string[] }) => {
+    return benchLocalController.deleteRunHistory(input.benchPackId, input.runIds);
   });
 
   ipcMain.handle(VERIFIERS_LIST_CHANNEL, async () => {

@@ -169,6 +169,7 @@ export interface BenchLocalDesktopApi {
     history(input: { benchPackId: string }): Promise<BenchPackRunHistoryEntry[]>;
     loadHistory(input: { benchPackId: string; runId: string }): Promise<BenchPackRunSummary>;
     clearHistory(input: { benchPackId: string }): Promise<{ removed: boolean }>;
+    deleteHistory(input: { benchPackId: string; runIds: string[] }): Promise<{ removedRunIds: string[] }>;
     onRunEvent(listener: (payload: { tabId: string; benchPackId?: string; event: ProgressEvent }) => void): () => void;
   };
   verifiers: {

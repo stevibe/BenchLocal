@@ -4956,6 +4956,35 @@ export async function loadRunSummaryForBenchPack(
   return normalizeRunSummaryProviderErrorClassification(await readJsonFile<BenchPackRunSummary>(summaryPath));
 }
 
+export async function deleteRunHistoryForBenchPack(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  runIds: string[]
+): Promise<{ removedRunIds: string[] }> {
+  const uniqueRunIds = Array.from(new Set(runIds.map((runId) => runId.trim()).filter(Boolean)));
+  const runRoot = path.resolve(getBenchPackRunRoot(config, benchPackId));
+  const removedRunIds: string[] = [];
+
+  for (const runId of uniqueRunIds) {
+    if (runId !== path.basename(runId)) {
+      throw new Error(`Run history "${runId}" is not a valid run identifier.`);
+    }
+
+    const runDir = path.resolve(runRoot, runId);
+
+    if (!runDir.startsWith(`${runRoot}${path.sep}`)) {
+      throw new Error(`Run history "${runId}" is not inside the Bench Pack run directory.`);
+    }
+
+    if (await pathExists(runDir)) {
+      await fs.rm(runDir, { recursive: true, force: true });
+      removedRunIds.push(runId);
+    }
+  }
+
+  return { removedRunIds };
+}
+
 export async function clearRunHistoryForBenchPack(config: BenchLocalConfig, benchPackId: string): Promise<{ removed: boolean }> {
   const runRoot = getBenchPackRunRoot(config, benchPackId);
   await fs.rm(runRoot, { recursive: true, force: true });

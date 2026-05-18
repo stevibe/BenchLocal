@@ -4028,11 +4028,18 @@ export function App() {
     });
   };
 
-  const clearLoadedHistoryForBenchPack = (benchPackId: string) => {
+  const clearLoadedHistoryForBenchPack = (benchPackId: string, runIds?: Set<string>) => {
     const affectedTabIds =
       workspaceState
         ? Object.values(workspaceState.tabs)
-            .filter((tab) => tab.benchPackId === benchPackId && Boolean(loadedHistoryRuns[tab.id]))
+            .filter((tab) => {
+              const loadedRun = loadedHistoryRuns[tab.id];
+              if (tab.benchPackId !== benchPackId || !loadedRun) {
+                return false;
+              }
+
+              return !runIds || runIds.has(loadedRun.runId);
+            })
             .map((tab) => tab.id)
         : [];
 
@@ -4080,18 +4087,32 @@ export function App() {
     });
   };
 
-  const removeAllHistoryForBenchPack = async (benchPackId: string, benchPackName: string) => {
+  const deleteSelectedHistoryForBenchPack = async (benchPackId: string, benchPackName: string, runIds: string[]) => {
     try {
-      await window.benchlocal.benchPacks.clearHistory({ benchPackId });
+      const result = await window.benchlocal.benchPacks.deleteHistory({ benchPackId, runIds });
+      const removedRunIds = new Set(result.removedRunIds);
+
+      if (removedRunIds.size === 0) {
+        setAppNotice("No selected test histories were found.");
+        return;
+      }
+
       setRunHistories((current) => ({
         ...current,
-        [benchPackId]: []
+        [benchPackId]: (current[benchPackId] ?? []).filter((entry) => !removedRunIds.has(entry.runId))
       }));
-      clearLoadedHistoryForBenchPack(benchPackId);
-      setHistoryModal(null);
-      setAppNotice(`Removed all test histories for ${benchPackName}.`);
+
+      setHistoryModal((current) =>
+        current?.benchPackId === benchPackId
+          ? { ...current, entries: current.entries.filter((entry) => !removedRunIds.has(entry.runId)) }
+          : current
+      );
+      clearLoadedHistoryForBenchPack(benchPackId, removedRunIds);
+      setAppNotice(
+        `Deleted ${removedRunIds.size} selected ${removedRunIds.size === 1 ? "history" : "histories"} for ${benchPackName}.`
+      );
     } catch (historyError) {
-      setError(historyError instanceof Error ? historyError.message : "Failed to remove Bench Pack history.");
+      setError(historyError instanceof Error ? historyError.message : "Failed to delete Bench Pack history.");
     }
   };
 
@@ -5618,14 +5639,16 @@ export function App() {
             void restoreHistoryRun(historyModal.benchPackId, runId, mode);
             setHistoryModal(null);
           }}
-          onRemoveAll={() =>
+          onDeleteSelected={(runIds) =>
             setConfirmDialog({
-              title: `Remove all histories for ${historyModal.benchPackName}?`,
-              subtitle: "This permanently deletes all saved test runs for this Bench Pack.",
-              confirmLabel: "Remove All Histories",
+              title: `Delete ${runIds.length} selected ${
+                runIds.length === 1 ? "history" : "histories"
+              } for ${historyModal.benchPackName}?`,
+              subtitle: "This permanently deletes the selected saved test runs.",
+              confirmLabel: "Delete Selected",
               tone: "danger",
               onConfirm: () => {
-                void removeAllHistoryForBenchPack(historyModal.benchPackId, historyModal.benchPackName);
+                void deleteSelectedHistoryForBenchPack(historyModal.benchPackId, historyModal.benchPackName, runIds);
               }
             })
           }
@@ -8658,14 +8681,51 @@ function HistoryModal({
   entries,
   onClose,
   onOpenRun,
-  onRemoveAll
+  onDeleteSelected
 }: {
   benchPackName: string;
   entries: BenchPackRunHistoryEntry[];
   onClose: () => void;
   onOpenRun: (runId: string, mode: "history" | "replay") => void;
-  onRemoveAll: () => void;
+  onDeleteSelected: (runIds: string[]) => void;
 }) {
+  const entryRunIds = useMemo(() => entries.map((entry) => entry.runId), [entries]);
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
+  const selectedCount = selectedRunIds.size;
+  const allSelected = entries.length > 0 && selectedCount === entryRunIds.length;
+
+  useEffect(() => {
+    setSelectedRunIds((current) => {
+      const validRunIds = new Set(entryRunIds);
+      let changed = false;
+      const next = new Set<string>();
+
+      for (const runId of current) {
+        if (validRunIds.has(runId)) {
+          next.add(runId);
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [entryRunIds]);
+
+  const toggleRunSelection = (runId: string, selected: boolean) => {
+    setSelectedRunIds((current) => {
+      const next = new Set(current);
+
+      if (selected) {
+        next.add(runId);
+      } else {
+        next.delete(runId);
+      }
+
+      return next;
+    });
+  };
+
   return (
     <div className="dialog-backdrop">
       <div className="dialog-shell history-dialog-shell">
@@ -8684,6 +8744,15 @@ function HistoryModal({
             <table className="settings-list-table">
               <thead>
                 <tr>
+                  <th className="history-select-column">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all histories"
+                      checked={allSelected}
+                      disabled={entries.length === 0}
+                      onChange={(event) => setSelectedRunIds(event.target.checked ? new Set(entryRunIds) : new Set())}
+                    />
+                  </th>
                   <th>Date Time</th>
                   <th>Mode</th>
                   <th>Models</th>
@@ -8693,14 +8762,26 @@ function HistoryModal({
                 </tr>
               </thead>
               <tbody>
-                {entries.map((entry) => {
+                {entries.map((entry, index) => {
                   const executionModeLabel =
                     EXECUTION_MODE_OPTIONS.find((option) => option.value === entry.executionMode)?.label ?? "Unknown";
+                  const checkboxId = `history-select-${index}-${entry.runId.replace(/[^a-z0-9_-]/gi, "-")}`;
 
                   return (
                     <tr key={entry.runId}>
+                      <td className="history-select-column">
+                        <input
+                          id={checkboxId}
+                          type="checkbox"
+                          aria-label={`Select history ${new Date(entry.startedAt).toLocaleString()}`}
+                          checked={selectedRunIds.has(entry.runId)}
+                          onChange={(event) => toggleRunSelection(entry.runId, event.target.checked)}
+                        />
+                      </td>
                       <td>
-                        <div className="settings-row-primary">{new Date(entry.startedAt).toLocaleString()}</div>
+                        <label className="settings-row-primary history-time-toggle" htmlFor={checkboxId}>
+                          {new Date(entry.startedAt).toLocaleString()}
+                        </label>
                       </td>
                       <td>
                         <span className="status-chip status-idle">{executionModeLabel}</span>
@@ -8744,9 +8825,14 @@ function HistoryModal({
         </div>
 
         <div className="dialog-footer">
-          <button type="button" className="button-warn" onClick={onRemoveAll} disabled={entries.length === 0}>
+          <button
+            type="button"
+            className="ghost-button history-delete-selected-button"
+            onClick={() => onDeleteSelected(Array.from(selectedRunIds))}
+            disabled={selectedCount === 0}
+          >
             <Trash2 size={14} />
-            Remove All Histories
+            Delete Selected
           </button>
         </div>
       </div>
