@@ -1,3 +1,5 @@
+import { toAllowedWebPackOrigin } from "@benchlocal/core";
+
 export type WebPackMediaPermissionRequest = {
   webContentsId: number;
   permission: string;
@@ -6,24 +8,12 @@ export type WebPackMediaPermissionRequest = {
   mediaTypes: readonly string[];
 };
 
-function toAllowedOrigin(value: string): string | null {
-  try {
-    const url = new URL(value);
-    const isHttps = url.protocol === "https:";
-    const isLoopbackHttp = url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
-    return isHttps || isLoopbackHttp ? url.origin : null;
-  } catch {
-    return null;
-  }
-}
-
 export class WebPackMediaPermissionPolicy {
   readonly #microphoneOriginsByWebContents = new Map<number, ReadonlySet<string>>();
 
   update(webContentsId: number, microphoneOrigins: readonly string[]): void {
     const normalizedOrigins = microphoneOrigins
-      .map(toAllowedOrigin)
+      .map(toAllowedWebPackOrigin)
       .filter((origin): origin is string => origin !== null);
     this.#microphoneOriginsByWebContents.set(webContentsId, new Set(normalizedOrigins));
   }
@@ -37,7 +27,7 @@ export class WebPackMediaPermissionPolicy {
       return false;
     }
 
-    const origin = toAllowedOrigin(request.securityOrigin ?? request.requestingUrl ?? "");
+    const origin = toAllowedWebPackOrigin(request.securityOrigin ?? request.requestingUrl ?? "");
     return origin !== null && this.#microphoneOriginsByWebContents.get(request.webContentsId)?.has(origin) === true;
   }
 }

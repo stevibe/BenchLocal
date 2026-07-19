@@ -1,6 +1,7 @@
 {
   "name": "benchlocal-workspace",
   "private": true,
+  "type": "module",
   "version": "0.3.0",
   "workspaces": [
     "app",

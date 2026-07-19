@@ -40,6 +40,7 @@ import {
   getConfigPath,
   isWebBenchPackPermission,
   saveConfigFile,
+  toAllowedWebPackOrigin,
   type BenchPackInspection,
   type BenchPackManifest
 } from "@benchlocal/core";
@@ -983,20 +984,7 @@ function isHttpsUrl(value: string): boolean {
 }
 
 function isAllowedWebPackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-
-    if (url.protocol === "https:") {
-      return true;
-    }
-
-    return (
-      url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]")
-    );
-  } catch {
-    return false;
-  }
+  return toAllowedWebPackOrigin(value) !== null;
 }
 
 function isWebBenchPackManifestConfig(value: unknown): value is WebBenchPackManifestConfig {
