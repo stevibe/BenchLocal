@@ -39,6 +39,7 @@ import type {
 import {
   expandHomePath,
   getConfigPath,
+  isWebBenchPackBridgePermission,
   saveConfigFile,
   type BenchPackInspection,
   type BenchPackManifest
@@ -997,19 +998,6 @@ function isAllowedWebPackUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isWebBenchPackBridgePermission(value: unknown): value is WebBenchPackBridgePermission {
-  return (
-    value === "models:list" ||
-    value === "models:read" ||
-    value === "inference:chat" ||
-    value === "inference:stream" ||
-    value === "runs:write" ||
-    value === "history:read" ||
-    value === "history:write" ||
-    value === "artifacts:write"
-  );
 }
 
 function isWebBenchPackManifestConfig(value: unknown): value is WebBenchPackManifestConfig {

@@ -7,9 +7,11 @@
     "packages/*"
   ],
   "devDependencies": {
-    "electron": "37.2.0"
+    "electron": "37.2.0",
+    "tsx": "^4.23.1"
   },
   "scripts": {
+    "test": "tsx --test test/**/*.test.ts",
     "dev": "npm run dev --workspace app",
     "dev:devtools": "BENCHLOCAL_OPEN_DEVTOOLS=1 npm run dev --workspace app",
     "build:compile": "npm run build --workspace @benchlocal/core && npm run build --workspace @benchlocal/sdk && npm run build --workspace @benchlocal/web-sdk && npm run build --workspace @benchlocal/benchpack-host && npm run build:compile --workspace app",

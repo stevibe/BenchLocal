@@ -13,7 +13,8 @@ export type WebBenchPackBridgePermission =
   | "runs:write"
   | "history:read"
   | "history:write"
-  | "artifacts:write";
+  | "artifacts:write"
+  | "media:microphone";
 
 export interface WebBenchPackDataPolicy {
   mayUseRemoteServices?: boolean;

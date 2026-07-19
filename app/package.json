@@ -104,6 +104,11 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "BenchLocal allows approved Web Bench Packs to capture microphone audio when you start a microphone-enabled benchmark."
+      },
       "gatekeeperAssess": false,
       "type": "distribution",
       "notarize": true,

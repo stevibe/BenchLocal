@@ -18,6 +18,7 @@ import { listAvailableThemes, loadAvailableTheme } from "./themes";
 import { checkForAppUpdates, getAppUpdateState, installDownloadedAppUpdate } from "./updater";
 import { benchLocalController } from "./controller";
 import { agentServer } from "./agent-server";
+import { webPackMediaPermissionPolicy } from "./web-pack-media-permission-policy";
 
 const CONFIG_LOAD_CHANNEL = "benchlocal:config:load";
 const CONFIG_SAVE_CHANNEL = "benchlocal:config:save";
@@ -59,6 +60,7 @@ const WEB_PACK_STREAM_CHAT_CHANNEL = "benchlocal:webpacks:stream-chat";
 const WEB_PACK_STREAM_EVENT_CHANNEL = "benchlocal:webpacks:stream-event";
 const WEB_PACK_HISTORY_SAVE_CHANNEL = "benchlocal:webpacks:history-save";
 const WEB_PACK_ARTIFACT_WRITE_CHANNEL = "benchlocal:webpacks:artifact-write";
+const WEB_PACK_MEDIA_PERMISSION_POLICY_CHANNEL = "benchlocal:webpacks:media-permission-policy";
 const VERIFIERS_LIST_CHANNEL = "benchlocal:verifiers:list";
 const VERIFIERS_START_CHANNEL = "benchlocal:verifiers:start";
 const VERIFIERS_STOP_CHANNEL = "benchlocal:verifiers:stop";
@@ -72,6 +74,7 @@ const AGENT_STATE_CHANNEL = "benchlocal:agent:state";
 const AGENT_GET_STATE_CHANNEL = "benchlocal:agent:get-state";
 const AGENT_CONFIGURE_CHANNEL = "benchlocal:agent:configure";
 const AGENT_REGENERATE_TOKEN_CHANNEL = "benchlocal:agent:regenerate-token";
+const mediaPolicySenders = new WeakSet<Electron.WebContents>();
 
 export function stopActiveBenchPackRunsForShutdown(options?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
   return benchLocalController.stopActiveBenchPackRunsForShutdown(options);
@@ -117,6 +120,19 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(CONFIG_LOAD_CHANNEL, async () => {
     return benchLocalController.loadConfig();
   });
+
+  ipcMain.handle(
+    WEB_PACK_MEDIA_PERMISSION_POLICY_CHANNEL,
+    async (event, input: { microphoneOrigins?: string[] }) => {
+      webPackMediaPermissionPolicy.update(event.sender.id, input.microphoneOrigins ?? []);
+      if (!mediaPolicySenders.has(event.sender)) {
+        mediaPolicySenders.add(event.sender);
+        const webContentsId = event.sender.id;
+        event.sender.once("destroyed", () => webPackMediaPermissionPolicy.clear(webContentsId));
+      }
+      return { updated: true };
+    }
+  );
 
   ipcMain.handle(CONFIG_SAVE_CHANNEL, async (_event, config: BenchLocalConfig) => {
     return benchLocalController.saveConfig(config);

@@ -178,6 +178,7 @@ export interface BenchLocalDesktopApi {
     onRunEvent(listener: (payload: { tabId: string; benchPackId?: string; event: ProgressEvent }) => void): () => void;
   };
   webPacks: {
+    setMediaPermissionPolicy(input: { microphoneOrigins: string[] }): Promise<{ updated: boolean }>;
     chat(input: BenchLocalChatRequest): Promise<BenchLocalChatResponse>;
     streamChat(
       input: { streamId: string; request: BenchLocalChatRequest },

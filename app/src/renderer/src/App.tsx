@@ -34,6 +34,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
+import { getWebPackIframeAllow } from "./web-pack-permissions";
 import type {
   ArtifactRef,
   BenchLocalChatRequest,
@@ -2240,6 +2241,27 @@ export function App() {
     () => benchPackInspections.find((inspection) => inspection.id === activeTab?.benchPackId) ?? null,
     [benchPackInspections, activeTab]
   );
+  const activeWebPackMicrophoneOrigins = useMemo(() => {
+    const manifest = activeInspection?.manifest;
+    if ((manifest?.type ?? "table") !== "web" || !manifest?.web?.permissions.includes("media:microphone")) {
+      return [];
+    }
+
+    return Array.from(new Set(
+      [manifest.entry, ...manifest.web.allowedOrigins]
+        .map(getOriginFromUrl)
+        .filter((origin): origin is string => Boolean(origin))
+    ));
+  }, [activeInspection]);
+  useEffect(() => {
+    void window.benchlocal.webPacks.setMediaPermissionPolicy({
+      microphoneOrigins: activeWebPackMicrophoneOrigins
+    });
+
+    return () => {
+      void window.benchlocal.webPacks.setMediaPermissionPolicy({ microphoneOrigins: [] });
+    };
+  }, [activeWebPackMicrophoneOrigins]);
   const activeVerifierStatus = useMemo(
     () => (activeInspection ? verifierStatuses[activeInspection.id] ?? null : null),
     [activeInspection, verifierStatuses]
@@ -7428,6 +7450,7 @@ function WebBenchPackSection({
         title={manifest.name}
         src={entryUrl}
         className="web-benchpack-frame"
+        allow={getWebPackIframeAllow(manifest.web?.permissions ?? [])}
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
         referrerPolicy="no-referrer"
       />

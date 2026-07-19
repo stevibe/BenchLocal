@@ -22,6 +22,7 @@ const WEB_PACK_STREAM_CHAT_CHANNEL = "benchlocal:webpacks:stream-chat";
 const WEB_PACK_STREAM_EVENT_CHANNEL = "benchlocal:webpacks:stream-event";
 const WEB_PACK_HISTORY_SAVE_CHANNEL = "benchlocal:webpacks:history-save";
 const WEB_PACK_ARTIFACT_WRITE_CHANNEL = "benchlocal:webpacks:artifact-write";
+const WEB_PACK_MEDIA_PERMISSION_POLICY_CHANNEL = "benchlocal:webpacks:media-permission-policy";
 const VERIFIERS_PROGRESS_CHANNEL = "benchlocal:verifiers:progress";
 const DETACHED_LOGS_STATE_CHANNEL = "benchlocal:logs:state";
 const DETACHED_LOGS_CLOSED_CHANNEL = "benchlocal:logs:closed";
@@ -152,6 +153,7 @@ const api: BenchLocalDesktopApi = {
     }
   },
   webPacks: {
+    setMediaPermissionPolicy: (input) => ipcRenderer.invoke(WEB_PACK_MEDIA_PERMISSION_POLICY_CHANNEL, input),
     chat: (input) => ipcRenderer.invoke(WEB_PACK_CHAT_CHANNEL, input),
     streamChat: (input, listener) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof listener>[0]) => {

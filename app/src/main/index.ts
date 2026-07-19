@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeTheme, screen, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, screen, session, type MenuItemConstructorOptions } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getBenchLocalHome, loadOrCreateConfig } from "@core";
@@ -7,6 +7,7 @@ import { APP_OPEN_ABOUT_CHANNEL, APP_OPEN_SETTINGS_CHANNEL, registerIpcHandlers,
 import { loadAvailableTheme } from "./themes";
 import { checkForAppUpdatesInteractively, initializeAppUpdater } from "./updater";
 import { agentServer } from "./agent-server";
+import { registerWebPackMediaPermissionHandlers } from "./web-pack-media-permission-policy";
 
 const isDev = !app.isPackaged;
 const shouldOpenDevTools = process.env.BENCHLOCAL_OPEN_DEVTOOLS === "1";
@@ -372,6 +373,7 @@ app.whenReady().then(async () => {
     ...(appMetadata.copyright ? { copyright: appMetadata.copyright } : {})
   });
   registerIpcHandlers();
+  registerWebPackMediaPermissionHandlers(session.defaultSession);
   await agentServer.initialize();
   initializeAppUpdater();
   buildApplicationMenu(appMetadata.productName);

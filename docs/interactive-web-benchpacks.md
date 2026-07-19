@@ -137,6 +137,7 @@ Required rules:
 - Do not expose provider API keys, secret environment names, or raw provider config to the web app.
 - Do not provide an arbitrary credentialed HTTP proxy.
 - Treat bridge permissions as capabilities and enforce them per installed pack.
+- Delegate microphone access only when the active pack declares `media:microphone`; scope Electron media approval to that pack's declared origins and audio-only requests.
 - Persist pack id, version, entry URL, and build metadata into each run.
 
 The web app may call its own server if the manifest declares it. Provider requests still go through BenchLocal.
