@@ -1,6 +1,6 @@
-import type { WebBenchPackBridgePermission } from "./protocol.js";
+import type { WebBenchPackPermission } from "./protocol.js";
 
-const WEB_BENCH_PACK_BRIDGE_PERMISSIONS = new Set<WebBenchPackBridgePermission>([
+const WEB_BENCH_PACK_PERMISSIONS = new Set<WebBenchPackPermission>([
   "models:list",
   "models:read",
   "inference:chat",
@@ -12,7 +12,6 @@ const WEB_BENCH_PACK_BRIDGE_PERMISSIONS = new Set<WebBenchPackBridgePermission>(
   "media:microphone"
 ]);
 
-export function isWebBenchPackBridgePermission(value: unknown): value is WebBenchPackBridgePermission {
-  return typeof value === "string" && WEB_BENCH_PACK_BRIDGE_PERMISSIONS.has(value as WebBenchPackBridgePermission);
+export function isWebBenchPackPermission(value: unknown): value is WebBenchPackPermission {
+  return typeof value === "string" && WEB_BENCH_PACK_PERMISSIONS.has(value as WebBenchPackPermission);
 }
-

@@ -33,13 +33,12 @@ import type {
   VerifierEndpoint,
   VerifierMode,
   VerifierSpec,
-  WebBenchPackBridgePermission,
   WebBenchPackManifestConfig
 } from "@benchlocal/core";
 import {
   expandHomePath,
   getConfigPath,
-  isWebBenchPackBridgePermission,
+  isWebBenchPackPermission,
   saveConfigFile,
   type BenchPackInspection,
   type BenchPackManifest
@@ -993,7 +992,7 @@ function isAllowedWebPackUrl(value: string): boolean {
 
     return (
       url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1")
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]")
     );
   } catch {
     return false;
@@ -1011,7 +1010,7 @@ function isWebBenchPackManifestConfig(value: unknown): value is WebBenchPackMani
     Array.isArray(candidate.allowedOrigins) &&
     candidate.allowedOrigins.every((origin) => typeof origin === "string" && isAllowedWebPackUrl(origin)) &&
     Array.isArray(candidate.permissions) &&
-    candidate.permissions.every(isWebBenchPackBridgePermission) &&
+    candidate.permissions.every(isWebBenchPackPermission) &&
     (candidate.historyPlayback === undefined || typeof candidate.historyPlayback === "boolean") &&
     (candidate.buildId === undefined || typeof candidate.buildId === "string") &&
     (candidate.manifestHash === undefined || typeof candidate.manifestHash === "string")

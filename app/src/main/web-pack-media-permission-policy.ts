@@ -11,7 +11,7 @@ function toAllowedOrigin(value: string): string | null {
     const url = new URL(value);
     const isHttps = url.protocol === "https:";
     const isLoopbackHttp = url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1");
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
     return isHttps || isLoopbackHttp ? url.origin : null;
   } catch {
     return null;
@@ -60,23 +60,24 @@ type PermissionSession = {
 };
 
 export function registerWebPackMediaPermissionHandlers(permissionSession: PermissionSession): void {
+  const allows = (
+    webContentsId: number,
+    permission: string,
+    details: { mediaType?: string; mediaTypes?: readonly string[]; requestingUrl?: string; securityOrigin?: string },
+    requestingOrigin?: string
+  ): boolean => webPackMediaPermissionPolicy.allows({
+    webContentsId,
+    permission,
+    requestingUrl: details.requestingUrl ?? requestingOrigin,
+    securityOrigin: details.securityOrigin,
+    mediaTypes: details.mediaTypes ?? (details.mediaType ? [details.mediaType] : [])
+  });
+
   permissionSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    return webPackMediaPermissionPolicy.allows({
-      webContentsId: webContents?.id ?? -1,
-      permission,
-      requestingUrl: details.requestingUrl ?? requestingOrigin,
-      securityOrigin: details.securityOrigin,
-      mediaTypes: details.mediaType ? [details.mediaType] : []
-    });
+    return allows(webContents?.id ?? -1, permission, details, requestingOrigin);
   });
 
   permissionSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    callback(webPackMediaPermissionPolicy.allows({
-      webContentsId: webContents.id,
-      permission,
-      requestingUrl: details.requestingUrl,
-      securityOrigin: details.securityOrigin,
-      mediaTypes: details.mediaTypes ?? []
-    }));
+    callback(allows(webContents.id, permission, details));
   });
 }
