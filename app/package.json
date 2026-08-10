@@ -38,7 +38,7 @@
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.20",
-    "electron": "37.2.0",
+    "electron": "37.10.3",
     "electron-builder": "^26.0.12",
     "electron-vite": "^3.1.0",
     "postcss": "^8.5.1",
@@ -49,7 +49,7 @@
   "build": {
     "appId": "com.stevibe.benchlocal",
     "productName": "BenchLocal",
-    "electronVersion": "37.2.0",
+    "electronVersion": "37.10.3",
     "electronUpdaterCompatibility": ">=2.16",
     "directories": {
       "output": "dist"
@@ -105,6 +105,11 @@
       "icon": "build/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "BenchLocal allows approved Web Bench Packs to capture microphone audio when you start a microphone-enabled benchmark."
+      },
       "gatekeeperAssess": false,
       "type": "distribution",
       "notarize": true,

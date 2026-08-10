@@ -1,3 +1,4 @@
 *
 !.gitignore
 !icon.icns
+!entitlements.mac.plist

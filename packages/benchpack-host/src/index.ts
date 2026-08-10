@@ -33,13 +33,14 @@ import type {
   VerifierEndpoint,
   VerifierMode,
   VerifierSpec,
-  WebBenchPackBridgePermission,
   WebBenchPackManifestConfig
 } from "@benchlocal/core";
 import {
   expandHomePath,
   getConfigPath,
+  isWebBenchPackPermission,
   saveConfigFile,
+  toAllowedWebPackOrigin,
   type BenchPackInspection,
   type BenchPackManifest
 } from "@benchlocal/core";
@@ -983,33 +984,7 @@ function isHttpsUrl(value: string): boolean {
 }
 
 function isAllowedWebPackUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-
-    if (url.protocol === "https:") {
-      return true;
-    }
-
-    return (
-      url.protocol === "http:" &&
-      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isWebBenchPackBridgePermission(value: unknown): value is WebBenchPackBridgePermission {
-  return (
-    value === "models:list" ||
-    value === "models:read" ||
-    value === "inference:chat" ||
-    value === "inference:stream" ||
-    value === "runs:write" ||
-    value === "history:read" ||
-    value === "history:write" ||
-    value === "artifacts:write"
-  );
+  return toAllowedWebPackOrigin(value) !== null;
 }
 
 function isWebBenchPackManifestConfig(value: unknown): value is WebBenchPackManifestConfig {
@@ -1023,7 +998,7 @@ function isWebBenchPackManifestConfig(value: unknown): value is WebBenchPackMani
     Array.isArray(candidate.allowedOrigins) &&
     candidate.allowedOrigins.every((origin) => typeof origin === "string" && isAllowedWebPackUrl(origin)) &&
     Array.isArray(candidate.permissions) &&
-    candidate.permissions.every(isWebBenchPackBridgePermission) &&
+    candidate.permissions.every(isWebBenchPackPermission) &&
     (candidate.historyPlayback === undefined || typeof candidate.historyPlayback === "boolean") &&
     (candidate.buildId === undefined || typeof candidate.buildId === "string") &&
     (candidate.manifestHash === undefined || typeof candidate.manifestHash === "string")

@@ -14,6 +14,8 @@ export type WebBenchPackBridgePermission =
   | "history:read"
   | "history:write"
   | "artifacts:write";
+export type WebBenchPackHostPermission = "media:microphone";
+export type WebBenchPackPermission = WebBenchPackBridgePermission | WebBenchPackHostPermission;
 
 export interface WebBenchPackDataPolicy {
   mayUseRemoteServices?: boolean;
@@ -26,7 +28,7 @@ export interface WebBenchPackDataPolicy {
 export interface WebBenchPackManifestConfig {
   bridgeVersion: 1;
   allowedOrigins: string[];
-  permissions: WebBenchPackBridgePermission[];
+  permissions: WebBenchPackPermission[];
   historyPlayback?: boolean;
   buildId?: string;
   manifestHash?: string;

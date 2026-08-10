@@ -530,6 +530,7 @@ Common permissions:
 | `history:read` | `history.load()` |
 | `history:write` | `history.save()` |
 | `artifacts:write` | `history.writeArtifact()` |
+| `media:microphone` | Browser microphone capture from the active pack frame after the user grants OS permission |
 
 Example web manifest section:
 
@@ -547,7 +548,8 @@ Example web manifest section:
       "runs:write",
       "history:read",
       "history:write",
-      "artifacts:write"
+      "artifacts:write",
+      "media:microphone"
     ],
     "historyPlayback": true
   }
@@ -562,6 +564,7 @@ Example web manifest section:
 - Treat the web app as presentation and benchmark orchestration.
 - Treat BenchLocal as the local authority for provider execution, selected models, history, and artifacts.
 - If your web pack calls remote services, declare those origins in the Bench Pack data policy and explain what data is sent.
+- Request `media:microphone` only when live audio is required. BenchLocal delegates microphone access only to the active pack's declared origins and rejects camera or mixed audio/video requests.
 - Store enough history metadata for users to understand and reproduce a run, but avoid storing secrets.
 
 ## Error Handling
