@@ -17,8 +17,8 @@ let isPreparingToQuit = false;
 let forceQuitTimer: NodeJS.Timeout | null = null;
 const DEFAULT_WINDOW_WIDTH = 1500;
 const DEFAULT_WINDOW_HEIGHT = 800;
-const MIN_WINDOW_WIDTH = 1180;
-const MIN_WINDOW_HEIGHT = 768;
+const MIN_WINDOW_WIDTH = 960;
+const MIN_WINDOW_HEIGHT = 640;
 const WINDOW_STATE_PATH = path.join(getBenchLocalHome(), "window-state.json");
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = isDev ? 3_000 : 15_000;
 const FORCE_QUIT_TIMEOUT_MS = isDev ? 6_000 : 20_000;
@@ -347,8 +347,8 @@ async function createMainWindow(): Promise<void> {
     });
   }
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    await window.loadURL(process.env.VITE_DEV_SERVER_URL);
+  if (process.env.ELECTRON_RENDERER_URL) {
+    await window.loadURL(process.env.ELECTRON_RENDERER_URL);
     if (shouldOpenDevTools) {
       window.webContents.openDevTools({ mode: "detach", activate: true });
     }

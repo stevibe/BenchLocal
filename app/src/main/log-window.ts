@@ -27,9 +27,9 @@ function broadcastWindowClosed(): void {
 }
 
 function getDetachedLogsUrl(): { url?: string; filePath?: string } {
-  if (process.env.VITE_DEV_SERVER_URL) {
+  if (process.env.ELECTRON_RENDERER_URL) {
     return {
-      url: `${process.env.VITE_DEV_SERVER_URL}?view=logs`
+      url: `${process.env.ELECTRON_RENDERER_URL}?view=logs`
     };
   }
 

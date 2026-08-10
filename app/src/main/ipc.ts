@@ -26,6 +26,7 @@ const CONFIG_UPDATED_CHANNEL = "benchlocal:config:updated";
 const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
 export const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 export const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
+const WINDOW_BUTTONS_VISIBLE_CHANNEL = "benchlocal:window:buttons-visible";
 const APP_UPDATE_GET_STATE_CHANNEL = "benchlocal:updates:get-state";
 const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
 const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
@@ -140,6 +141,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(APP_METADATA_CHANNEL, async () => {
     return loadAppMetadata();
+  });
+
+  ipcMain.handle(WINDOW_BUTTONS_VISIBLE_CHANNEL, async (event, visible: boolean) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    if (process.platform === "darwin" && targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.setWindowButtonVisibility(visible);
+    }
   });
 
   ipcMain.handle(APP_UPDATE_GET_STATE_CHANNEL, async () => {

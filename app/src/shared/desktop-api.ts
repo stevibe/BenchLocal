@@ -104,6 +104,9 @@ export interface BenchLocalDesktopApi {
     onOpenAbout(listener: () => void): () => void;
     onOpenSettings(listener: () => void): () => void;
   };
+  windowControls: {
+    setWindowButtonsVisible(visible: boolean): Promise<void>;
+  };
   updates: {
     state(): Promise<BenchLocalUpdateState>;
     check(): Promise<BenchLocalUpdateState>;

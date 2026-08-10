@@ -7,6 +7,7 @@ const THEMES_LOAD_CHANNEL = "benchlocal:themes:load";
 const APP_METADATA_CHANNEL = "benchlocal:app:metadata";
 const APP_OPEN_ABOUT_CHANNEL = "benchlocal:app:open-about";
 const APP_OPEN_SETTINGS_CHANNEL = "benchlocal:app:open-settings";
+const WINDOW_BUTTONS_VISIBLE_CHANNEL = "benchlocal:window:buttons-visible";
 const APP_UPDATE_GET_STATE_CHANNEL = "benchlocal:updates:get-state";
 const APP_UPDATE_CHECK_CHANNEL = "benchlocal:updates:check";
 const APP_UPDATE_INSTALL_CHANNEL = "benchlocal:updates:install";
@@ -50,6 +51,9 @@ const api: BenchLocalDesktopApi = {
       ipcRenderer.on(APP_OPEN_SETTINGS_CHANNEL, wrapped);
       return () => ipcRenderer.removeListener(APP_OPEN_SETTINGS_CHANNEL, wrapped);
     }
+  },
+  windowControls: {
+    setWindowButtonsVisible: (visible) => ipcRenderer.invoke(WINDOW_BUTTONS_VISIBLE_CHANNEL, visible)
   },
   updates: {
     state: () => ipcRenderer.invoke(APP_UPDATE_GET_STATE_CHANNEL),

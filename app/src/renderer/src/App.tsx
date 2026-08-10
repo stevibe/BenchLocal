@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import benchlocalIcon from "../../../assets/benchlocal-icon.png";
 import benchlocalIconOutline from "../../../assets/benchlocal-icon-outline.png";
 import shareCardDisplayFontUrl from "./assets/fonts/InterVariable.woff2";
 import shareCardMonoFontUrl from "./assets/fonts/JetBrainsMonoVariable.woff2";
+import type { ShareResultsData } from "./features/share-results/share-results";
 import {
   ArrowRight,
   ArrowUp,
@@ -77,6 +78,11 @@ import type {
 const DETACHED_LOGS_VIEW =
   typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "logs";
 
+const ShareResultsStudio = lazy(async () => {
+  const module = await import("./features/share-results/ShareResultsStudio");
+  return { default: module.ShareResultsStudio };
+});
+
 function describeAppUpdateState(state: BenchLocalUpdateState | null): string {
   if (!state) {
     return "Updater is initializing.";
@@ -141,6 +147,18 @@ function formatDurationMs(durationMs?: number): string | null {
   const minutes = Math.floor(durationMs / 60_000);
   const seconds = Math.round((durationMs % 60_000) / 1000);
   return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function formatStructuredDetail(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 type SettingsTab = "providers" | "models" | "benchPacks" | "verification" | "agent" | "advanced";
@@ -225,6 +243,12 @@ type DetailModalState = {
   errorType?: ScenarioResult["errorType"];
   retryable?: boolean;
   timings?: ScenarioResult["timings"];
+  note?: ScenarioResult["note"];
+  score?: ScenarioResult["score"];
+  points?: ScenarioResult["points"];
+  output?: ScenarioResult["output"];
+  verifier?: ScenarioResult["verifier"];
+  artifacts?: ScenarioResult["artifacts"];
 };
 
 type TabModelsModalState = {
@@ -466,7 +490,8 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; blurb: string; icon
   { id: "models", label: "Models", blurb: "Shared model registry across Bench Packs.", icon: <Bot size={16} /> },
   { id: "benchPacks", label: "Bench Packs", blurb: "Browse, install, update, and remove official Bench Packs.", icon: <PlugZap size={16} /> },
   { id: "verification", label: "Verification", blurb: "Managed verifiers and dependency modes.", icon: <Wrench size={16} /> },
-  { id: "agent", label: "Agent Access", blurb: "Local API and live event stream for AI agents.", icon: <Server size={16} /> }
+  { id: "agent", label: "Agent Access", blurb: "Local API and live event stream for AI agents.", icon: <Server size={16} /> },
+  { id: "advanced", label: "Advanced", blurb: "Storage paths and low-level app configuration.", icon: <Cog size={16} /> }
 ];
 
 const SAMPLING_FIELDS: Array<{
@@ -586,6 +611,21 @@ function formatShareDate(value: string): string {
     month: "short",
     day: "2-digit",
     hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatCompactHistoryDate(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.valueOf())) {
+    return "saved run";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
     minute: "2-digit"
   }).format(date);
 }
@@ -1604,7 +1644,7 @@ function SettingsTableShell({
 
   return (
     <div className={wrapClassName}>
-      <div ref={viewportRef} className="settings-table-scroll">
+      <div ref={viewportRef} className="settings-table-scroll" role="region" aria-label="Scrollable settings table" tabIndex={0}>
         {children}
       </div>
       {hasHorizontalOverflow ? (
@@ -2306,7 +2346,7 @@ export function App() {
   const logContainerRef = useRef<HTMLDivElement | null>(null);
   const tabStripShellRef = useRef<HTMLDivElement | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
-  const tabChipRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabChipRefs = useRef(new Map<string, HTMLElement>());
   const modelDiscoveryCacheRef = useRef<Record<string, BenchLocalDiscoveredModel[]>>({});
   const modelAvailabilityRequestRef = useRef(0);
   const modelAvailabilityPendingRef = useRef<Record<string, number>>({});
@@ -5735,9 +5775,6 @@ export function App() {
 	                    return (
 	                      <div
 	                        key={workspace.id}
-                          role="button"
-                          tabIndex={0}
-	                        onClick={() => activateWorkspace(workspace.id)}
                           onContextMenu={(event) => {
                             event.preventDefault();
                             activateWorkspace(workspace.id);
@@ -5748,25 +5785,24 @@ export function App() {
                               y: event.clientY
                             });
                           }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              activateWorkspace(workspace.id);
-                            }
-                          }}
 	                        className={`sidebar-item${activeWorkspace?.id === workspace.id ? " is-active" : ""}`}
 		                      >
-		                        <div className="sidebar-item-main">
+		                        <button
+                              type="button"
+                              className="sidebar-item-main sidebar-item-select"
+                              onClick={() => activateWorkspace(workspace.id)}
+                              aria-current={activeWorkspace?.id === workspace.id ? "page" : undefined}
+                            >
 		                          <div className="sidebar-item-title">{workspace.name}</div>
-                              <div className="sidebar-item-footer">
-		                            <div className="sidebar-item-meta">{workspace.tabIds.length} tab{workspace.tabIds.length === 1 ? "" : "s"}</div>
-	                            <div className="sidebar-item-actions">
-	                              <button
-	                                type="button"
+		                          <div className="sidebar-item-meta">{workspace.tabIds.length} tab{workspace.tabIds.length === 1 ? "" : "s"}</div>
+		                        </button>
+	                          <div className="sidebar-item-actions">
+	                            <button
+	                              type="button"
                                 className="sidebar-item-action"
                                 title="Rename workspace"
-                                onClick={(event) => {
-                                  event.stopPropagation();
+                                aria-label={`Rename ${workspace.name}`}
+                                onClick={() => {
                                   setWorkspaceModal({
                                     mode: "rename",
                                     workspaceId: workspace.id,
@@ -5776,9 +5812,7 @@ export function App() {
                               >
                                 <Pencil size={13} />
                               </button>
-	                            </div>
-                              </div>
-		                        </div>
+	                          </div>
 		                      </div>
 	                    );
 	                  })
@@ -5813,7 +5847,7 @@ export function App() {
                               }}
                             />
                           ) : null}
-                          <div ref={tabStripRef} className="tab-strip">
+                          <div ref={tabStripRef} className="tab-strip" role="tablist" aria-label="Open Bench Packs">
 	                          {workspaceTabs.map((tab) => {
 	                            const inspection = benchPackInspections.find((candidate) => candidate.id === tab.benchPackId);
                               const isTabRunning = Boolean(activeRuns[tab.id]);
@@ -5823,9 +5857,11 @@ export function App() {
                               const isEditingTab = editingTab?.tabId === tab.id;
 
 		                            return (
-		                              <button
+		                              <div
 		                                key={tab.id}
-		                                type="button"
+                                      role="tab"
+                                      tabIndex={activeTab?.id === tab.id ? 0 : -1}
+                                      aria-selected={activeTab?.id === tab.id}
                                       ref={(element) => {
                                         if (element) {
                                           tabChipRefs.current.set(tab.id, element);
@@ -5877,6 +5913,29 @@ export function App() {
 
                                         activateTab(tab.id);
                                       }}
+		                                onKeyDown={(event) => {
+                                        if (isEditingTab) {
+                                          return;
+                                        }
+
+                                        if (event.key === "Enter" || event.key === " ") {
+                                          event.preventDefault();
+                                          activateTab(tab.id);
+                                          return;
+                                        }
+
+                                        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                                          event.preventDefault();
+                                          const currentIndex = workspaceTabs.findIndex((candidate) => candidate.id === tab.id);
+                                          const direction = event.key === "ArrowRight" ? 1 : -1;
+                                          const nextTab = workspaceTabs[(currentIndex + direction + workspaceTabs.length) % workspaceTabs.length];
+
+                                          if (nextTab) {
+                                            activateTab(nextTab.id);
+                                            window.requestAnimationFrame(() => tabChipRefs.current.get(nextTab.id)?.focus());
+                                          }
+                                        }
+                                      }}
 		                                className={`tab-chip${activeTab?.id === tab.id ? " is-active" : ""}${draggedTabId === tab.id ? " is-dragging" : ""}`}
                                       style={isEditingTab ? { width: `${editingTab.width}px` } : undefined}
 		                              >
@@ -5922,10 +5981,10 @@ export function App() {
                                         <CircleAlert size={14} />
                                       </span>
                                     ) : null}
-	                                <span
-	                                  role="button"
-	                                  tabIndex={0}
+	                                <button
+	                                  type="button"
 	                                  className="tab-chip-close"
+	                                  aria-label={`Close ${tab.title}`}
 	                                  onClick={(event) => {
 	                                    event.stopPropagation();
                                       if (isEditingTab) {
@@ -5938,22 +5997,10 @@ export function App() {
                                         onConfirm: () => closeTab(tab.id)
                                       });
 	                                  }}
-	                                  onKeyDown={(event) => {
-	                                    if (event.key === "Enter" || event.key === " ") {
-	                                      event.preventDefault();
-	                                      event.stopPropagation();
-                                        setConfirmDialog({
-                                          title: "Close Tab",
-                                          subtitle: `Close "${tab.title}"? The Bench Pack tab will be removed from this workspace.`,
-                                          confirmLabel: "Close Tab",
-                                          onConfirm: () => closeTab(tab.id)
-                                        });
-	                                    }
-	                                  }}
 	                                >
 	                                  <X size={12} />
-	                                </span>
-	                              </button>
+	                                </button>
+	                              </div>
 	                            );
 	                          })}
                               <button
@@ -6813,7 +6860,44 @@ export function App() {
               ) : null}
             </div>
           ) : null}
-          <pre className="dialog-log">{detailModal.rawLog}</pre>
+          {detailModal.score !== undefined || detailModal.points !== undefined ? (
+            <div className="dialog-summary">
+              <div className="dialog-summary-copy">
+                <span className="dialog-summary-label">Scenario Score</span>
+                <span className="dialog-summary-value">
+                  {detailModal.score ?? "—"}{detailModal.points !== undefined ? ` / ${detailModal.points}` : ""}
+                </span>
+              </div>
+            </div>
+          ) : null}
+          {detailModal.note ? (
+            <div className="result-detail-note">
+              <span className="dialog-summary-label">Note</span>
+              <p>{detailModal.note}</p>
+            </div>
+          ) : null}
+          {detailModal.output ? (
+            <details className="result-detail-section" open>
+              <summary>Model output</summary>
+              <pre className="dialog-log">{formatStructuredDetail(detailModal.output)}</pre>
+            </details>
+          ) : null}
+          {detailModal.verifier ? (
+            <details className="result-detail-section">
+              <summary>Verifier evidence</summary>
+              <pre className="dialog-log">{formatStructuredDetail(detailModal.verifier)}</pre>
+            </details>
+          ) : null}
+          {detailModal.artifacts?.length ? (
+            <details className="result-detail-section">
+              <summary>Artifacts ({detailModal.artifacts.length})</summary>
+              <pre className="dialog-log">{formatStructuredDetail(detailModal.artifacts)}</pre>
+            </details>
+          ) : null}
+          <details className="result-detail-section" open={!detailModal.output}>
+            <summary>Raw trace</summary>
+            <pre className="dialog-log">{detailModal.rawLog}</pre>
+          </details>
         </Modal>
       ) : null}
     </div>
@@ -6885,7 +6969,7 @@ function BenchPackPickerDialog({
 
   return (
     <div className="dialog-backdrop">
-      <div className="dialog-shell dialog-shell-wide benchpack-picker-shell">
+      <div className="dialog-shell dialog-shell-wide benchpack-picker-shell" role="dialog" aria-modal="true" aria-label={title}>
         <div className="dialog-header">
           <div>
             <h3 className="dialog-title">{title}</h3>
@@ -7431,7 +7515,7 @@ function WebBenchPackSection({
           ) : null}
           <button type="button" className="ghost-button" onClick={onEditSampling}>
             <SlidersHorizontal size={14} />
-            Samplings
+            Sampling
           </button>
           <button type="button" className="ghost-button" onClick={onEditModels}>
             <Bot size={14} />
@@ -7531,7 +7615,11 @@ function BenchmarkSection({
 }) {
   const [runModeOpen, setRunModeOpen] = useState(false);
   const [runsPerTestOpen, setRunsPerTestOpen] = useState(false);
+  const [issuesOnly, setIssuesOnly] = useState(false);
+  const [sortByScore, setSortByScore] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [shareCardData, setShareCardData] = useState<ResultShareCardData | null>(null);
+  const [shareResultsData, setShareResultsData] = useState<ShareResultsData | null>(null);
   const runModeRef = useRef<HTMLDivElement | null>(null);
   const runsPerTestRef = useRef<HTMLDivElement | null>(null);
   const tableScrollViewportRef = useRef<HTMLDivElement | null>(null);
@@ -7580,6 +7668,20 @@ function BenchmarkSection({
     : hasRetryActivity || isStopping || !(canReplayRun || canResumeRun || (!isViewingHistory && canStartFreshRun));
   const hasHorizontalOverflow = tableScrollMetrics.scrollWidth > tableScrollMetrics.clientWidth + 1;
   const stickyColumnShadow = tableScrollMetrics.scrollLeft > 2;
+
+  const openShareResults = async () => {
+    if (!runSummary) {
+      return;
+    }
+
+    const { buildShareResultsData } = await import("./features/share-results/share-results");
+    setShareResultsData(buildShareResultsData({
+      runSummary,
+      models: selectedModels,
+      providers,
+      scenarios
+    }));
+  };
   const scrollbarThumbWidth = hasHorizontalOverflow ? getTableScrollbarThumbWidth(tableScrollMetrics) : 0;
   const scrollbarThumbOffset =
     hasHorizontalOverflow && tableScrollbarTrackRef.current
@@ -7607,6 +7709,45 @@ function BenchmarkSection({
   const runSummaryComplete = isRunSummaryComplete(runSummary);
   const runStateClass = isRunning ? "status-live" : runSummary ? runSummaryComplete ? "status-done" : "status-preview" : "status-idle";
   const runStateLabel = hasLiveActivity ? "Live" : runSummary && !runSummaryComplete ? "Incomplete" : runSummary ? "Done" : "Idle";
+  const getDisplayedResult = (modelId: string, scenarioId: string) => {
+    const liveResult = liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+    const persistedResult = isReplayMode
+      ? undefined
+      : runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
+
+    return liveResult ?? persistedResult;
+  };
+  const totalResultCount = selectedModels.length * scenarios.length;
+  const completedResultCount = selectedModels.reduce(
+    (total, model) => total + scenarios.filter((scenario) => Boolean(getDisplayedResult(model.id, scenario.id))).length,
+    0
+  );
+  const runProgressPercent = totalResultCount > 0 ? Math.min(100, (completedResultCount / totalResultCount) * 100) : 0;
+  const displayedScenarios = issuesOnly
+    ? scenarios.filter((scenario) =>
+        selectedModels.some((model) => {
+          const result = getDisplayedResult(model.id, scenario.id);
+          return result && (result.status !== "pass" || isProviderErrorResult(result));
+        })
+      )
+    : scenarios;
+  const displayedModels = sortByScore && runSummary
+    ? [...selectedModels].sort(
+        (left, right) =>
+          (runSummary.scores[right.id]?.totalScore ?? Number.NEGATIVE_INFINITY) -
+          (runSummary.scores[left.id]?.totalScore ?? Number.NEGATIVE_INFINITY)
+      )
+    : selectedModels;
+
+  useEffect(() => {
+    if (!runSummary) {
+      setSortByScore(false);
+    }
+
+    if (!runSummary && completedResultCount === 0) {
+      setIssuesOnly(false);
+    }
+  }, [completedResultCount, runSummary]);
 
   useEffect(() => {
     if (!runModeOpen && !runsPerTestOpen) {
@@ -7710,7 +7851,6 @@ function BenchmarkSection({
       <section className="workspace-panel">
         <div className="workspace-toolbar">
           <div className="workspace-toolbar-copy">
-            <p className="eyebrow">Bench Pack Session</p>
             <div className="workspace-toolbar-heading">
               <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
               <div className="workspace-stat-chips">
@@ -7756,11 +7896,7 @@ function BenchmarkSection({
   }
 
   function renderResultCell(modelId: string, scenarioId: string) {
-    const liveResult = liveRun?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
-    const persistedResult = isReplayMode
-      ? undefined
-      : runSummary?.resultsByModel[modelId]?.find((candidate) => candidate.scenarioId === scenarioId);
-    const result = liveResult ?? persistedResult;
+    const result = getDisplayedResult(modelId, scenarioId);
     const model = selectedModels.find((candidate) => candidate.id === modelId);
     const isActive = liveRun?.activeCellKeys.includes(`${modelId}::${scenarioId}`) ?? false;
 
@@ -7803,11 +7939,18 @@ function BenchmarkSection({
             status: result.status,
             errorType: result.errorType,
             retryable: result.retryable,
-            timings: result.timings
+            timings: result.timings,
+            note: result.note,
+            score: result.score,
+            points: result.points,
+            output: result.output,
+            verifier: result.verifier,
+            artifacts: result.artifacts
           })
         }
         className={`result-icon-button ${tone}${durationLabel ? " has-duration" : ""}`}
         title={durationLabel ? `${resultLabel} · ${durationLabel}` : resultLabel}
+        aria-label={`${model?.displayLabel ?? modelId}, ${scenarios.find((scenario) => scenario.id === scenarioId)?.title ?? scenarioId}: ${resultLabel}${durationLabel ? `, ${durationLabel}` : ""}`}
       >
         <span className="result-icon-mark">
           {isProviderError ? <CircleAlert size={14} strokeWidth={2.4} /> : result.status === "pass" ? "✓" : result.status === "partial" ? "!" : "×"}
@@ -7819,25 +7962,8 @@ function BenchmarkSection({
 
   return (
     <section className="workspace-panel">
-      {loadedHistory && loadedHistory.mode !== "replay" ? (
-        <div className="history-banner">
-          <div className="banner-row">
-            <span>
-              Loaded test history from {new Date(loadedHistory.startedAt).toLocaleString()}.
-            </span>
-            <button
-              type="button"
-              className="history-banner-close"
-              onClick={onClearHistory}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      ) : null}
       <div className="workspace-toolbar">
         <div className="workspace-toolbar-copy">
-          <p className="eyebrow">Bench Pack Session</p>
           <div className="workspace-toolbar-heading">
             <div className="workspace-toolbar-title">{inspection.manifest?.name ?? inspection.id}</div>
             <div className="workspace-stat-chips">
@@ -7846,13 +7972,24 @@ function BenchmarkSection({
               <span className={`status-chip ${runStateClass}`}>
                 {runStateLabel}
               </span>
+              {totalResultCount > 0 && (hasLiveActivity || runSummary) ? (
+                <span className="run-progress-label">
+                  {completedResultCount} / {totalResultCount} results
+                </span>
+              ) : null}
+              {loadedHistory && loadedHistory.mode !== "replay" ? (
+                <span className="history-context">
+                  Viewing {formatCompactHistoryDate(loadedHistory.startedAt)}
+                  <button type="button" onClick={onClearHistory}>Exit</button>
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
         <div className="section-actions">
           <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
             <RotateCcw size={14} />
-            Test Histories
+            History
           </button>
           {canStartOver ? (
             <button type="button" className="ghost-button" onClick={onStartOver}>
@@ -7871,6 +8008,19 @@ function BenchmarkSection({
           </button>
         </div>
       </div>
+
+      {hasLiveActivity && totalResultCount > 0 ? (
+        <div
+          className="run-progress-track"
+          role="progressbar"
+          aria-label="Benchmark run progress"
+          aria-valuemin={0}
+          aria-valuemax={totalResultCount}
+          aria-valuenow={completedResultCount}
+        >
+          <span className="run-progress-fill" style={{ width: `${runProgressPercent}%` }} />
+        </div>
+      ) : null}
 
       {runBlocker ? (
         <div className="workspace-verifier-warning">
@@ -7898,52 +8048,44 @@ function BenchmarkSection({
 
       <div className="workspace-grid">
         <div className="workspace-document">
-          <details className="scenario-focus" open>
-            <summary className="scenario-focus-header">
-              <div>
-                <p className="eyebrow">Scenario Detail</p>
-                <h3>
-                  {currentScenario ? `${currentScenario.id} · ${currentScenario.title}` : "No scenario selected"}
-                </h3>
-              </div>
-              <div className="scenario-focus-summary-actions">
-                <ChevronDown size={16} className="scenario-focus-chevron" />
-              </div>
-            </summary>
-
-            <div className="scenario-detail-grid scenario-detail-grid-main">
-              {(currentScenario?.detailCards?.length
-                ? currentScenario.detailCards
-                : [
-                    {
-                      title: "What this tests",
-                      content:
-                        currentScenario?.description ??
-                        "Click a scenario column in the Bench Pack table below to inspect that scenario."
-                    },
-                    {
-                      title: "Prompt Contract",
-                      content:
-                        currentScenario?.description ??
-                        "The active scenario follows the selected table column. Richer prompt or methodology detail will appear here as Bench Pack metadata expands."
-                    },
-                    {
-                      title: "Run Notes",
-                      content: runSummary
-                        ? "Click a scenario column to switch context. Click any result cell to inspect the trace and summary for that model and scenario."
-                        : "Run this Bench Pack, then use the scenario columns in the table below to switch the preview context."
-                    }
-                  ]
-              ).map((card) => (
-                <DetailCard key={card.title} title={card.title} content={card.content} />
-              ))}
-            </div>
-          </details>
-
           <div className="table-controls">
             <div className="table-controls-heading">
               <LayoutList size={16} />
               <div className="workspace-toolbar-title">Test Results</div>
+              <div className="table-filter-group" aria-label="Result view controls">
+                <button
+                  type="button"
+                  className={`ghost-button workspace-filter-button${issuesOnly ? " is-active" : ""}`}
+                  onClick={() => setIssuesOnly((current) => !current)}
+                  disabled={completedResultCount === 0}
+                  aria-pressed={issuesOnly}
+                  aria-label="Show scenarios with issues only"
+                >
+                  <CircleAlert size={13} />
+                  Issues
+                </button>
+                <button
+                  type="button"
+                  className={`ghost-button workspace-filter-button${sortByScore ? " is-active" : ""}`}
+                  onClick={() => setSortByScore((current) => !current)}
+                  disabled={!runSummary}
+                  aria-pressed={sortByScore}
+                  aria-label="Sort models by score"
+                >
+                  <ArrowUp size={13} />
+                  Score
+                </button>
+                <button
+                  type="button"
+                  className={`ghost-button workspace-filter-button${inspectorOpen ? " is-active" : ""}`}
+                  onClick={() => setInspectorOpen((current) => !current)}
+                  aria-pressed={inspectorOpen}
+                  aria-label="Toggle selected scenario details"
+                >
+                  <Sidebar size={13} />
+                  Details
+                </button>
+              </div>
             </div>
             <div className="table-controls-actions">
               <div ref={runModeRef} className="run-mode-dropdown">
@@ -8024,7 +8166,7 @@ function BenchmarkSection({
               </div>
               <button type="button" onClick={onEditSampling} className="ghost-button" disabled={hasLiveActivity}>
                 <SlidersHorizontal size={14} />
-                Samplings
+                Sampling
               </button>
               <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
                 <Bot size={14} />
@@ -8046,7 +8188,7 @@ function BenchmarkSection({
                 <div className="table-empty-callout-actions">
                   <button type="button" className="ghost-button" onClick={onOpenHistory} disabled={historyEntries.length === 0}>
                     <RotateCcw size={14} />
-                    Test Histories
+                    History
                   </button>
                   <button type="button" onClick={onEditModels} className="ghost-button" disabled={hasLiveActivity}>
                     <Bot size={14} />
@@ -8056,11 +8198,15 @@ function BenchmarkSection({
               </div>
             ) : (
               <>
-                <div ref={tableScrollViewportRef} className="table-scroll">
+                <div ref={tableScrollViewportRef} className="table-scroll" role="region" aria-label="Benchmark comparison results" tabIndex={0}>
                   <table className="result-table">
+                  <caption className="sr-only">
+                    Results for {inspection.manifest?.name ?? inspection.id}, comparing {selectedModels.length} models across {scenarios.length} scenarios.
+                  </caption>
                   <colgroup>
                     <col className="model-column" />
-                    {scenarios.map((scenario) => (
+                    <col className="score-column" />
+                    {displayedScenarios.map((scenario) => (
                       <col key={scenario.id} />
                     ))}
                   </colgroup>
@@ -8069,7 +8215,10 @@ function BenchmarkSection({
                       <th className={`scenario-row-label${stickyColumnShadow ? " has-scroll-shadow" : ""}`}>
                         <span>Model</span>
                       </th>
-                      {scenarios.map((scenario) => (
+                      <th className="score-column-header">
+                        <span>Score</span>
+                      </th>
+                      {displayedScenarios.map((scenario) => (
                         <th
                           key={scenario.id}
                           className={`${scenario.id === highlightedScenarioId ? "active-column selected-column" : ""}`}
@@ -8077,7 +8226,10 @@ function BenchmarkSection({
                           <div className="column-heading">
                             <button
                               type="button"
-                              onClick={() => onFocusScenario(scenario.id)}
+                              onClick={() => {
+                                onFocusScenario(scenario.id);
+                                setInspectorOpen(true);
+                              }}
                               className="column-button"
                               title={`${scenario.id} · ${scenario.title}`}
                             >
@@ -8089,7 +8241,7 @@ function BenchmarkSection({
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedModels.map((model) => {
+                    {displayedModels.map((model) => {
                       const availability = getModelAvailabilityView(model, modelAvailabilityById, checkingModelAvailability);
 
                       return (
@@ -8101,6 +8253,8 @@ function BenchmarkSection({
                                   <span
                                     className={`model-availability-dot ${modelAvailabilityChipClass(availability)}`}
                                     title={modelAvailabilityTitle(availability)}
+                                    role="img"
+                                    aria-label={`Model status: ${modelAvailabilityLabel(availability)}`}
                                   />
                                   <div
                                     className={`model-badge${isReplayMode ? "" : " model-badge-history"}`}
@@ -8118,6 +8272,8 @@ function BenchmarkSection({
                                   <span
                                     className={`model-availability-dot ${modelAvailabilityChipClass(availability)}`}
                                     title={modelAvailabilityTitle(availability)}
+                                    role="img"
+                                    aria-label={`Model status: ${modelAvailabilityLabel(availability)}`}
                                   />
                                   <button
                                     type="button"
@@ -8131,7 +8287,10 @@ function BenchmarkSection({
                               )}
                             </div>
                           </td>
-                          {scenarios.map((scenario) => (
+                          <td className="score-column-cell">
+                            {runSummary?.scores[model.id] ? runSummary.scores[model.id].totalScore : "—"}
+                          </td>
+                          {displayedScenarios.map((scenario) => (
                             <td
                               key={`${model.id}-${scenario.id}`}
                               className={`result-icon-cell ${scenario.id === highlightedScenarioId ? "active-column" : ""}`}
@@ -8145,6 +8304,9 @@ function BenchmarkSection({
                   </tbody>
                   </table>
                 </div>
+                {issuesOnly && displayedScenarios.length === 0 ? (
+                  <div className="table-filter-empty">No partial, failed, or provider-error results in this run.</div>
+                ) : null}
                 {hasHorizontalOverflow ? (
                   <div
                     ref={tableScrollbarTrackRef}
@@ -8240,8 +8402,28 @@ function BenchmarkSection({
           </section>
 
           {runSummary && !hasLiveActivity && (!isReplayMode || hasCompletedReplay) ? (
-            <section className="scoreboard">
-              {Object.entries(runSummary.scores).map(([modelId, score]) => {
+            <section className="leaderboard" aria-labelledby={`leaderboard-${tabId}`}>
+              <div className="leaderboard-header">
+                <div>
+                  <p className="eyebrow">Run Summary</p>
+                  <h3 id={`leaderboard-${tabId}`}>Model ranking</h3>
+                </div>
+                <div className="leaderboard-header-actions">
+                  <span className="muted-copy">Sorted by total score</span>
+                  <button
+                    type="button"
+                    className="ghost-button ghost-button-compact"
+                    onClick={() => void openShareResults().catch((shareError) => console.error(shareError))}
+                  >
+                    <Share2 size={14} />
+                    Share Run
+                  </button>
+                </div>
+              </div>
+              <div className="leaderboard-rows">
+              {Object.entries(runSummary.scores)
+                .sort(([, left], [, right]) => right.totalScore - left.totalScore)
+                .map(([modelId, score], index) => {
                 const model = selectedModels.find((candidate) => candidate.id === modelId);
                 const hasScoreData = (runSummary.resultsByModel[modelId]?.length ?? 0) > 0;
                 const shareRunModeLabel =
@@ -8262,43 +8444,104 @@ function BenchmarkSection({
                     : providerName || modelName || modelId;
 
                 return (
-                  <div key={modelId} className="score-card score-card-compact">
-                    <div className="score-card-head">
-                      <div>
-                        <h3 style={{ margin: 0, fontSize: "1rem" }}>{model?.displayLabel ?? modelId}</h3>
-                        <p className="muted-copy" style={{ marginTop: "6px", fontSize: "0.76rem" }}>{modelSubtitle}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="ghost-button ghost-button-compact score-share-button"
-                        disabled={!hasScoreData}
-                        title={hasScoreData ? "Preview share card" : "No results to share yet"}
-                        onClick={() => setShareCardData(shareData)}
-                      >
-                        <Share2 size={14} />
-                        Share
-                      </button>
+                  <article key={modelId} className="leaderboard-row">
+                    <span className="leaderboard-rank" aria-label={`Rank ${index + 1}`}>{index + 1}</span>
+                    <div className="leaderboard-model">
+                      <h4>{model?.displayLabel ?? modelId}</h4>
+                      <p>{modelSubtitle}</p>
+                      {score.summary ? <p className="leaderboard-summary">{score.summary}</p> : null}
                     </div>
-                    <div className="score-card-foot">
-                      <span className={`score-value${hasScoreData ? "" : " score-value-empty"}`}>
-                        {hasScoreData ? score.totalScore : "—"}
-                      </span>
-                      <div className="category-chip-row">
-                        {score.categories.map((category) => (
-                          <span key={category.id} className="status-chip category-chip">
-                            {category.id}: {hasScoreData ? category.score : "—"}
-                          </span>
-                        ))}
-                      </div>
+                    <div className="leaderboard-categories" aria-label="Category scores">
+                      {score.categories.map((category) => (
+                        <span key={category.id} className="leaderboard-category" title={category.id}>
+                          <span>{category.label}</span>
+                          <strong>{hasScoreData ? category.score : "—"}</strong>
+                        </span>
+                      ))}
                     </div>
-                  </div>
+                    <div className="leaderboard-score">
+                      <span>Score</span>
+                      <strong>{hasScoreData ? score.totalScore : "—"}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="ghost-button ghost-button-compact score-share-button"
+                      disabled={!hasScoreData}
+                      title={hasScoreData ? "Preview share card" : "No results to share yet"}
+                      onClick={() => setShareCardData(shareData)}
+                    >
+                      <Share2 size={14} />
+                      Share
+                    </button>
+                  </article>
                 );
               })}
+              </div>
             </section>
           ) : null}
         </div>
+
+        {inspectorOpen ? <aside className="workspace-inspector" aria-label="Selected scenario">
+          <details className="scenario-focus scenario-focus-inspector" open>
+            <summary className="scenario-focus-header">
+              <div>
+                <p className="eyebrow">Selected Scenario</p>
+                <h3>
+                  {currentScenario ? `${currentScenario.id} · ${currentScenario.title}` : "No scenario selected"}
+                </h3>
+              </div>
+              <div className="scenario-focus-summary-actions">
+                <button
+                  type="button"
+                  className="inspector-close-button"
+                  aria-label="Close scenario details"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setInspectorOpen(false);
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </summary>
+
+            <div className="scenario-detail-grid scenario-detail-grid-stack">
+              {(currentScenario?.detailCards?.length
+                ? currentScenario.detailCards
+                : [
+                    {
+                      title: "What this tests",
+                      content:
+                        currentScenario?.description ??
+                        "Choose a scenario column to inspect its purpose and result evidence."
+                    },
+                    {
+                      title: "Prompt Contract",
+                      content:
+                        currentScenario?.description ??
+                        "Scenario-specific prompt and methodology details appear here when the Bench Pack provides them."
+                    },
+                    {
+                      title: "Run Notes",
+                      content: runSummary
+                        ? "Choose a result cell to inspect model output, verifier evidence, artifacts, timing, and the raw trace."
+                        : "Run this Bench Pack, then choose a result cell to inspect its evidence."
+                    }
+                  ]
+              ).map((card) => (
+                <DetailCard key={card.title} title={card.title} content={card.content} />
+              ))}
+            </div>
+          </details>
+        </aside> : null}
       </div>
       {shareCardData ? <ResultShareCardModal data={shareCardData} onClose={() => setShareCardData(null)} /> : null}
+      {shareResultsData ? (
+        <Suspense fallback={null}>
+          <ShareResultsStudio data={shareResultsData} onClose={() => setShareResultsData(null)} />
+        </Suspense>
+      ) : null}
     </section>
   );
 }
@@ -8761,11 +9004,11 @@ function SamplingModal({
 
   return (
     <Modal
-      title="Bench Pack Samplings"
+      title="Sampling"
       subtitle={`Configure request sampling overrides for ${benchPackName}. Blank fields use Bench Pack defaults where defined; otherwise BenchLocal omits them so the inference backend uses its configured defaults.`}
       onClose={onClose}
       onSubmit={onSubmit}
-      submitLabel="Save Samplings"
+      submitLabel="Save Sampling"
       size="wide"
       leadingActions={
         <button
@@ -9129,7 +9372,7 @@ function SettingsScene({
         <div className="settings-sidebar-header">
           <button type="button" onClick={onBack} className="settings-back-button">
             <ChevronLeft size={16} />
-            Back to Main Scene
+            Back
           </button>
           <div className="settings-sidebar-title-block">
             <p className="eyebrow">Settings</p>
@@ -9144,8 +9387,10 @@ function SettingsScene({
               type="button"
               onClick={() => setSettingsTab(tab.id)}
               className={`settings-sidebar-item${settingsTab === tab.id ? " is-active" : ""}`}
+              title={tab.blurb}
             >
-              {tab.label}
+              {tab.icon}
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -9568,7 +9813,7 @@ function BenchPackRegistryView({
   return (
     <section className="settings-section-stack">
       <Panel
-        title="Official Bench Pack"
+        title="Official Bench Packs"
         subtitle="Install and update official Bench Packs from the BenchLocal registry."
         tone="sky"
         icon={<PlugZap size={16} />}
@@ -10092,7 +10337,7 @@ function AgentAccessView({
         <div className="settings-actions">
           <button type="button" className="primary-button" onClick={apply}>
             <Save size={14} />
-            Save Setting
+            Save Settings
           </button>
         </div>
       </Panel>
@@ -10232,10 +10477,10 @@ function HistoryModal({
 
   return (
     <div className="dialog-backdrop">
-      <div className="dialog-shell history-dialog-shell">
+      <div className="dialog-shell history-dialog-shell" role="dialog" aria-modal="true" aria-label={`${benchPackName} run history`}>
         <div className="dialog-header">
           <div>
-            <h3 className="dialog-title">Test Histories</h3>
+            <h3 className="dialog-title">Run History</h3>
             <p className="section-copy" style={{ marginTop: "12px" }}>{benchPackName}</p>
           </div>
           <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
@@ -10306,19 +10551,26 @@ function HistoryModal({
                         </span>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="ghost-button ghost-button-compact"
-                          onClick={(event) =>
-                            onOpenRun(
-                              entry.runId,
-                              event.shiftKey && !entry.error && !entry.cancelled ? "replay" : "history"
-                            )
-                          }
-                        >
-                          <RotateCcw size={14} />
-                          Open
-                        </button>
+                        <div className="settings-table-actions settings-table-actions-inline">
+                          <button
+                            type="button"
+                            className="ghost-button ghost-button-compact"
+                            onClick={() => onOpenRun(entry.runId, "history")}
+                          >
+                            <FolderOpen size={14} />
+                            View
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button ghost-button-compact"
+                            disabled={Boolean(entry.error || entry.cancelled)}
+                            title={entry.error || entry.cancelled ? "Only completed runs can be replayed" : "Replay this saved run"}
+                            onClick={() => onOpenRun(entry.runId, "replay")}
+                          >
+                            <Play size={14} />
+                            Replay
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -10359,7 +10611,7 @@ function VerifierPreparationModal({
 }) {
   return (
     <div className="dialog-backdrop">
-      <div className="dialog-shell verifier-preparation-shell">
+      <div className="dialog-shell verifier-preparation-shell" role="dialog" aria-modal="true" aria-label={`Preparing ${benchPackName} verifier`}>
         <div className="verifier-preparation-header">
           <div className="verifier-preparation-spinner">
             <span className="spinner" />
@@ -10499,7 +10751,7 @@ function AboutDialog({
 
   return (
     <div className="dialog-backdrop">
-      <div ref={dialogRef} className="about-dialog-shell" tabIndex={-1}>
+      <div ref={dialogRef} className="about-dialog-shell" role="dialog" aria-modal="true" aria-label={`About ${productName}`} tabIndex={-1}>
         <button type="button" onClick={onClose} className="dialog-close-button about-dialog-close" aria-label="Close dialog">
           <X size={16} />
         </button>
@@ -10567,10 +10819,14 @@ function Modal({
 }) {
   const hasBody = Boolean(children);
   const hasSubtitle = Boolean(subtitle?.trim());
+  const titleId = useId();
+  const subtitleId = useId();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frameId = window.requestAnimationFrame(() => {
       const activeElement = document.activeElement;
       const dialog = dialogRef.current;
@@ -10588,11 +10844,46 @@ function Modal({
 
     return () => {
       window.cancelAnimationFrame(frameId);
+      returnFocusRef.current?.focus();
     };
   }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        const dialog = dialogRef.current;
+
+        if (!dialog) {
+          return;
+        }
+
+        const focusable = Array.from(
+          dialog.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((element) => !element.hasAttribute("hidden"));
+
+        if (focusable.length === 0) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const activeElement = document.activeElement;
+
+        if (event.shiftKey && (activeElement === first || !dialog.contains(activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -10622,11 +10913,19 @@ function Modal({
 
   return (
     <div className="dialog-backdrop">
-      <div ref={dialogRef} className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`} tabIndex={-1}>
+      <div
+        ref={dialogRef}
+        className={`dialog-shell${size === "wide" ? " dialog-shell-wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={hasSubtitle ? subtitleId : undefined}
+        tabIndex={-1}
+      >
         <div className={`dialog-header${hasBody ? "" : " dialog-header-compact"}`}>
           <div>
-            <h3 className="dialog-title">{title}</h3>
-            {hasSubtitle ? <p className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p> : null}
+            <h3 id={titleId} className="dialog-title">{title}</h3>
+            {hasSubtitle ? <p id={subtitleId} className="section-copy" style={{ marginTop: "12px" }}>{subtitle}</p> : null}
           </div>
           <button type="button" onClick={onClose} className="dialog-close-button" aria-label="Close dialog">
             <X size={16} />
