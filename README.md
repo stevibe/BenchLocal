@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/stevibe-benchlocal-badge.png)](https://mseep.ai/app/stevibe-benchlocal)
+
 <p align="center">
   <img src="./docs/assets/benchlocal-logo.svg" alt="BenchLocal logo" width="104" />
 </p>
