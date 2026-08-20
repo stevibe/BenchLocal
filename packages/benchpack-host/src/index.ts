@@ -55,6 +55,7 @@ export type LoadedBenchPackHandle = {
 const execFileAsync = promisify(execFile);
 let dockerExecutablePathPromise: Promise<string | null> | null = null;
 const verifierContainerLocks = new Map<string, Promise<void>>();
+const activeBenchPackVerifierLeases = new Map<string, number>();
 const runSummaryLocks = new Map<string, Promise<void>>();
 const MODEL_AVAILABILITY_PROBE_TIMEOUT_MS = 4000;
 type ProviderFetchCaptureContext = {
@@ -3737,6 +3738,65 @@ export async function stopConfiguredBenchPackVerifiers(
   return getConfiguredBenchPackVerifierStatus(config, benchPackId);
 }
 
+async function stopConfiguredBenchPackVerifiersAfterRun(
+  config: BenchLocalConfig,
+  benchPackId: string
+): Promise<void> {
+  try {
+    await stopConfiguredBenchPackVerifiers(config, benchPackId);
+  } catch (error) {
+    // Cleanup must not replace the original run or setup error.
+    console.warn(`[benchpack:${benchPackId}] Failed to stop verifier containers after run.`, error);
+  }
+}
+
+function acquireBenchPackVerifierLease(benchPackId: string): () => boolean {
+  activeBenchPackVerifierLeases.set(
+    benchPackId,
+    (activeBenchPackVerifierLeases.get(benchPackId) ?? 0) + 1
+  );
+  let released = false;
+
+  return () => {
+    if (released) {
+      return false;
+    }
+
+    released = true;
+    const remaining = (activeBenchPackVerifierLeases.get(benchPackId) ?? 1) - 1;
+
+    if (remaining > 0) {
+      activeBenchPackVerifierLeases.set(benchPackId, remaining);
+      return false;
+    }
+
+    activeBenchPackVerifierLeases.delete(benchPackId);
+    return true;
+  };
+}
+
+async function disposeBenchPackRunResources(
+  config: BenchLocalConfig,
+  benchPackId: string,
+  options: {
+    disposePrepared?: () => Promise<void>;
+    disposeHostResources?: () => Promise<void>;
+    releaseVerifierLease: () => boolean;
+  }
+): Promise<void> {
+  try {
+    await options.disposePrepared?.();
+  } finally {
+    try {
+      await options.disposeHostResources?.();
+    } finally {
+      if (options.releaseVerifierLease()) {
+        await stopConfiguredBenchPackVerifiersAfterRun(config, benchPackId);
+      }
+    }
+  }
+}
+
 export async function deleteConfiguredBenchPackVerifierImage(
   config: BenchLocalConfig,
   benchPackId: string,
@@ -4544,20 +4604,27 @@ export async function runConfiguredBenchPack(
     await options?.onEvent?.(event);
   };
 
-  await startConfiguredBenchPackVerifiers(config, benchPackId, {
-    abortSignal: options?.abortSignal,
-    onProgress: async (progress) => {
-      await emit({
-        type: "verifier_preparing",
-        benchPackId,
-        benchPackName: manifest.name,
-        verifierId: progress.verifierId,
-        phase: progress.phase,
-        message: progress.message
-      });
-    }
-  });
-  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const releaseVerifierLease = acquireBenchPackVerifierLease(benchPackId);
+  let hostResources: HostContextResources;
+  try {
+    await startConfiguredBenchPackVerifiers(config, benchPackId, {
+      abortSignal: options?.abortSignal,
+      onProgress: async (progress) => {
+        await emit({
+          type: "verifier_preparing",
+          benchPackId,
+          benchPackName: manifest.name,
+          verifierId: progress.verifierId,
+          phase: progress.phase,
+          message: progress.message
+        });
+      }
+    });
+    hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  } catch (error) {
+    await disposeBenchPackRunResources(config, benchPackId, { releaseVerifierLease });
+    throw error;
+  }
   const hostContext = hostResources.context;
   let hostDisposed = false;
   const disposeHostResources = async () => {
@@ -4765,11 +4832,14 @@ export async function runConfiguredBenchPack(
 
       return summary;
     } finally {
-      await prepared.dispose();
-      await disposeHostResources();
+      await disposeBenchPackRunResources(config, benchPackId, {
+        disposePrepared: () => prepared.dispose(),
+        disposeHostResources,
+        releaseVerifierLease
+      });
     }
   } catch (error) {
-    await disposeHostResources();
+    await disposeBenchPackRunResources(config, benchPackId, { disposeHostResources, releaseVerifierLease });
     throw error;
   }
 }
@@ -4798,21 +4868,27 @@ export async function retryScenarioForBenchPackRun(
     await options.onEvent?.(event);
   };
 
-  await startConfiguredBenchPackVerifiers(config, benchPackId, {
-    abortSignal: options.abortSignal,
-    onProgress: async (progress) => {
-      await emit({
-        type: "verifier_preparing",
-        benchPackId,
-        benchPackName: manifest.name,
-        verifierId: progress.verifierId,
-        phase: progress.phase,
-        message: progress.message
-      });
-    }
-  });
-
-  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const releaseVerifierLease = acquireBenchPackVerifierLease(benchPackId);
+  let hostResources: HostContextResources;
+  try {
+    await startConfiguredBenchPackVerifiers(config, benchPackId, {
+      abortSignal: options.abortSignal,
+      onProgress: async (progress) => {
+        await emit({
+          type: "verifier_preparing",
+          benchPackId,
+          benchPackName: manifest.name,
+          verifierId: progress.verifierId,
+          phase: progress.phase,
+          message: progress.message
+        });
+      }
+    });
+    hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  } catch (error) {
+    await disposeBenchPackRunResources(config, benchPackId, { releaseVerifierLease });
+    throw error;
+  }
   const hostContext = hostResources.context;
   let hostDisposed = false;
   const disposeHostResources = async () => {
@@ -4933,11 +5009,14 @@ export async function retryScenarioForBenchPackRun(
         return nextSummary;
       });
     } finally {
-      await prepared.dispose();
-      await disposeHostResources();
+      await disposeBenchPackRunResources(config, benchPackId, {
+        disposePrepared: () => prepared.dispose(),
+        disposeHostResources,
+        releaseVerifierLease
+      });
     }
   } catch (error) {
-    await disposeHostResources();
+    await disposeBenchPackRunResources(config, benchPackId, { disposeHostResources, releaseVerifierLease });
     throw error;
   }
 }
@@ -4970,21 +5049,27 @@ export async function resumeBenchPackRun(
     await options.onEvent?.(event);
   };
 
-  await startConfiguredBenchPackVerifiers(config, benchPackId, {
-    abortSignal: options.abortSignal,
-    onProgress: async (progress) => {
-      await emit({
-        type: "verifier_preparing",
-        benchPackId,
-        benchPackName: manifest.name,
-        verifierId: progress.verifierId,
-        phase: progress.phase,
-        message: progress.message
-      });
-    }
-  });
-
-  const hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  const releaseVerifierLease = acquireBenchPackVerifierLease(benchPackId);
+  let hostResources: HostContextResources;
+  try {
+    await startConfiguredBenchPackVerifiers(config, benchPackId, {
+      abortSignal: options.abortSignal,
+      onProgress: async (progress) => {
+        await emit({
+          type: "verifier_preparing",
+          benchPackId,
+          benchPackName: manifest.name,
+          verifierId: progress.verifierId,
+          phase: progress.phase,
+          message: progress.message
+        });
+      }
+    });
+    hostResources = await createHostContext(config, benchPackId, rootDir, manifest, artifacts);
+  } catch (error) {
+    await disposeBenchPackRunResources(config, benchPackId, { releaseVerifierLease });
+    throw error;
+  }
   const hostContext = hostResources.context;
   let hostDisposed = false;
   const disposeHostResources = async () => {
@@ -5212,11 +5297,14 @@ export async function resumeBenchPackRun(
         return nextSummary;
       });
     } finally {
-      await prepared.dispose();
-      await disposeHostResources();
+      await disposeBenchPackRunResources(config, benchPackId, {
+        disposePrepared: () => prepared.dispose(),
+        disposeHostResources,
+        releaseVerifierLease
+      });
     }
   } catch (error) {
-    await disposeHostResources();
+    await disposeBenchPackRunResources(config, benchPackId, { disposeHostResources, releaseVerifierLease });
     throw error;
   }
 }
