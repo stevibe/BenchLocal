@@ -57,6 +57,7 @@ let dockerExecutablePathPromise: Promise<string | null> | null = null;
 const verifierContainerLocks = new Map<string, Promise<void>>();
 const runSummaryLocks = new Map<string, Promise<void>>();
 const MODEL_AVAILABILITY_PROBE_TIMEOUT_MS = 4000;
+const TIMED_OUT_RUN_DRAIN_GRACE_MS = 2000;
 type ProviderFetchCaptureContext = {
   providerBaseUrls: string[];
   providerHttpErrors: CapturedProviderHttpError[];
@@ -71,10 +72,19 @@ const providerFetchCaptureContext = new AsyncLocalStorage<ProviderFetchCaptureCo
 let providerFetchCaptureInstalled = false;
 
 // Bench Packs commonly use global fetch; Undici otherwise applies a hidden 300s cap.
-setGlobalDispatcher(new Agent({
+const defaultGlobalFetchAgent = new Agent({
   bodyTimeout: 0,
   headersTimeout: 0
-}));
+});
+setGlobalDispatcher(defaultGlobalFetchAgent);
+
+// BenchLocal routes provider fetches through a dedicated undici Agent per provider
+// origin. This gives the host a handle to force-close the connections of a single
+// provider (so the provider process cancels a still-running generation after a
+// request timeout) without affecting traffic to other providers. Connections are
+// re-established lazily when the next request to that provider starts.
+const providerFetchAgents = new Map<string, Agent>();
+const providerActiveScenarioCounts = new Map<string, number>();
 
 type DockerRuntimeAvailability = {
   state: "ready" | "not_installed" | "not_running";
@@ -2213,6 +2223,119 @@ function wrapProviderHttpResponse(response: Response): Response {
   return response;
 }
 
+function getOrCreateProviderFetchAgent(providerBaseUrl: string): Agent {
+  const key = normalizeUrlPrefix(providerBaseUrl);
+
+  if (!key) {
+    return defaultGlobalFetchAgent;
+  }
+
+  let agent = providerFetchAgents.get(key);
+
+  if (!agent) {
+    agent = new Agent({
+      bodyTimeout: 0,
+      headersTimeout: 0
+    });
+    providerFetchAgents.set(key, agent);
+  }
+
+  return agent;
+}
+
+function findProviderFetchAgentForUrl(requestUrl: string | undefined): Agent | undefined {
+  if (!requestUrl) {
+    return undefined;
+  }
+
+  const normalizedRequestUrl = normalizeUrlPrefix(requestUrl);
+
+  if (!normalizedRequestUrl) {
+    return undefined;
+  }
+
+  let bestKey: string | undefined;
+
+  for (const key of providerFetchAgents.keys()) {
+    if (normalizedRequestUrl.startsWith(key) && (!bestKey || key.length > bestKey.length)) {
+      bestKey = key;
+    }
+  }
+
+  return bestKey ? providerFetchAgents.get(bestKey) : undefined;
+}
+
+function closeProviderFetchAgent(providerBaseUrl: string): void {
+  const key = normalizeUrlPrefix(providerBaseUrl);
+
+  if (!key) {
+    return;
+  }
+
+  const agent = providerFetchAgents.get(key);
+
+  if (!agent) {
+    return;
+  }
+
+  providerFetchAgents.delete(key);
+  void agent.destroy().catch(() => undefined);
+}
+
+function beginProviderScenario(providerBaseUrl: string | undefined): string | undefined {
+  if (!providerBaseUrl) {
+    return undefined;
+  }
+
+  const key = normalizeUrlPrefix(providerBaseUrl);
+
+  if (!key) {
+    return undefined;
+  }
+
+  getOrCreateProviderFetchAgent(providerBaseUrl);
+  providerActiveScenarioCounts.set(key, (providerActiveScenarioCounts.get(key) ?? 0) + 1);
+
+  return key;
+}
+
+function endProviderScenario(providerKey: string | undefined): void {
+  if (!providerKey) {
+    return;
+  }
+
+  const next = (providerActiveScenarioCounts.get(providerKey) ?? 1) - 1;
+
+  if (next <= 0) {
+    providerActiveScenarioCounts.delete(providerKey);
+  } else {
+    providerActiveScenarioCounts.set(providerKey, next);
+  }
+}
+
+function isSoleActiveProviderScenario(providerKey: string | undefined): boolean {
+  return Boolean(providerKey && (providerActiveScenarioCounts.get(providerKey) ?? 0) <= 1);
+}
+
+async function drainRunPromise(runPromise: Promise<unknown> | undefined, graceMs = TIMED_OUT_RUN_DRAIN_GRACE_MS): Promise<void> {
+  if (!runPromise) {
+    return;
+  }
+
+  let timer: NodeJS.Timeout | undefined;
+  const grace = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, graceMs);
+  });
+
+  try {
+    await Promise.race([runPromise.catch(() => undefined), grace]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 function installProviderFetchCapture(): void {
   if (providerFetchCaptureInstalled) {
     return;
@@ -2221,7 +2344,14 @@ function installProviderFetchCapture(): void {
   const nativeFetch = globalThis.fetch.bind(globalThis);
 
   globalThis.fetch = (async (input, init) => {
-    const response = await nativeFetch(input, init);
+    const routedInit: Record<string, unknown> = init ? { ...init } : {};
+    const providerAgent = findProviderFetchAgentForUrl(getFetchRequestUrl(input));
+
+    if (providerAgent) {
+      routedInit.dispatcher = providerAgent;
+    }
+
+    const response = await nativeFetch(input, routedInit as RequestInit);
     const context = providerFetchCaptureContext.getStore();
 
     if (!context || !isProviderFetchRequest(input, context.providerBaseUrls) || !isProviderHttpErrorStatus(response.status)) {
@@ -4143,6 +4273,7 @@ async function runScenarioSafely(
   const scenarioController = timeoutMs ? new AbortController() : undefined;
   let timedOut = false;
   let timeout: NodeJS.Timeout | undefined;
+  const providerKey = beginProviderScenario(input.providerBaseUrl);
 
   const abortScenarioFromParent = () => {
     scenarioController?.abort(input.abortSignal?.reason ?? createAbortError(input.abortSignal));
@@ -4156,9 +4287,11 @@ async function runScenarioSafely(
     }
   }
 
+  let runPromise: Promise<{ result: ScenarioResult; providerHttpError?: CapturedProviderHttpError }> | undefined;
+
   try {
     const { providerBaseUrl, ...scenarioInput } = input;
-    const runPromise = captureProviderFetchErrors(
+    runPromise = captureProviderFetchErrors(
       providerBaseUrl,
       () => prepared.runScenario({
         ...scenarioInput,
@@ -4188,12 +4321,27 @@ async function runScenarioSafely(
       throw error;
     }
 
+    if (timedOut) {
+      // Give the cooperative abort a bounded chance to unwind the underlying
+      // request before returning, so the next test does not start while the
+      // timed-out request is still running against the provider.
+      await drainRunPromise(runPromise);
+
+      // If this was the only active request to the provider, force-close its
+      // connections so the provider process cancels any still-running
+      // generation. The next request to the provider transparently reopens.
+      if (isSoleActiveProviderScenario(providerKey) && input.providerBaseUrl) {
+        closeProviderFetchAgent(input.providerBaseUrl);
+      }
+    }
+
     return buildScenarioExecutionFailureResult(input.scenario, error, startedAt, input.generation);
   } finally {
     if (timeout) {
       clearTimeout(timeout);
     }
     input.abortSignal?.removeEventListener("abort", abortScenarioFromParent);
+    endProviderScenario(providerKey);
   }
 }
 
