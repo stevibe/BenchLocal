@@ -896,6 +896,47 @@ async function withRunSummaryLock<T>(
   }
 }
 
+const DOCKER_HOST_GATEWAY_DEFAULT = "host-gateway";
+const DOCKER_ROOTLESS_HOST_GATEWAY = "10.0.2.2";
+let cachedRootlessDocker: boolean | undefined;
+
+/**
+ * Value to map `host.docker.internal` to inside Docker verifier containers.
+ *
+ * The default is the `host-gateway` keyword, which the daemon resolves itself: a rootful
+ * daemon points it at the bridge gateway (the host), and a daemon configured with
+ * `host-gateway-ip` points it wherever its user asked. A *rootless* daemon without that
+ * setting resolves it to the in-namespace bridge gateway (172.17.0.1), which is NOT the
+ * host -- containers reach the host through slirp4netns instead (docker/moby#47684) -- so
+ * every verifier request fails. No address is guessed up front: the running container is
+ * probed and only recreated with DOCKER_ROOTLESS_HOST_GATEWAY if that probe proves the
+ * default unreachable. BENCHLOCAL_DOCKER_HOST_GATEWAY overrides both values.
+ */
+function resolveDockerHostGateway(): string {
+  return process.env.BENCHLOCAL_DOCKER_HOST_GATEWAY?.trim() || DOCKER_HOST_GATEWAY_DEFAULT;
+}
+
+function resolveDockerHostGatewayFallback(): string {
+  return process.env.BENCHLOCAL_DOCKER_HOST_GATEWAY?.trim() || DOCKER_ROOTLESS_HOST_GATEWAY;
+}
+
+async function isRootlessDocker(options?: { abortSignal?: AbortSignal }): Promise<boolean> {
+  if (cachedRootlessDocker !== undefined) {
+    return cachedRootlessDocker;
+  }
+
+  try {
+    const securityOptions = await runDockerCommand(["info", "--format", "{{json .SecurityOptions}}"], options);
+
+    cachedRootlessDocker = /rootless/i.test(securityOptions);
+  } catch {
+    // If the daemon cannot be queried, keep the historical behaviour.
+    cachedRootlessDocker = false;
+  }
+
+  return cachedRootlessDocker;
+}
+
 async function startDockerVerifierContainer(
   containerName: string,
   image: string,
@@ -904,6 +945,7 @@ async function startDockerVerifierContainer(
   options?: {
     pullImage?: boolean;
     abortSignal?: AbortSignal;
+    hostGateway?: string;
   }
 ): Promise<void> {
   await stopDockerVerifierContainer(containerName);
@@ -915,7 +957,9 @@ async function startDockerVerifierContainer(
     "-d",
     "--name",
     containerName,
-    ...(process.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
+    ...(process.platform === "linux"
+      ? ["--add-host", `host.docker.internal:${options?.hostGateway ?? resolveDockerHostGateway()}`]
+      : []),
     "-p",
     `${hostPort}:${listenPort}`,
     image
@@ -925,6 +969,40 @@ async function startDockerVerifierContainer(
 
 async function buildDockerVerifierImage(tag: string, contextPath: string, options?: { abortSignal?: AbortSignal }): Promise<void> {
   await runDockerCommand(["build", "-t", tag, contextPath], { abortSignal: options?.abortSignal });
+}
+
+/**
+ * Asks a running verifier to reach the host through `host.docker.internal`.
+ *
+ * Returns "reachable" when the call came back, "unreachable" when the container has a
+ * working node runtime but the host did not answer, and "unknown" when the image has no
+ * node to probe with -- in that last case we keep the container rather than recreate it
+ * on a guess.
+ */
+async function probeContainerHostGatewayReachability(
+  containerName: string,
+  url: string,
+  options?: { abortSignal?: AbortSignal }
+): Promise<"reachable" | "unreachable" | "unknown"> {
+  const script =
+    `const c=new AbortController();setTimeout(()=>c.abort(),5000);` +
+    `fetch(${JSON.stringify(url)},{signal:c.signal}).then(()=>process.exit(0)).catch(()=>process.exit(3))`;
+
+  try {
+    await runDockerCommand(["exec", containerName, "node", "-e", script], options);
+
+    return "reachable";
+  } catch {
+    // Either the host did not answer or this image has no node; tell them apart below.
+  }
+
+  try {
+    await runDockerCommand(["exec", containerName, "node", "--version"], options);
+
+    return "unreachable";
+  } catch {
+    return "unknown";
+  }
 }
 
 async function resolveInstalledBenchPackRoot(config: BenchLocalConfig, benchPackId: string): Promise<string | undefined> {
@@ -3705,18 +3783,59 @@ export async function startConfiguredBenchPackVerifiers(
         }
       );
 
-      await options?.onProgress?.({
-        verifierId: spec.id,
-        phase: "waiting_for_healthcheck",
-        message: "Waiting for the verifier health check to pass."
-      });
-      await maybeDelayVerifierPreparation(options?.abortSignal);
-      throwIfAborted(options?.abortSignal);
-      await waitForVerifierReady(
-        `http://127.0.0.1:${hostPort}`,
-        spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath,
-        { abortSignal: options?.abortSignal }
-      );
+      const healthcheckPath = spec.docker?.healthcheckPath ?? spec.cloud?.healthcheckPath ?? spec.customUrl?.healthcheckPath;
+      const waitForReady = async () => {
+        await options?.onProgress?.({
+          verifierId: spec.id,
+          phase: "waiting_for_healthcheck",
+          message: "Waiting for the verifier health check to pass."
+        });
+        await maybeDelayVerifierPreparation(options?.abortSignal);
+        throwIfAborted(options?.abortSignal);
+        await waitForVerifierReady(`http://127.0.0.1:${hostPort}`, healthcheckPath, {
+          abortSignal: options?.abortSignal
+        });
+      };
+      await waitForReady();
+
+      // A rootless daemon can resolve `host-gateway` to an address that is not the host
+      // (docker/moby#47684), which silently breaks every verifier request later on. Probe
+      // the mapping from inside the container and, only when it provably fails, recreate
+      // the verifier with the slirp gateway address.
+      if (process.platform === "linux" && (await isRootlessDocker({ abortSignal: options?.abortSignal }))) {
+        const probePath = healthcheckPath
+          ? healthcheckPath.startsWith("/")
+            ? healthcheckPath
+            : `/${healthcheckPath}`
+          : "/";
+        const reachability = await probeContainerHostGatewayReachability(
+          containerName,
+          `http://host.docker.internal:${hostPort}${probePath}`,
+          { abortSignal: options?.abortSignal }
+        );
+
+        if (reachability === "unreachable") {
+          const fallbackGateway = resolveDockerHostGatewayFallback();
+
+          await options?.onProgress?.({
+            verifierId: spec.id,
+            phase: "starting_container",
+            message: `Verifier cannot reach the host through host.docker.internal; recreating it with ${fallbackGateway}.`
+          });
+          await startDockerVerifierContainer(containerName, image, hostPort, listenPort, {
+            pullImage: false,
+            abortSignal: options?.abortSignal,
+            hostGateway: fallbackGateway
+          });
+          await waitForReady();
+        } else if (reachability === "unknown") {
+          await options?.onProgress?.({
+            verifierId: spec.id,
+            phase: "waiting_for_healthcheck",
+            message: "Could not probe the verifier host-gateway mapping; keeping the default."
+          });
+        }
+      }
     }, { abortSignal: options?.abortSignal });
   }
 
